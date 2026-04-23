@@ -1,0 +1,28 @@
+# 認証情報（絶対に含めない）
+credentials.json
+*.json.bak
+
+# Streamlit Secrets (ローカル用、デプロイ時はStreamlit Cloud側に設定)
+.streamlit/secrets.toml
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# ログ・一時ファイル
+*.log
+.tmp/

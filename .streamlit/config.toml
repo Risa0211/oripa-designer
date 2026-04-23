@@ -1,0 +1,10 @@
+[theme]
+# みんなのトレカのロゴカラーに合わせたテーマ
+primaryColor = "#F5B800"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F7F7F7"
+textColor = "#1A1A1A"
+font = "sans serif"
+
+[server]
+headless = true
