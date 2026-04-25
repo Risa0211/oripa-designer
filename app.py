@@ -625,7 +625,7 @@ with tab_inventory:
             fail = 0
             for i, it in enumerate(items_for_update):
                 status.text(f"[{i+1}/{len(items_for_update)}] {it.name} を取得中...")
-                price, msg = fetch_recent_price(it.snkrdunk_url)
+                price, msg = fetch_recent_price(it.snkrdunk_url, grade=it.grade)
                 if price and price > 0:
                     try:
                         _update_price(it.tab, it.row_idx, price, note=msg.split("／")[0][:30])
@@ -705,7 +705,7 @@ with tab_inventory:
                 from snkrdunk_client import fetch_recent_price
                 from inventory import update_market_price as _update_price
                 with st.spinner("取得中..."):
-                    price, msg = fetch_recent_price(sel["snk URL"])
+                    price, msg = fetch_recent_price(sel["snk URL"], grade=sel.get("グレード", ""))
                 if price:
                     _update_price(sel["区分"], int(sel["row_idx"]), price, note=msg.split("／")[0][:30])
                     st.success(f"✅ 相場 ¥{sel['相場']:,} → ¥{price:,} に更新（{msg}）")
