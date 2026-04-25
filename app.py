@@ -687,41 +687,63 @@ with tab_inventory:
 
     st.markdown("---")
     st.markdown("### 個別操作（相場更新・仕入れ価格入力）")
-    st.caption("カードを1つ選んで、相場をsnkrdunkから取得 or 仕入れ価格を入力できます")
+    st.caption("カード名で検索してから1つ選んで、相場をsnkrdunkから取得 or 仕入れ価格を入力できます")
 
     if len(df_show) > 0:
-        sel_idx = st.selectbox(
-            "カードを選択", options=range(len(df_show)),
-            format_func=lambda i: f"[{df_show.iloc[i]['区分']}] {df_show.iloc[i]['カード名']} (相場¥{df_show.iloc[i]['相場']:,}, 仕入¥{df_show.iloc[i]['仕入れ価格']:,})",
+        op_search = st.text_input(
+            "🔍 カード名で検索",
+            placeholder="例: リーリエ / ロイヤル / ピカチュウ",
+            key="op_search",
         )
-        sel = df_show.iloc[sel_idx]
-        op_cols = st.columns([2, 2, 2])
-        with op_cols[0]:
-            if st.button(
-                "📈 このカードの相場をsnkrdunkから更新",
-                disabled=not sel["snk URL"],
-                use_container_width=True,
-            ):
-                from snkrdunk_client import fetch_recent_price
-                from inventory import update_market_price as _update_price
-                with st.spinner("取得中..."):
-                    price, msg = fetch_recent_price(sel["snk URL"], grade=sel.get("グレード", ""))
-                if price:
-                    _update_price(sel["区分"], int(sel["row_idx"]), price, note=msg.split("／")[0][:30])
-                    st.success(f"✅ 相場 ¥{sel['相場']:,} → ¥{price:,} に更新（{msg}）")
+        df_op = df_show
+        if op_search.strip():
+            df_op = df_op[df_op["カード名"].str.contains(op_search.strip(), na=False)]
+
+        if len(df_op) == 0:
+            st.warning("該当するカードがありません")
+        else:
+            st.caption(f"候補: {len(df_op)}件")
+            sel_idx_label = st.selectbox(
+                "カードを選択",
+                options=df_op.index.tolist(),
+                format_func=lambda i: (
+                    f"[{df_op.loc[i, '区分']}] {df_op.loc[i, 'カード名']} "
+                    f"({str(df_op.loc[i, 'グレード']) or '-'}, "
+                    f"相場¥{int(df_op.loc[i, '相場'] or 0):,}, 仕入¥{int(df_op.loc[i, '仕入れ価格'] or 0):,})"
+                ),
+            )
+            sel = df_op.loc[sel_idx_label]
+            sel_url = str(sel["snk URL"]) if pd.notna(sel["snk URL"]) else ""
+            sel_grade = str(sel["グレード"]) if pd.notna(sel["グレード"]) else ""
+
+            op_cols = st.columns([2, 2, 2])
+            with op_cols[0]:
+                if st.button(
+                    "📈 このカードの相場をsnkrdunkから更新",
+                    disabled=not sel_url,
+                    use_container_width=True,
+                ):
+                    from snkrdunk_client import fetch_recent_price
+                    from inventory import update_market_price as _update_price
+                    with st.spinner("取得中..."):
+                        price, msg = fetch_recent_price(sel_url, grade=sel_grade)
+                    if price:
+                        _update_price(str(sel["区分"]), int(sel["row_idx"]), price, note=msg.split("／")[0][:30])
+                        st.success(f"✅ 相場 ¥{int(sel['相場']):,} → ¥{price:,} に更新（{msg}）")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"取得失敗: {msg}")
+            with op_cols[1]:
+                new_purchase = st.number_input(
+                    "仕入れ価格（円）", min_value=0,
+                    value=int(sel["仕入れ価格"] or 0), step=1000,
+                    key=f"pp_{sel_idx_label}",
+                )
+            with op_cols[2]:
+                if st.button("💾 仕入れ価格を保存", use_container_width=True):
+                    from inventory import update_purchase_price
+                    update_purchase_price(str(sel["区分"]), int(sel["row_idx"]), int(new_purchase))
+                    st.success(f"✅ 仕入れ価格 ¥{int(new_purchase):,} を保存")
                     st.cache_data.clear()
                     st.rerun()
-                else:
-                    st.error(f"取得失敗: {msg}")
-        with op_cols[1]:
-            new_purchase = st.number_input(
-                "仕入れ価格（円）", min_value=0, value=int(sel["仕入れ価格"]), step=1000,
-                key=f"pp_{sel_idx}",
-            )
-        with op_cols[2]:
-            if st.button("💾 仕入れ価格を保存", use_container_width=True):
-                from inventory import update_purchase_price
-                update_purchase_price(sel["区分"], int(sel["row_idx"]), int(new_purchase))
-                st.success(f"✅ 仕入れ価格 ¥{new_purchase:,} を保存")
-                st.cache_data.clear()
-                st.rerun()
