@@ -6,7 +6,19 @@ CREDENTIALS_PATH = str(ROOT / "credentials.json")
 
 # スプシID
 INVENTORY_SHEET_ID = "1BEkvx-Z-rJfieYQGjvLStQCuPqpsEtaZFJIDLv3ioMo"
+TEST_INVENTORY_SHEET_ID = "1j9som29TbFpsZF4vx2UvWG5cY7GaAwH4nqOSYfNJa_s"
 RESEARCH_SHEET_ID = "1CCdYm8rqgAlfXk8FfVBxU90bUPRWnOJ2k5-0biopWqM"
+
+
+def get_active_inventory_sheet_id() -> str:
+    """セッションのテストモードに応じて使用する在庫スプシIDを返す"""
+    try:
+        import streamlit as st
+        if st.session_state.get("test_mode"):
+            return TEST_INVENTORY_SHEET_ID
+    except Exception:
+        pass
+    return INVENTORY_SHEET_ID
 
 # タブ名
 TAB_PSA10 = "PSA10在庫登録"
@@ -22,6 +34,18 @@ COL_ALLOCATION_DATE = "最終更新日時"
 COL_RESERVED_QTY = "予約中数量"
 COL_ON_SALE_QTY = "販売中数量"
 COL_REMAINING_QTY = "残数量"
+COL_PURCHASE_PRICE = "仕入れ価格"
+COL_PRICE_UPDATED = "相場更新日時"
+
+# 上乗せ率設定タブ
+TAB_MARKUP = "上乗せ率設定"
+MARKUP_HEADERS = ["価格下限（円）", "価格上限（円）", "上乗せ率（%）", "備考"]
+DEFAULT_MARKUP_ROWS = [
+    [0, 9999, 10, "1万円未満"],
+    [10000, 99999, 15, "1万〜10万円"],
+    [100000, 999999, 20, "10万〜100万円"],
+    [1000000, 100000000, 25, "100万円以上"],
+]
 
 # ステータス値
 STATUS_NONE = ""

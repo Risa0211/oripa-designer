@@ -26,8 +26,8 @@ class DesignSpec:
     mode: str                  # "X" or "Y"
     total_tickets: int
     price_per_spin: int
-    target_profit_rate: float  # 0.30 = 30%
-    target_return_rate: float  # 0.70 = 70%
+    target_profit_rate: float  # 0.30 = 30%（仕入れベース）
+    target_return_rate: float  # 顧客還元率の目標（コインベース）= 1 - target_profit_rate ※簡易
     tiers: List[TierSpec]
     note: str = ""
 
@@ -69,13 +69,25 @@ class DesignResult:
     title: str
     spec: DesignSpec
     tier_results: List[TierResult]
-    total_revenue: int
-    total_cost: int
-    actual_return_rate: float
-    actual_profit_rate: float
+    total_revenue: int             # 売上（円）= 総口数×1回価格
+    total_cost: int                # 仕入れベース原価合計（粗利計算用）
+    total_market: int              # 相場ベース合計（参考）
+    total_coin_value: int          # コイン額面合計（顧客還元率の分子）
+    actual_profit_rate: float      # 実粗利率 = (売上 - 仕入れ合計) / 売上
+    real_return_rate: float        # 実還元率 = 仕入れ合計 / 売上（運営の本当の還元率）
+    customer_return_rate: float    # 顧客還元率 = コイン額面合計 / 売上（顧客が見る還元率）
     created_at: str
-    warnings: list = field(default_factory=list)  # List[Warning] from warnings_gen
-    all_inventory: list = field(default_factory=list)  # 代替候補用
+    warnings: list = field(default_factory=list)
+    all_inventory: list = field(default_factory=list)
+
+    @property
+    def actual_return_rate(self) -> float:
+        # 後方互換のため customer_return_rate を返す
+        return self.customer_return_rate
+
+    @property
+    def gross_profit(self) -> int:
+        return self.total_revenue - self.total_cost
 
     def is_feasible(self) -> bool:
         return all(len(tr.selected) == tr.requested for tr in self.tier_results)
@@ -131,10 +143,7 @@ def design(spec: DesignSpec, inventory: Optional[List[InventoryItem]] = None, re
     remaining = {i: it.available_qty for i, it in enumerate(items)}
 
     tier_results: List[TierResult] = []
-    total_cost = 0
 
-    # 等級は相場が高い順（1等→7等）に処理するのが実用的
-    # spec.tiers の順に従って pick
     for t in spec.tiers:
         target = tier_targets[t.name]
         selected: List[InventoryItem] = []
@@ -146,7 +155,6 @@ def design(spec: DesignSpec, inventory: Optional[List[InventoryItem]] = None, re
             ))
             continue
 
-        # 目標に近い順で候補を並べる
         def diff(i):
             return abs(items[i].price - target)
 
@@ -159,7 +167,6 @@ def design(spec: DesignSpec, inventory: Optional[List[InventoryItem]] = None, re
             take = min(remaining[idx], t.count - picked)
             for _ in range(take):
                 selected.append(items[idx])
-                total_cost += items[idx].price
             remaining[idx] -= take
             picked += take
 
@@ -171,8 +178,29 @@ def design(spec: DesignSpec, inventory: Optional[List[InventoryItem]] = None, re
             target_price_each=target, reason=reason,
         ))
 
-    actual_return = total_cost / total_revenue if total_revenue else 0
-    actual_profit = 1 - actual_return
+    result = _build_result(spec, tier_results, total_revenue, inventory, reference)
+    return result
+
+
+def _build_result(spec, tier_results, total_revenue, inventory, reference):
+    """tier_results から各種メトリクスを計算して DesignResult を構築"""
+    from markup import load_markup_bands, coin_price_for
+    from warnings_gen import generate_warnings
+
+    bands = load_markup_bands()
+
+    total_cost = 0       # 仕入れベース合計
+    total_market = 0     # 相場合計
+    total_coin = 0       # コイン額面合計
+    for tr in tier_results:
+        for it in tr.selected:
+            total_cost += it.cost_price
+            total_market += it.price
+            total_coin += coin_price_for(it.price, bands)
+
+    real_return = total_cost / total_revenue if total_revenue else 0
+    actual_profit = 1 - real_return
+    customer_return = total_coin / total_revenue if total_revenue else 0
 
     result = DesignResult(
         product_id="",
@@ -181,12 +209,14 @@ def design(spec: DesignSpec, inventory: Optional[List[InventoryItem]] = None, re
         tier_results=tier_results,
         total_revenue=total_revenue,
         total_cost=total_cost,
-        actual_return_rate=actual_return,
+        total_market=total_market,
+        total_coin_value=total_coin,
         actual_profit_rate=actual_profit,
+        real_return_rate=real_return,
+        customer_return_rate=customer_return,
         created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         all_inventory=inventory,
     )
-    from warnings_gen import generate_warnings
     result.warnings = generate_warnings(spec, result, all_inventory=inventory, reference=reference)
     return result
 
@@ -197,15 +227,10 @@ def build_result_from_selections(
     inventory: List[InventoryItem],
     reference=None,
 ) -> "DesignResult":
-    """
-    手動で編集されたカード選定から DesignResult を再構築
-    tier_selections: {"1等": [(tab, row_idx), ...], ...}
-    """
-    from warnings_gen import generate_warnings
+    """手動編集されたカード選定から DesignResult を再構築"""
     inv_by_key = {(it.tab, it.row_idx): it for it in inventory}
 
     tier_results: List[TierResult] = []
-    total_cost = 0
     for tspec in spec.tiers:
         keys = tier_selections.get(tspec.name, [])
         items: List[InventoryItem] = []
@@ -213,7 +238,6 @@ def build_result_from_selections(
             it = inv_by_key.get(k)
             if it is not None:
                 items.append(it)
-                total_cost += it.price
         tier_results.append(TierResult(
             name=tspec.name, requested=tspec.count, selected=items,
             target_price_each=tspec.target_price,
@@ -221,23 +245,7 @@ def build_result_from_selections(
         ))
 
     total_revenue = spec.total_tickets * spec.price_per_spin
-    actual_return = total_cost / total_revenue if total_revenue else 0
-    actual_profit = 1 - actual_return
-
-    result = DesignResult(
-        product_id="",
-        title=spec.title,
-        spec=spec,
-        tier_results=tier_results,
-        total_revenue=total_revenue,
-        total_cost=total_cost,
-        actual_return_rate=actual_return,
-        actual_profit_rate=actual_profit,
-        created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        all_inventory=inventory,
-    )
-    result.warnings = generate_warnings(spec, result, all_inventory=inventory, reference=reference)
-    return result
+    return _build_result(spec, tier_results, total_revenue, inventory, reference)
 
 
 def generate_product_id() -> str:

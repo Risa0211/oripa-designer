@@ -53,17 +53,37 @@ def _yen(n) -> str:
 def check_economics(result) -> List[Warning]:
     ws: List[Warning] = []
     spec = result.spec
+
+    # 仕入れ価格未入力件数チェック
+    no_purchase = sum(
+        1 for tr in result.tier_results for it in tr.selected
+        if it.purchase_price <= 0
+    )
+    total_picks = sum(len(tr.selected) for tr in result.tier_results)
+    if total_picks > 0 and no_purchase == total_picks:
+        ws.append(Warning(
+            SEV_WARNING, CAT_ECONOMICS, "仕入れ価格が全て未入力",
+            detail=f"全{total_picks}枚で仕入れ価格未入力 → 粗利計算は相場で代用しています",
+            suggestion="正確な粗利を見るには、在庫タブから各カードの仕入れ価格を入力してください",
+        ))
+    elif no_purchase > 0:
+        ws.append(Warning(
+            SEV_INFO, CAT_ECONOMICS, "一部カードで仕入れ価格未入力",
+            detail=f"{no_purchase}/{total_picks}枚 → そのカードは相場を仕入れ価格として代用",
+            suggestion="正確な粗利のため在庫タブで仕入れ価格を入力推奨",
+        ))
+
     if result.actual_profit_rate < 0:
         loss = result.total_cost - result.total_revenue
         per_spin_loss = loss / spec.total_tickets if spec.total_tickets else 0
         ws.append(Warning(
-            SEV_CRITICAL, CAT_ECONOMICS, "この設定だと赤字",
+            SEV_CRITICAL, CAT_ECONOMICS, "この設定だと赤字（仕入れベース）",
             detail=(
-                f"売上 {_yen(result.total_revenue)} − 原価 {_yen(result.total_cost)} "
+                f"売上 {_yen(result.total_revenue)} − 仕入れ {_yen(result.total_cost)} "
                 f"= {_yen(-loss)}（1口あたり赤字 {_yen(per_spin_loss)}）"
             ),
             suggestion=(
-                f"原価を {_yen(int(result.total_revenue * (1 - spec.target_profit_rate)))} まで下げる"
+                f"仕入れを {_yen(int(result.total_revenue * (1 - spec.target_profit_rate)))} 以下に抑える"
                 f"／総口数を {int(result.total_cost / (spec.price_per_spin * (1 - spec.target_profit_rate))):,}口に増やす"
                 f"／1回価格を {_yen(int(result.total_cost / (spec.total_tickets * (1 - spec.target_profit_rate))))} に上げる"
                 if spec.price_per_spin and spec.total_tickets else ""
@@ -74,11 +94,25 @@ def check_economics(result) -> List[Warning]:
         ws.append(Warning(
             SEV_WARNING, CAT_ECONOMICS,
             f"目標粗利率に{gap*100:.0f}pt届かない",
-            detail=f"目標 {spec.target_profit_rate:.0%} / 実績 {result.actual_profit_rate:.0%}",
-            suggestion=(
-                f"あと {_yen(int(result.total_revenue * gap))} 分の原価圧縮で目標達成"
-            ),
+            detail=f"目標 {spec.target_profit_rate:.0%} / 実績 {result.actual_profit_rate:.0%}（仕入れベース）",
+            suggestion=f"あと {_yen(int(result.total_revenue * gap))} 分の原価圧縮で目標達成",
         ))
+
+    # 顧客還元率の異常チェック
+    if hasattr(result, "customer_return_rate"):
+        if result.customer_return_rate > 1.0:
+            ws.append(Warning(
+                SEV_CRITICAL, CAT_ECONOMICS, "顧客還元率が100%超",
+                detail=f"顧客還元率 {result.customer_return_rate:.0%} - コイン額面が売上を超過",
+                suggestion="原価or当たり数を減らす、または1回価格を上げる",
+            ))
+        elif result.customer_return_rate < 0.50:
+            ws.append(Warning(
+                SEV_WARNING, CAT_ECONOMICS, "顧客還元率が50%未満",
+                detail=f"顧客還元率 {result.customer_return_rate:.0%} - 顧客の購買意欲低下リスク",
+                suggestion="競合は通常60-85%。低すぎると魅力に欠ける可能性",
+            ))
+
     return ws
 
 

@@ -21,13 +21,21 @@ class InventoryItem:
     on_sale_qty: int       # 販売中数量
     remaining_qty: int     # 残数量（新規引当可能）
     price: int             # 相場（1枚）
+    purchase_price: int    # 仕入れ価格（未入力なら0）
+    price_updated: str     # 相場最終更新日時
     card_no: str
     image_url: str
+    snkrdunk_url: str      # スニダン used URL
     allocation_product: str  # 引当中商品ID（カンマ区切り）
 
     @property
     def available_qty(self) -> int:
         return max(0, self.remaining_qty)
+
+    @property
+    def cost_price(self) -> int:
+        """粗利計算に使う実コスト。仕入れ価格があればそれを、なければ相場を使う"""
+        return self.purchase_price if self.purchase_price > 0 else self.price
 
 
 def _col_a1(col_idx_0: int, row: int) -> str:
@@ -63,6 +71,9 @@ def _load_tab(ws, tab_label: str) -> List[InventoryItem]:
     col_reserved = _col_index(headers, config.COL_RESERVED_QTY)
     col_on_sale = _col_index(headers, config.COL_ON_SALE_QTY)
     col_remaining = _col_index(headers, config.COL_REMAINING_QTY)
+    col_purchase = headers.index(config.COL_PURCHASE_PRICE) if config.COL_PURCHASE_PRICE in headers else -1
+    col_price_upd = headers.index(config.COL_PRICE_UPDATED) if config.COL_PRICE_UPDATED in headers else -1
+    col_snk_url = headers.index("スニダン used URL") if "スニダン used URL" in headers else -1
 
     items: List[InventoryItem] = []
     for i, row in enumerate(values[1:], start=2):
@@ -82,13 +93,17 @@ def _load_tab(ws, tab_label: str) -> List[InventoryItem]:
         if remaining is None:
             remaining = qty - reserved - on_sale
 
+        purchase = parse_price(g(col_purchase)) if col_purchase >= 0 else 0
+        purchase = purchase or 0
         items.append(InventoryItem(
             row_idx=i, tab=tab_label, name=name,
             series=g(col_series), grade=g(col_grade), cert=g(col_cert),
             qty=qty, reserved_qty=reserved, on_sale_qty=on_sale, remaining_qty=remaining,
-            price=price,
+            price=price, purchase_price=purchase,
+            price_updated=g(col_price_upd) if col_price_upd >= 0 else "",
             card_no=g(col_cardno) if col_cardno >= 0 else "",
             image_url=g(col_image) if col_image >= 0 else "",
+            snkrdunk_url=g(col_snk_url) if col_snk_url >= 0 else "",
             allocation_product=g(col_product),
         ))
     return items
@@ -171,6 +186,32 @@ def _apply_quantity_delta(ws, row_idx: int, product_id: str, delta_reserved: int
         {"range": _col_a1(c_status, row_idx), "values": [[status_text]]},
         {"range": _col_a1(c_date, row_idx), "values": [[now]]},
     ]
+
+
+def update_market_price(tab_label: str, row_idx: int, new_price: int, note: str = ""):
+    """指定の在庫行の相場を更新し、相場更新日時も記録"""
+    inv = open_inventory()
+    ws = inv.worksheet(config.TAB_PSA10 if tab_label == "PSA10" else config.TAB_BOX)
+    headers = ws.row_values(1)
+    c_price = headers.index("相場（1枚）")
+    c_updated = headers.index(config.COL_PRICE_UPDATED) if config.COL_PRICE_UPDATED in headers else -1
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    label = f"{now}（{note}）" if note else now
+    batch = [{"range": _col_a1(c_price, row_idx), "values": [[new_price]]}]
+    if c_updated >= 0:
+        batch.append({"range": _col_a1(c_updated, row_idx), "values": [[label]]})
+    ws.batch_update(batch, value_input_option="USER_ENTERED")
+
+
+def update_purchase_price(tab_label: str, row_idx: int, new_price: int):
+    inv = open_inventory()
+    ws = inv.worksheet(config.TAB_PSA10 if tab_label == "PSA10" else config.TAB_BOX)
+    headers = ws.row_values(1)
+    c = headers.index(config.COL_PURCHASE_PRICE)
+    ws.batch_update(
+        [{"range": _col_a1(c, row_idx), "values": [[new_price]]}],
+        value_input_option="USER_ENTERED",
+    )
 
 
 def apply_allocation_deltas(deltas: List[Tuple[str, int, str, int, int, int]]):

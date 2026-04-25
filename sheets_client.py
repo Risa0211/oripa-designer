@@ -41,9 +41,9 @@ def get_client() -> gspread.Client:
     return gspread.authorize(creds)
 
 
-@lru_cache(maxsize=2)
 def open_inventory() -> gspread.Spreadsheet:
-    return get_client().open_by_key(config.INVENTORY_SHEET_ID)
+    """セッションのテストモードに応じて本番 or テスト在庫スプシを返す"""
+    return get_client().open_by_key(config.get_active_inventory_sheet_id())
 
 
 @lru_cache(maxsize=2)

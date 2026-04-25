@@ -19,6 +19,8 @@ def ensure_allocation_columns(ws):
         config.COL_RESERVED_QTY,
         config.COL_ON_SALE_QTY,
         config.COL_REMAINING_QTY,
+        config.COL_PURCHASE_PRICE,
+        config.COL_PRICE_UPDATED,
     ]
     missing = [h for h in needed if h not in existing_headers]
     trimmed = [h for h in existing_headers if h]
@@ -68,9 +70,24 @@ def ensure_allocation_columns(ws):
     print(f"  [{ws.title}] 列追加: {missing or '(なし、初期化のみ)'} / 初期化セル: {len(batch)}")
 
 
+def ensure_markup_tab(inv):
+    """上乗せ率設定タブを作成（既にあれば何もしない）"""
+    try:
+        ws = inv.worksheet(config.TAB_MARKUP)
+        existing = ws.row_values(1)
+        if existing == config.MARKUP_HEADERS:
+            print(f"  {config.TAB_MARKUP}: 既存")
+            return
+    except Exception:
+        ws = inv.add_worksheet(title=config.TAB_MARKUP, rows=20, cols=10)
+
+    ws.update([config.MARKUP_HEADERS] + config.DEFAULT_MARKUP_ROWS, "A1", value_input_option="USER_ENTERED")
+    print(f"  {config.TAB_MARKUP}: 初期化（{len(config.DEFAULT_MARKUP_ROWS)}行）")
+
+
 def main():
     inv = open_inventory()
-    print("=== 在庫シート: 引当列追加 ===")
+    print("=== 在庫シート: 引当・仕入れ・相場更新日時列追加 ===")
     for tab_name in [config.TAB_PSA10, config.TAB_BOX]:
         ws = inv.worksheet(tab_name)
         ensure_allocation_columns(ws)
@@ -80,6 +97,9 @@ def main():
     print(f"  {config.TAB_DESIGN_SUMMARY} OK")
     get_or_create_tab(inv, config.TAB_DESIGN_DETAIL, config.DESIGN_DETAIL_HEADERS)
     print(f"  {config.TAB_DESIGN_DETAIL} OK")
+
+    print("\n=== 上乗せ率設定タブ ===")
+    ensure_markup_tab(inv)
 
     print("\n✅ セットアップ完了")
 

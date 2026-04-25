@@ -47,6 +47,32 @@ with header_cols[2]:
 
 st.markdown("---")
 
+# ---------- テストモード切替 ----------
+if "test_mode" not in st.session_state:
+    st.session_state.test_mode = False
+
+mode_col1, mode_col2 = st.columns([3, 1])
+with mode_col2:
+    new_mode = st.toggle(
+        "🧪 テストモード",
+        value=st.session_state.test_mode,
+        help="ONにするとテスト用スプシ（ポケモン在庫管理（テスト））に読み書きします。本番在庫は変更されません",
+    )
+    if new_mode != st.session_state.test_mode:
+        st.session_state.test_mode = new_mode
+        st.cache_data.clear()
+        # デザインセッションも初期化（在庫プールが変わるため）
+        st.session_state.pop("design_session", None)
+        st.session_state.pop("suggestions", None)
+        st.rerun()
+
+if st.session_state.test_mode:
+    with mode_col1:
+        st.warning("🧪 **テストモード中** - テスト用スプシに読み書きします。本番在庫には影響しません。")
+else:
+    with mode_col1:
+        st.info("🔴 **本番モード中** - 操作は本番の在庫スプシに反映されます")
+
 
 # ---------- サイドバー: 参考競合 ----------
 with st.sidebar:
@@ -84,8 +110,8 @@ with st.sidebar:
 
 
 # ---------- メインタブ ----------
-tab_design, tab_products, tab_suggest, tab_inventory = st.tabs([
-    "📝 新規設計", "📋 商品一覧", "🔄 改善提案", "📦 在庫"
+tab_design, tab_products, tab_suggest, tab_inventory, tab_markup = st.tabs([
+    "📝 新規設計", "📋 商品一覧", "🔄 改善提案", "📦 在庫", "⚙️ 上乗せ率設定"
 ])
 
 
@@ -229,17 +255,35 @@ with tab_design:
         )
 
         # --- 総合サマリ ---
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("総売上", f"¥{result.total_revenue:,}")
-        c2.metric("原価合計", f"¥{result.total_cost:,}")
-        c3.metric(
-            "実還元率", f"{result.actual_return_rate:.1%}",
-            delta=f"{(result.actual_return_rate - live_spec.target_return_rate)*100:+.1f}pt",
-        )
+        c1, c2, c3 = st.columns(3)
+        c1.metric("売上（円）", f"¥{result.total_revenue:,}")
+        c2.metric("仕入れ合計", f"¥{result.total_cost:,}", help="仕入れ価格未入力のカードは相場で代用")
+        c3.metric("粗利", f"¥{result.gross_profit:,}", delta=f"{result.actual_profit_rate:.1%}")
+
+        c4, c5, c6 = st.columns(3)
         c4.metric(
-            "実粗利率", f"{result.actual_profit_rate:.1%}",
-            delta=f"{(result.actual_profit_rate - live_spec.target_profit_rate)*100:+.1f}pt",
+            "顧客還元率", f"{result.customer_return_rate:.1%}",
+            help="顧客が見る還元率（コイン額面ベース）= コイン合計 / 売上",
         )
+        c5.metric(
+            "実還元率", f"{result.real_return_rate:.1%}",
+            help="運営の本当の還元率 = 仕入れ合計 / 売上",
+        )
+        c6.metric(
+            "上乗せ差分", f"{(result.customer_return_rate - result.real_return_rate)*100:+.1f}pt",
+            help="顧客還元率と実還元率の差。コイン上乗せによる見せかけの還元率増分",
+        )
+
+        with st.expander("📊 詳細な金額内訳"):
+            st.markdown(f"""
+| 項目 | 金額 |
+|---|---|
+| 売上（円・1コイン=1円換算） | ¥{result.total_revenue:,} |
+| カード相場合計 | ¥{result.total_market:,} |
+| カードコイン額面合計（相場×上乗せ） | ¥{result.total_coin_value:,} |
+| カード仕入れ合計（実コスト） | ¥{result.total_cost:,} |
+| **粗利（売上 − 仕入れ）** | **¥{result.gross_profit:,}** |
+""")
 
         # --- 警告 ---
         from warnings_gen import group_by_category, severity_counts, CATEGORY_LABELS, SEV_CRITICAL, SEV_WARNING, SEV_INFO
@@ -506,37 +550,178 @@ with tab_suggest:
                             st.error(f"失敗: {e}")
 
 
+# ---------- 上乗せ率設定タブ ----------
+with tab_markup:
+    st.subheader("⚙️ 上乗せ率設定（コインの上乗せ）")
+    st.markdown("""
+顧客にはコインで価格を表示します。**カード相場 × (1 + 上乗せ率)** がコイン額面（顧客が見る金額）になります。
+
+例: 相場 ¥100,000 のカードに 20% 上乗せ → コイン額面 120,000コイン（=120,000円換算）として表示
+""")
+    from markup import load_markup_bands, clear_cache as clear_markup_cache
+    bands = load_markup_bands(force=True)
+
+    df_bands = pd.DataFrame([
+        {"価格下限": b.lower, "価格上限": b.upper, "上乗せ率（%）": b.rate_pct}
+        for b in bands
+    ])
+    edited = st.data_editor(
+        df_bands, num_rows="dynamic", use_container_width=True, hide_index=True,
+        column_config={
+            "価格下限": st.column_config.NumberColumn(format="%d", min_value=0),
+            "価格上限": st.column_config.NumberColumn(format="%d", min_value=0),
+            "上乗せ率（%）": st.column_config.NumberColumn(format="%.1f", min_value=0, max_value=100),
+        },
+    )
+
+    save_col, _ = st.columns([1, 4])
+    with save_col:
+        if st.button("💾 設定を保存", type="primary", use_container_width=True):
+            inv = open_inventory()
+            ws = inv.worksheet(config.TAB_MARKUP)
+            new_rows = []
+            for _, row in edited.iterrows():
+                if pd.isna(row["価格下限"]) or pd.isna(row["価格上限"]) or pd.isna(row["上乗せ率（%）"]):
+                    continue
+                new_rows.append([int(row["価格下限"]), int(row["価格上限"]), float(row["上乗せ率（%）"]), ""])
+            ws.clear()
+            ws.update([config.MARKUP_HEADERS] + new_rows, "A1", value_input_option="USER_ENTERED")
+            clear_markup_cache()
+            st.success("✅ 保存しました")
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("### 動作確認")
+    test_price = st.number_input("テスト用相場（円）", min_value=0, value=50000, step=1000)
+    from markup import find_markup_rate, coin_price_for
+    rate = find_markup_rate(int(test_price), bands)
+    coin = coin_price_for(int(test_price), bands)
+    st.info(f"相場 ¥{int(test_price):,} → 上乗せ {rate}% → コイン額面 **{coin:,} コイン**（=¥{coin:,}換算）")
+
+
 # ---------- 在庫タブ ----------
 with tab_inventory:
-    st.subheader("在庫一覧（読み取り専用）")
-    if st.button("🔄 在庫を再読込", key="reload_inv"):
-        st.cache_data.clear()
-        st.rerun()
+    st.subheader("📦 在庫一覧と相場更新")
+
+    btn_cols = st.columns([1, 1, 4])
+    with btn_cols[0]:
+        if st.button("🔄 再読込", key="reload_inv", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+    with btn_cols[1]:
+        bulk_update = st.button("📈 全在庫の相場を一括更新", type="primary", use_container_width=True,
+                                help="snkrdunk URL がある全カードの相場を取得して更新します（1〜数分かかる場合あり）")
+
+    if bulk_update:
+        from snkrdunk_client import fetch_recent_price
+        from inventory import update_market_price as _update_price
+        items_for_update = [it for it in load_all_inventory() if it.snkrdunk_url]
+        if not items_for_update:
+            st.warning("snkrdunk URL付きの在庫がありません")
+        else:
+            progress = st.progress(0)
+            status = st.empty()
+            ok = 0
+            fail = 0
+            for i, it in enumerate(items_for_update):
+                status.text(f"[{i+1}/{len(items_for_update)}] {it.name} を取得中...")
+                price, msg = fetch_recent_price(it.snkrdunk_url)
+                if price and price > 0:
+                    try:
+                        _update_price(it.tab, it.row_idx, price, note=msg.split("／")[0][:30])
+                        ok += 1
+                    except Exception as e:
+                        fail += 1
+                else:
+                    fail += 1
+                progress.progress((i + 1) / len(items_for_update))
+            status.empty()
+            progress.empty()
+            st.success(f"✅ 完了: 成功 {ok}件 / 失敗 {fail}件")
+            st.cache_data.clear()
+            st.rerun()
 
     @st.cache_data(ttl=30)
     def load_inv_df():
         items = load_all_inventory()
-        return pd.DataFrame([
-            {
-                "区分": it.tab, "カード名": it.name, "シリーズ": it.series,
-                "グレード": it.grade,
-                "数量": it.qty, "予約中": it.reserved_qty, "販売中": it.on_sale_qty,
-                "残数量": it.remaining_qty,
-                "相場": it.price,
-                "引当先": it.allocation_product or "",
-            } for it in items
-        ])
+        return items
 
-    dfi = load_inv_df()
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    items = load_inv_df()
+    df = pd.DataFrame([
+        {
+            "区分": it.tab, "カード名": it.name, "シリーズ": it.series,
+            "グレード": it.grade,
+            "数量": it.qty, "予約中": it.reserved_qty, "販売中": it.on_sale_qty,
+            "残数量": it.remaining_qty,
+            "相場": it.price, "仕入れ価格": it.purchase_price,
+            "相場更新": it.price_updated or "-",
+            "snk URL": it.snkrdunk_url,
+            "引当先": it.allocation_product or "",
+            "row_idx": it.row_idx,
+        } for it in items
+    ])
+
+    fc1, fc2, fc3, fc4 = st.columns(4)
+    with fc1:
         f_tab = st.multiselect("区分", options=["PSA10", "BOX"], default=["PSA10", "BOX"])
-    with c2:
-        only_available = st.checkbox("残数量あるものだけ", value=True)
-    with c3:
-        f_min = st.number_input("相場 最低", min_value=0, value=0, step=1000)
-    df_show = dfi[dfi["区分"].isin(f_tab) & (dfi["相場"] >= f_min)]
+    with fc2:
+        only_available = st.checkbox("残数量あり", value=True)
+    with fc3:
+        only_no_purchase = st.checkbox("仕入れ価格未入力のみ", value=False)
+    with fc4:
+        f_search = st.text_input("カード名で絞込")
+
+    df_show = df[df["区分"].isin(f_tab)]
     if only_available:
         df_show = df_show[df_show["残数量"] > 0]
+    if only_no_purchase:
+        df_show = df_show[df_show["仕入れ価格"] == 0]
+    if f_search.strip():
+        df_show = df_show[df_show["カード名"].str.contains(f_search.strip(), na=False)]
+
     st.caption(f"{len(df_show)}件")
-    st.dataframe(df_show, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df_show.drop(columns=["row_idx"]),
+        use_container_width=True, hide_index=True,
+    )
+
+    st.markdown("---")
+    st.markdown("### 個別操作（相場更新・仕入れ価格入力）")
+    st.caption("カードを1つ選んで、相場をsnkrdunkから取得 or 仕入れ価格を入力できます")
+
+    if len(df_show) > 0:
+        sel_idx = st.selectbox(
+            "カードを選択", options=range(len(df_show)),
+            format_func=lambda i: f"[{df_show.iloc[i]['区分']}] {df_show.iloc[i]['カード名']} (相場¥{df_show.iloc[i]['相場']:,}, 仕入¥{df_show.iloc[i]['仕入れ価格']:,})",
+        )
+        sel = df_show.iloc[sel_idx]
+        op_cols = st.columns([2, 2, 2])
+        with op_cols[0]:
+            if st.button(
+                "📈 このカードの相場をsnkrdunkから更新",
+                disabled=not sel["snk URL"],
+                use_container_width=True,
+            ):
+                from snkrdunk_client import fetch_recent_price
+                from inventory import update_market_price as _update_price
+                with st.spinner("取得中..."):
+                    price, msg = fetch_recent_price(sel["snk URL"])
+                if price:
+                    _update_price(sel["区分"], int(sel["row_idx"]), price, note=msg.split("／")[0][:30])
+                    st.success(f"✅ 相場 ¥{sel['相場']:,} → ¥{price:,} に更新（{msg}）")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.error(f"取得失敗: {msg}")
+        with op_cols[1]:
+            new_purchase = st.number_input(
+                "仕入れ価格（円）", min_value=0, value=int(sel["仕入れ価格"]), step=1000,
+                key=f"pp_{sel_idx}",
+            )
+        with op_cols[2]:
+            if st.button("💾 仕入れ価格を保存", use_container_width=True):
+                from inventory import update_purchase_price
+                update_purchase_price(sel["区分"], int(sel["row_idx"]), int(new_purchase))
+                st.success(f"✅ 仕入れ価格 ¥{new_purchase:,} を保存")
+                st.cache_data.clear()
+                st.rerun()
