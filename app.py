@@ -147,24 +147,43 @@ with tab_design:
     tier_specs: list[TierSpec] = []
     if selected_tier_names:
         st.markdown("各等の設定")
-        cols_header = st.columns([1, 1, 2, 2] if mode == "X" else [1, 1, 2, 2])
+
+        # 等別上乗せ率の自動提案ボタン
+        suggest_col1, suggest_col2 = st.columns([1, 5])
+        with suggest_col1:
+            suggest_markup_btn = st.button(
+                "💡 上乗せ率を自動提案",
+                help="各等の目標相場に応じて、価格帯別ルールから上乗せ率を自動入力。手動でも上書き可能",
+                key="suggest_markup",
+            )
+
+        cols_header = st.columns([1, 1, 2, 1.5, 2])
         cols_header[0].markdown("**等級**")
         cols_header[1].markdown("**当たり数**")
         if mode == "X":
             cols_header[2].markdown("**1枚あたり目標相場（円）**")
-            cols_header[3].markdown("**参考**")
         else:
             cols_header[2].markdown("**原価配分比率（%）**")
-            cols_header[3].markdown("**参考**")
+        cols_header[3].markdown("**上乗せ率（%）**")
+        cols_header[4].markdown("**参考**")
 
-        # デフォルト値: 参考競合のカード数と、等級ごとに階段状の目標相場
         default_prices = {"1等": 200000, "2等": 50000, "3等": 15000, "4等": 5000, "5等": 2000, "6等": 1000, "7等": 500, "キリ番": 10000, "ラストワン": 100000}
         default_ratios = {"1等": 25, "2等": 25, "3等": 20, "4等": 15, "5等": 8, "6等": 4, "7等": 2, "キリ番": 1, "ラストワン": 0}
+
+        # 自動提案ボタン押下時: 各等の目標相場から推奨率を計算してセッションに保存
+        if suggest_markup_btn:
+            from markup import load_markup_bands, suggest_tier_rate
+            bands = load_markup_bands(force=True)
+            for tname in selected_tier_names:
+                target = st.session_state.get(f"price_{tname}", default_prices.get(tname, 10000))
+                rate = suggest_tier_rate(int(target or 0), bands)
+                st.session_state[f"markup_{tname}"] = float(rate)
+            st.rerun()
 
         for tname in selected_tier_names:
             ref_text = selected_ref.tiers.get(tname, "")
             default_count = count_cards_in_tier(ref_text) or 1
-            row = st.columns([1, 1, 2, 2])
+            row = st.columns([1, 1, 2, 1.5, 2])
             row[0].markdown(f"**{tname}**")
             cnt = row[1].number_input(
                 f"count_{tname}", min_value=0, value=default_count, step=1,
@@ -175,15 +194,32 @@ with tab_design:
                     f"price_{tname}", min_value=0, value=default_prices.get(tname, 10000), step=1000,
                     label_visibility="collapsed", key=f"price_{tname}",
                 )
-                tier_specs.append(TierSpec(name=tname, count=cnt, target_price=price_each))
+                tier_target = price_each
             else:
                 ratio = row[2].number_input(
                     f"ratio_{tname}", min_value=0.0, max_value=100.0,
                     value=float(default_ratios.get(tname, 10)), step=1.0,
                     label_visibility="collapsed", key=f"ratio_{tname}",
                 )
-                tier_specs.append(TierSpec(name=tname, count=cnt, budget_ratio=ratio))
-            row[3].caption(ref_text[:80] + ("…" if len(ref_text) > 80 else ""))
+                tier_target = 0
+            # 上乗せ率（等別、空欄なら-1=価格帯ルール）
+            markup_key = f"markup_{tname}"
+            markup_default = st.session_state.get(markup_key, -1.0)
+            markup_rate = row[3].number_input(
+                f"markup_input_{tname}",
+                min_value=-1.0, max_value=200.0, step=1.0,
+                value=float(markup_default),
+                label_visibility="collapsed",
+                key=markup_key,
+                help="-1のままなら価格帯別ルールを使用。0以上を入れると等別の値を使う",
+            )
+            if mode == "X":
+                tier_specs.append(TierSpec(name=tname, count=cnt, target_price=tier_target, markup_rate_pct=markup_rate))
+            else:
+                tier_specs.append(TierSpec(name=tname, count=cnt, budget_ratio=ratio, markup_rate_pct=markup_rate))
+            row[4].caption(ref_text[:60] + ("…" if len(ref_text) > 60 else ""))
+
+        st.caption("💡 上乗せ率: `-1` = 価格帯別ルール（⚙️タブ）を自動適用 / `0以上` = 等別に指定した値を適用")
 
     # モードY の場合: 合計比率チェック
     if mode == "Y" and tier_specs:

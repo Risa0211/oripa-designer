@@ -79,6 +79,11 @@ def coin_price_for(market_price: int, bands: List[MarkupBand] = None) -> int:
     return int(round(market_price * (1 + rate / 100)))
 
 
+def suggest_tier_rate(target_price: int, bands: List[MarkupBand] = None) -> float:
+    """等の目標相場から、価格帯別ルールに基づく推奨上乗せ率（%）を返す"""
+    return find_markup_rate(target_price, bands)
+
+
 def clear_cache():
     _cache["bands"] = None
     _cache["ts"] = None

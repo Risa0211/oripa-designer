@@ -16,6 +16,7 @@ class TierSpec:
     count: int                 # 当たり数（枚）
     target_price: int = 0      # モードX: 1枚あたり目標相場
     budget_ratio: float = 0.0  # モードY: 原価予算における配分比率（%）
+    markup_rate_pct: float = -1.0  # 等別の上乗せ率（%）。-1なら価格帯別ルールにフォールバック
 
 
 @dataclass
@@ -188,15 +189,23 @@ def _build_result(spec, tier_results, total_revenue, inventory, reference):
     from warnings_gen import generate_warnings
 
     bands = load_markup_bands()
+    # 等名 → 等別上乗せ率（%）のマップ
+    tier_markup_map = {ts.name: ts.markup_rate_pct for ts in spec.tiers}
 
     total_cost = 0       # 仕入れベース合計
     total_market = 0     # 相場合計
     total_coin = 0       # コイン額面合計
     for tr in tier_results:
+        tier_rate = tier_markup_map.get(tr.name, -1.0)
         for it in tr.selected:
             total_cost += it.cost_price
             total_market += it.price
-            total_coin += coin_price_for(it.price, bands)
+            if tier_rate >= 0:
+                # 等別の上乗せ率を適用
+                total_coin += int(round(it.price * (1 + tier_rate / 100)))
+            else:
+                # 価格帯別ルールにフォールバック
+                total_coin += coin_price_for(it.price, bands)
 
     real_return = total_cost / total_revenue if total_revenue else 0
     actual_profit = 1 - real_return
