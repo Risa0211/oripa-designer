@@ -110,8 +110,8 @@ with st.sidebar:
 
 
 # ---------- メインタブ ----------
-tab_design, tab_products, tab_suggest, tab_inventory, tab_markup = st.tabs([
-    "📝 新規設計", "📋 商品一覧", "🔄 改善提案", "📦 在庫", "⚙️ 上乗せ率設定"
+tab_design, tab_premium, tab_products, tab_suggest, tab_inventory, tab_markup = st.tabs([
+    "📝 新規設計", "🎰 限定ガチャ", "📋 商品一覧", "🔄 改善提案", "📦 在庫", "⚙️ 上乗せ率設定"
 ])
 
 
@@ -486,6 +486,366 @@ with tab_design:
                 st.success(f"✅ 予約中として保存しました: **{pid}**")
                 st.session_state.design_session = None
                 st.balloons()
+
+
+# ---------- 限定ガチャタブ ----------
+with tab_premium:
+    from premium_designer import (
+        PremiumDesignSpec, PointBucket, design_premium,
+        build_premium_result_from_selections, save_premium_reservation,
+    )
+
+    st.subheader("🎰 限定ガチャ設計")
+    st.caption("DOPA型の限定ガチャ（外れ枠ポイント還元・最低保証・ラストワン賞対応）")
+
+    pg_col_stock, pg_col_info = st.columns([1, 3])
+    with pg_col_stock:
+        pg_stock_label = st.radio(
+            "在庫モード",
+            options=["在庫連動", "無在庫"], horizontal=True,
+            label_visibility="collapsed",
+            key="pg_stock_mode",
+        )
+    pg_stock_mode = "no_stock" if pg_stock_label == "無在庫" else "linked"
+    with pg_col_info:
+        if pg_stock_mode == "no_stock":
+            st.warning("🛒 無在庫モード: 全カード選択可・在庫スプシ非更新")
+        else:
+            st.info("📦 在庫連動モード: 残数量から選択・引当する")
+
+    st.markdown("### ① 販売パラメータ")
+    pc1, pc2, pc3, pc4 = st.columns(4)
+    with pc1:
+        pg_title = st.text_input("商品タイトル", value="新規限定ガチャ", key="pg_title")
+    with pc2:
+        pg_total = st.number_input("総口数", min_value=1, value=8000, step=100, key="pg_total")
+    with pc3:
+        pg_price = st.number_input("1回コイン消費（pt）", min_value=1, value=2800, step=100, key="pg_price")
+    with pc4:
+        pg_profit = st.number_input("目標粗利率（%）", min_value=0.0, max_value=100.0, value=30.0, step=1.0, key="pg_profit")
+
+    pg_revenue = pg_total * pg_price
+    st.info(f"💰 売上: ¥{pg_revenue:,}（{pg_total:,}口 × {pg_price:,}pt）")
+
+    st.markdown("### ② ポイント還元設定")
+    pp1, pp2 = st.columns(2)
+    with pp1:
+        pg_min_guarantee = st.number_input(
+            "最低保証pt（外れ枠の残口数に配る）",
+            min_value=0, value=1000, step=100,
+            help="ポイント枠の指定後、残った口数にこのpt数を配ります",
+            key="pg_min_guarantee",
+        )
+    with pp2:
+        pg_real_cost_rate = st.slider(
+            "ポイント実コスト率（%）",
+            min_value=0, max_value=100, value=70, step=5,
+            help="還元したポイントのうち、実際にコスト化する割合。100%=全部消費される、0%=塩漬けで実コスト0",
+            key="pg_real_cost_rate",
+        )
+
+    st.markdown("### ③ 当たりカード等構成")
+    if "pg_card_tier_count" not in st.session_state:
+        st.session_state.pg_card_tier_count = 3
+
+    pg_default_tiers = [
+        ("S賞", 5, 500000, 30.0),
+        ("A賞", 50, 80000, 25.0),
+        ("B賞", 200, 15000, 20.0),
+        ("C賞", 500, 5000, 15.0),
+    ]
+
+    pg_card_tiers = []
+    headers_c = st.columns([1, 1, 2, 1.5, 1])
+    headers_c[0].markdown("**等級**")
+    headers_c[1].markdown("**当たり数**")
+    headers_c[2].markdown("**目標相場（円）**")
+    headers_c[3].markdown("**上乗せ率（%）**")
+    headers_c[4].markdown("")
+
+    for i in range(st.session_state.pg_card_tier_count):
+        default = pg_default_tiers[i] if i < len(pg_default_tiers) else (f"{i+1}等", 10, 1000, 15.0)
+        cc = st.columns([1, 1, 2, 1.5, 1])
+        tname = cc[0].text_input(f"name_{i}", value=default[0], label_visibility="collapsed", key=f"pg_tname_{i}")
+        tcount = cc[1].number_input(f"count_{i}", min_value=0, value=default[1], step=1, label_visibility="collapsed", key=f"pg_tcount_{i}")
+        tprice = cc[2].number_input(f"price_{i}", min_value=0, value=default[2], step=1000, label_visibility="collapsed", key=f"pg_tprice_{i}")
+        tmarkup = cc[3].number_input(f"markup_{i}", min_value=-1.0, max_value=200.0, value=float(default[3]), step=1.0, label_visibility="collapsed", key=f"pg_tmarkup_{i}")
+        if tname and tcount > 0:
+            from designer import TierSpec
+            pg_card_tiers.append(TierSpec(name=tname, count=tcount, target_price=tprice, markup_rate_pct=tmarkup))
+        cc[4].caption(f"#{i+1}")
+
+    btn_add_col, btn_rm_col, _ = st.columns([1, 1, 4])
+    with btn_add_col:
+        if st.button("➕ 等を追加", key="pg_add_tier"):
+            st.session_state.pg_card_tier_count += 1
+            st.rerun()
+    with btn_rm_col:
+        if st.button("➖ 等を削除", key="pg_rm_tier", disabled=st.session_state.pg_card_tier_count <= 1):
+            st.session_state.pg_card_tier_count -= 1
+            st.rerun()
+
+    st.markdown("### ④ 外れポイント枠（区分指定）")
+    st.caption("ここで指定したpt×口数の合計を超える残口数には、最低保証ptが配られます")
+    if "pg_bucket_count" not in st.session_state:
+        st.session_state.pg_bucket_count = 3
+
+    pg_default_buckets = [(10000, 5), (5000, 20), (3000, 100), (1000, 500)]
+    pg_buckets = []
+    h_b = st.columns([2, 2, 1])
+    h_b[0].markdown("**ポイント値（pt）**")
+    h_b[1].markdown("**口数**")
+    h_b[2].markdown("")
+
+    for i in range(st.session_state.pg_bucket_count):
+        default = pg_default_buckets[i] if i < len(pg_default_buckets) else (1000, 100)
+        bc = st.columns([2, 2, 1])
+        pv = bc[0].number_input(f"pv_{i}", min_value=0, value=default[0], step=100, label_visibility="collapsed", key=f"pg_pv_{i}")
+        pc_ = bc[1].number_input(f"pc_{i}", min_value=0, value=default[1], step=1, label_visibility="collapsed", key=f"pg_pc_{i}")
+        if pv > 0 and pc_ > 0:
+            pg_buckets.append(PointBucket(point_value=pv, count=pc_))
+        bc[2].caption(f"#{i+1}")
+
+    bbcol1, bbcol2, _ = st.columns([1, 1, 4])
+    with bbcol1:
+        if st.button("➕ 区分追加", key="pg_add_b"):
+            st.session_state.pg_bucket_count += 1
+            st.rerun()
+    with bbcol2:
+        if st.button("➖ 区分削除", key="pg_rm_b", disabled=st.session_state.pg_bucket_count <= 1):
+            st.session_state.pg_bucket_count -= 1
+            st.rerun()
+
+    st.markdown("### ⑤ ラストワン賞（任意）")
+    pg_has_last = st.checkbox("ラストワン賞あり（最後の1口を引いた人に確定）", value=True, key="pg_has_last")
+    pg_last_tier = None
+    pg_last_pt = 0
+    if pg_has_last:
+        last_type = st.radio(
+            "ラストワン賞のタイプ", options=["カード", "ポイント"],
+            horizontal=True, key="pg_last_type",
+        )
+        if last_type == "カード":
+            lc1, lc2 = st.columns(2)
+            with lc1:
+                pg_last_price = st.number_input("ラストワン目標相場（円）", min_value=0, value=1000000, step=10000, key="pg_last_price")
+            with lc2:
+                pg_last_markup = st.number_input("ラストワン上乗せ率（%）", min_value=-1.0, max_value=200.0, value=30.0, step=1.0, key="pg_last_markup")
+            from designer import TierSpec
+            pg_last_tier = TierSpec(name="ラストワン賞", count=1, target_price=pg_last_price, markup_rate_pct=pg_last_markup)
+        else:
+            pg_last_pt = st.number_input("ラストワンpt", min_value=0, value=100000, step=1000, key="pg_last_pt")
+
+    st.markdown("### ⑥ 競合参考（任意）")
+    pg_use_ref = st.checkbox("既存リサーチDBから参考競合を選ぶ", value=False, key="pg_use_ref")
+    pg_selected_ref = None
+    if pg_use_ref:
+        refs_all = load_all_references()
+        pg_search = st.text_input("検索", placeholder="例: 福袋、JTC、超高還元", key="pg_ref_search")
+        filtered = [r for r in refs_all if (pg_search.lower() in r.title.lower() or pg_search in r.no) if pg_search.strip()]
+        if filtered:
+            pg_idx = st.selectbox(
+                "競合", options=range(min(50, len(filtered))),
+                format_func=lambda i: f"No.{filtered[i].no} {filtered[i].title} (¥{filtered[i].price_per_coin}×{filtered[i].total_tickets:,}口)",
+                key="pg_ref_pick",
+            )
+            pg_selected_ref = filtered[pg_idx]
+            with st.expander(f"参考: {pg_selected_ref.title}"):
+                for t, v in pg_selected_ref.tiers.items():
+                    st.markdown(f"**{t}**: {v[:200]}{'...' if len(v) > 200 else ''}")
+
+    pg_note = st.text_area("メモ（任意）", height=60, key="pg_note")
+
+    st.markdown("---")
+    pg_b1, pg_b2, pg_b3 = st.columns([1, 1, 2])
+    with pg_b1:
+        pg_preview_btn = st.button("🔍 自動提案", type="primary", key="pg_preview", use_container_width=True)
+    with pg_b2:
+        pg_reset_btn = st.button("♻ 再割当", key="pg_reset",
+                                 disabled=st.session_state.get("pg_session") is None,
+                                 use_container_width=True)
+    with pg_b3:
+        pg_save_btn = st.button("💾 この内容で保存", type="secondary", key="pg_save",
+                                disabled=st.session_state.get("pg_session") is None,
+                                use_container_width=True)
+
+    def build_pg_spec():
+        return PremiumDesignSpec(
+            title=pg_title,
+            reference_no=pg_selected_ref.no if pg_selected_ref else "",
+            reference_title=pg_selected_ref.title if pg_selected_ref else "",
+            total_tickets=pg_total, price_per_spin=pg_price,
+            target_profit_rate=pg_profit / 100,
+            stock_mode=pg_stock_mode,
+            card_tiers=pg_card_tiers,
+            point_buckets=pg_buckets,
+            minimum_guarantee_pt=pg_min_guarantee,
+            point_real_cost_rate=pg_real_cost_rate / 100,
+            has_last_one=pg_has_last,
+            last_one_tier=pg_last_tier,
+            last_one_point=pg_last_pt,
+            note=pg_note,
+        )
+
+    if pg_preview_btn or pg_reset_btn:
+        spec_pg = build_pg_spec()
+        with st.spinner("マッチング中..."):
+            result_pg = design_premium(spec_pg, reference=pg_selected_ref)
+        tier_selections_pg = {
+            tr.name: [(it.tab, it.row_idx) for it in tr.selected]
+            for tr in result_pg.card_tier_results
+        }
+        last_one_sel = None
+        if result_pg.last_one_tier_result and result_pg.last_one_tier_result.selected:
+            it = result_pg.last_one_tier_result.selected[0]
+            last_one_sel = (it.tab, it.row_idx)
+        st.session_state.pg_session = {
+            "spec": spec_pg,
+            "tier_selections": tier_selections_pg,
+            "last_one_selection": last_one_sel,
+            "inventory": result_pg.all_inventory,
+            "ref": pg_selected_ref,
+        }
+
+    pg_session = st.session_state.get("pg_session")
+    if pg_session:
+        live_pg_spec = build_pg_spec()
+        for t in live_pg_spec.card_tiers:
+            pg_session["tier_selections"].setdefault(t.name, [])
+        valid_names_pg = {t.name for t in live_pg_spec.card_tiers}
+        pg_session["tier_selections"] = {k: v for k, v in pg_session["tier_selections"].items() if k in valid_names_pg}
+        pg_session["spec"] = live_pg_spec
+
+        result_pg = build_premium_result_from_selections(
+            live_pg_spec, pg_session["tier_selections"],
+            pg_session["inventory"],
+            last_one_selection=pg_session.get("last_one_selection"),
+            reference=pg_session.get("ref"),
+        )
+
+        st.markdown("## 結果")
+        rc1, rc2, rc3 = st.columns(3)
+        rc1.metric("売上", f"¥{result_pg.total_revenue:,}")
+        rc2.metric("実コスト", f"¥{result_pg.total_card_cost + result_pg.total_point_real_cost:,}")
+        rc3.metric("粗利", f"¥{result_pg.gross_profit:,}", delta=f"{result_pg.actual_profit_rate:.1%}")
+
+        rc4, rc5, rc6 = st.columns(3)
+        rc4.metric("顧客還元率", f"{result_pg.customer_return_rate:.1%}",
+                   help="顧客が見る還元率（コイン額面ベース、ポイント還元含む）")
+        rc5.metric("実還元率", f"{result_pg.real_return_rate:.1%}",
+                   help="運営の本当の還元率（カード仕入れ + ポイント実コスト）")
+        rc6.metric("コイン上乗せ差分",
+                   f"{(result_pg.customer_return_rate - result_pg.real_return_rate)*100:+.1f}pt")
+
+        with st.expander("📊 詳細内訳"):
+            st.markdown(f"""
+| 項目 | 金額 |
+|---|---|
+| 売上 | ¥{result_pg.total_revenue:,} |
+| カード相場合計 | ¥{result_pg.total_card_market:,} |
+| カード仕入れ合計 | ¥{result_pg.total_card_cost:,} |
+| ポイント還元（額面） | ¥{result_pg.total_point_value:,} |
+| ポイント還元（実コスト × {live_pg_spec.point_real_cost_rate:.0%}） | ¥{result_pg.total_point_real_cost:,} |
+| コイン額面合計（顧客視点） | ¥{result_pg.total_coin_value:,} |
+| **実コスト合計** | ¥{result_pg.total_card_cost + result_pg.total_point_real_cost:,} |
+| **粗利** | ¥{result_pg.gross_profit:,} |
+""")
+            st.markdown(f"**口数内訳**: 当たり {result_pg.all_card_count} 口 + 外れ {result_pg.all_point_count} 口"
+                        + (" + ラストワン 1 口" if (live_pg_spec.has_last_one and (result_pg.last_one_tier_result or live_pg_spec.last_one_point > 0)) else "")
+                        + f" = {result_pg.all_card_count + result_pg.all_point_count + (1 if (live_pg_spec.has_last_one and (result_pg.last_one_tier_result or live_pg_spec.last_one_point > 0)) else 0)} 口（総口数 {live_pg_spec.total_tickets} 口）")
+            st.markdown(f"**外れ構成**: {result_pg.point_result.buckets_summary}")
+
+        # 警告
+        if result_pg.warnings:
+            with st.expander(f"⚠ 警告 ({len(result_pg.warnings)}件)", expanded=any(w[0]=='critical' for w in result_pg.warnings)):
+                for sev, title, detail in result_pg.warnings:
+                    if sev == "critical":
+                        st.error(f"🔴 **{title}**\n\n{detail}")
+                    elif sev == "warning":
+                        st.warning(f"🟡 **{title}**\n\n{detail}")
+                    else:
+                        st.info(f"🔵 **{title}**\n\n{detail}")
+
+        # 各カード等の選定表示（既存タブと同じスタイル、簡略版）
+        st.markdown("### 当たりカード等の構成")
+        all_inv_pg = pg_session["inventory"]
+        inv_by_key_pg = {(it.tab, it.row_idx): it for it in all_inv_pg}
+        used_in_pg = set()
+        for keys in pg_session["tier_selections"].values():
+            for k in keys:
+                used_in_pg.add(k)
+        if pg_session.get("last_one_selection"):
+            used_in_pg.add(pg_session["last_one_selection"])
+
+        for tspec in live_pg_spec.card_tiers:
+            tname = tspec.name
+            keys = pg_session["tier_selections"].get(tname, [])
+            current_items = [inv_by_key_pg.get(k) for k in keys if k in inv_by_key_pg]
+            avg = sum(it.price for it in current_items) // len(current_items) if current_items else 0
+            with st.expander(f"{tname}｜目標¥{tspec.target_price:,} × {tspec.count}枚｜選定{len(current_items)}枚 平均¥{avg:,}", expanded=False):
+                if current_items:
+                    for i, it in enumerate(current_items):
+                        cols = st.columns([5, 2, 1])
+                        cols[0].markdown(f"{it.name} `{it.series or ''}`")
+                        cols[1].markdown(f"¥{it.price:,}")
+                        if cols[2].button("❌", key=f"pg_rm_{tname}_{i}"):
+                            pg_session["tier_selections"][tname].pop(i)
+                            st.rerun()
+                # 候補追加
+                target = tspec.target_price
+                if live_pg_spec.stock_mode == "no_stock":
+                    cand = [it for it in all_inv_pg if (it.tab, it.row_idx) not in used_in_pg]
+                else:
+                    cand = [it for it in all_inv_pg if it.available_qty > 0 and (it.tab, it.row_idx) not in used_in_pg]
+                if target > 0:
+                    cand.sort(key=lambda x: abs(x.price - target))
+                show_n = st.number_input(f"表示件数_{tname}", min_value=5, max_value=50, value=10, key=f"pg_showcnt_{tname}", label_visibility="collapsed")
+                for j, it in enumerate(cand[:show_n]):
+                    cols = st.columns([4, 2, 2, 1])
+                    cols[0].markdown(f"{it.name} `{it.series or ''}`")
+                    cols[1].markdown(f"¥{it.price:,}")
+                    dev = (it.price / target - 1) if target else 0
+                    cols[2].markdown(f"{dev:+.0%}" if target else "-")
+                    if cols[3].button("➕", key=f"pg_add_{tname}_{j}_{it.row_idx}"):
+                        pg_session["tier_selections"][tname].append((it.tab, it.row_idx))
+                        st.rerun()
+
+        # ラストワン賞のカード選定
+        if live_pg_spec.has_last_one and live_pg_spec.last_one_tier:
+            t = live_pg_spec.last_one_tier
+            cur = pg_session.get("last_one_selection")
+            cur_item = inv_by_key_pg.get(cur) if cur else None
+            with st.expander(f"ラストワン賞｜目標¥{t.target_price:,} × 1枚｜{'選定済' if cur_item else '未選定'}", expanded=False):
+                if cur_item:
+                    cols = st.columns([5, 2, 1])
+                    cols[0].markdown(f"{cur_item.name} `{cur_item.series or ''}`")
+                    cols[1].markdown(f"¥{cur_item.price:,}")
+                    if cols[2].button("❌", key="pg_rm_lastone"):
+                        pg_session["last_one_selection"] = None
+                        st.rerun()
+                # 候補
+                target = t.target_price
+                if live_pg_spec.stock_mode == "no_stock":
+                    cand = [it for it in all_inv_pg if (it.tab, it.row_idx) not in used_in_pg]
+                else:
+                    cand = [it for it in all_inv_pg if it.available_qty > 0 and (it.tab, it.row_idx) not in used_in_pg]
+                if target > 0:
+                    cand.sort(key=lambda x: abs(x.price - target))
+                for j, it in enumerate(cand[:10]):
+                    cols = st.columns([4, 2, 2, 1])
+                    cols[0].markdown(f"{it.name} `{it.series or ''}`")
+                    cols[1].markdown(f"¥{it.price:,}")
+                    cols[2].markdown(f"{(it.price/target-1):+.0%}" if target else "-")
+                    if cols[3].button("➕", key=f"pg_addlast_{j}_{it.row_idx}"):
+                        pg_session["last_one_selection"] = (it.tab, it.row_idx)
+                        st.rerun()
+
+        if pg_save_btn:
+            with st.spinner("保存中..."):
+                pid = save_premium_reservation(result_pg)
+            st.success(f"✅ 限定ガチャを予約中として保存しました: **{pid}**")
+            st.session_state.pg_session = None
+            st.balloons()
 
 
 # ---------- 商品一覧タブ ----------
