@@ -31,6 +31,7 @@ class DesignSpec:
     target_return_rate: float  # 顧客還元率の目標（コインベース）= 1 - target_profit_rate ※簡易
     tiers: List[TierSpec]
     note: str = ""
+    stock_mode: str = "linked"  # "linked" (在庫連動) or "no_stock" (無在庫)
 
 
 @dataclass
@@ -116,6 +117,17 @@ def design(spec: DesignSpec, inventory: Optional[List[InventoryItem]] = None, re
     if reference is None:
         from research import find_reference
         reference = find_reference(spec.reference_no)
+
+    # 無在庫モードでは残数量を仮想的に無制限扱い（編集はしない、計算上のみ）
+    if spec.stock_mode == "no_stock":
+        # コピーして残数量を強制的にqty以上に設定（少なくとも100枚は使える状態）
+        from copy import copy
+        virtual_inventory = []
+        for it in inventory:
+            it2 = copy(it)
+            it2.remaining_qty = max(it.qty, 100)  # 仮想的に十分な在庫があると見なす
+            virtual_inventory.append(it2)
+        inventory = virtual_inventory
 
     # available 在庫のみ
     items = [it for it in inventory if it.available_qty > 0]
@@ -281,6 +293,11 @@ def save_reservation(result: DesignResult) -> str:
         f"{tr.name}{tr.requested}枚(¥{tr.target_price_each:,})" for tr in result.tier_results
     )
 
+    # 無在庫モードはメモ欄にフラグを記載（既存カラム構成を維持するため）
+    note_with_flag = result.spec.note
+    if result.spec.stock_mode == "no_stock":
+        note_with_flag = "【無在庫】 " + (note_with_flag or "")
+
     # サマリ行
     summary_row = [
         product_id,
@@ -300,7 +317,7 @@ def save_reservation(result: DesignResult) -> str:
         f"{result.actual_return_rate:.2%}",
         f"{result.actual_profit_rate:.2%}",
         tier_summary_str,
-        result.spec.note,
+        note_with_flag,
     ]
     ws_summary.append_row(summary_row, value_input_option="USER_ENTERED")
 
@@ -323,16 +340,17 @@ def save_reservation(result: DesignResult) -> str:
     if detail_rows:
         ws_detail.append_rows(detail_rows, value_input_option="USER_ENTERED")
 
-    # 在庫引当（数量ベース）
-    from collections import Counter
-    per_row_count: Counter = Counter()
-    for tr in result.tier_results:
-        for it in tr.selected:
-            per_row_count[(it.tab, it.row_idx)] += 1
-    deltas = [
-        (tab, row_idx, product_id, cnt, 0, 0)  # reserved +cnt
-        for (tab, row_idx), cnt in per_row_count.items()
-    ]
-    apply_allocation_deltas(deltas)
+    # 在庫引当（数量ベース）。無在庫モードはスキップ
+    if result.spec.stock_mode != "no_stock":
+        from collections import Counter
+        per_row_count: Counter = Counter()
+        for tr in result.tier_results:
+            for it in tr.selected:
+                per_row_count[(it.tab, it.row_idx)] += 1
+        deltas = [
+            (tab, row_idx, product_id, cnt, 0, 0)  # reserved +cnt
+            for (tab, row_idx), cnt in per_row_count.items()
+        ]
+        apply_allocation_deltas(deltas)
 
     return product_id

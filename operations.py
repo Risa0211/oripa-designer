@@ -13,6 +13,21 @@ def _find_product_row(ws, product_id: str):
     return cell.row if cell else None
 
 
+def _is_no_stock_product(product_id: str) -> bool:
+    """商品設計サマリのメモ欄から無在庫フラグを判定"""
+    inv = open_inventory()
+    ws = inv.worksheet(config.TAB_DESIGN_SUMMARY)
+    row = _find_product_row(ws, product_id)
+    if row is None:
+        return False
+    headers = ws.row_values(1)
+    if "メモ" not in headers:
+        return False
+    c_note = headers.index("メモ") + 1
+    note = ws.cell(row, c_note).value or ""
+    return "【無在庫】" in note
+
+
 def _get_detail_items(product_id: str) -> List[Tuple[str, int, int]]:
     """明細タブから (tab, row_idx, qty) を全て取得"""
     inv = open_inventory()
@@ -51,24 +66,27 @@ def _update_product_status(product_id: str, new_status: str):
 
 
 def approve(product_id: str):
-    """予約中 → 販売中（予約中数量を販売中数量に移す）"""
-    details = _get_detail_items(product_id)
-    deltas = [(tab, r, product_id, -q, +q, 0) for (tab, r, q) in details]
-    apply_allocation_deltas(deltas)
+    """予約中 → 販売中（予約中数量を販売中数量に移す）。無在庫商品は在庫操作なし"""
+    if not _is_no_stock_product(product_id):
+        details = _get_detail_items(product_id)
+        deltas = [(tab, r, product_id, -q, +q, 0) for (tab, r, q) in details]
+        apply_allocation_deltas(deltas)
     _update_product_status(product_id, config.STATUS_ON_SALE)
 
 
 def cancel(product_id: str):
-    """予約中 → ボツ（予約中数量を戻す）"""
-    details = _get_detail_items(product_id)
-    deltas = [(tab, r, product_id, -q, 0, 0) for (tab, r, q) in details]
-    apply_allocation_deltas(deltas)
+    """予約中 → ボツ（予約中数量を戻す）。無在庫商品は在庫操作なし"""
+    if not _is_no_stock_product(product_id):
+        details = _get_detail_items(product_id)
+        deltas = [(tab, r, product_id, -q, 0, 0) for (tab, r, q) in details]
+        apply_allocation_deltas(deltas)
     _update_product_status(product_id, config.STATUS_CANCELLED)
 
 
 def close_sold_out(product_id: str):
-    """販売中 → 完売（販売中数量 -N、数量 -N、物理在庫を減らす）"""
-    details = _get_detail_items(product_id)
-    deltas = [(tab, r, product_id, 0, -q, -q) for (tab, r, q) in details]
-    apply_allocation_deltas(deltas)
+    """販売中 → 完売。無在庫商品は在庫操作なし（仕入れタイミングが販売後のため）"""
+    if not _is_no_stock_product(product_id):
+        details = _get_detail_items(product_id)
+        deltas = [(tab, r, product_id, 0, -q, -q) for (tab, r, q) in details]
+        apply_allocation_deltas(deltas)
     _update_product_status(product_id, config.STATUS_SOLD_OUT)

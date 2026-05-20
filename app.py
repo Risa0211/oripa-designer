@@ -116,7 +116,25 @@ tab_design, tab_products, tab_suggest, tab_inventory, tab_markup = st.tabs([
 
 
 with tab_design:
-    st.subheader("② 販売パラメータ")
+    st.subheader("② 在庫モード")
+    mode_cols = st.columns([1, 3])
+    with mode_cols[0]:
+        stock_mode_label = st.radio(
+            "モード",
+            options=["在庫連動", "無在庫"],
+            horizontal=True,
+            label_visibility="collapsed",
+            help="無在庫: 在庫表の数量を無視して全カードから選択可能。保存しても在庫の予約中数量は増えません",
+            key="stock_mode_radio",
+        )
+    stock_mode = "no_stock" if stock_mode_label == "無在庫" else "linked"
+    with mode_cols[1]:
+        if stock_mode == "no_stock":
+            st.warning("🛒 **無在庫モード**: 全カードから自由に選択可能・在庫スプシの予約中/残数量には影響しません。販売決定後に仕入れる前提。")
+        else:
+            st.info("📦 **在庫連動モード**: 残数量がある在庫から選択。保存で「予約中」になります。")
+
+    st.subheader("③ 販売パラメータ")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         total_tickets = st.number_input("総口数", min_value=1, value=selected_ref.total_tickets or 1000, step=100)
@@ -131,7 +149,7 @@ with tab_design:
     total_revenue = total_tickets * price_per_spin
     st.info(f"💰 総売上: ¥{total_revenue:,} ／ 原価予算: ¥{int(total_revenue * return_rate / 100):,}")
 
-    st.subheader("③ モードを選ぶ")
+    st.subheader("④ モードを選ぶ")
     mode = st.radio(
         "入力方式",
         options=["X", "Y"],
@@ -139,7 +157,7 @@ with tab_design:
         horizontal=True,
     )
 
-    st.subheader("④ 等構成")
+    st.subheader("⑤ 等構成")
     # 参考競合の等を初期値にする
     default_tiers = list(selected_ref.tiers.keys()) or ["1等", "2等", "3等"]
     selected_tier_names = st.multiselect("含める等", options=TIER_COLS, default=default_tiers)
@@ -227,7 +245,7 @@ with tab_design:
         if abs(total_ratio - 100) > 0.01:
             st.warning(f"⚠ 配分比率合計: {total_ratio:.1f}%（100%になるよう調整推奨）")
 
-    st.subheader("⑤ 商品情報")
+    st.subheader("⑥ 商品情報")
     title = st.text_input("商品タイトル", value=f"{selected_ref.title}参考オリパ")
     note = st.text_area("メモ（任意）", height=80)
 
@@ -253,6 +271,7 @@ with tab_design:
             target_profit_rate=profit_rate / 100,
             target_return_rate=return_rate / 100,
             tiers=tier_specs, note=note,
+            stock_mode=stock_mode,
         )
 
     if preview_btn or reset_btn:
@@ -400,10 +419,17 @@ with tab_design:
                 st.markdown("**📋 候補カード**")
                 # 目標に近い順でソート
                 target = tspec.target_price
-                available = [
-                    it for it in all_inv
-                    if it.available_qty > 0 and (it.tab, it.row_idx) not in used_in_design
-                ]
+                # 無在庫モードは全カード、在庫モードは残数量ありのみ
+                if live_spec.stock_mode == "no_stock":
+                    available = [
+                        it for it in all_inv
+                        if (it.tab, it.row_idx) not in used_in_design
+                    ]
+                else:
+                    available = [
+                        it for it in all_inv
+                        if it.available_qty > 0 and (it.tab, it.row_idx) not in used_in_design
+                    ]
                 if target > 0:
                     available = sorted(available, key=lambda x: abs(x.price - target))
                 else:
