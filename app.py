@@ -166,6 +166,25 @@ with tab_design:
     if selected_tier_names:
         # --- 商品全体ベース上乗せ率＋プリセット ---
         st.markdown("**🎯 商品全体の上乗せ率設定**")
+
+        # プリセットを先に読込（コールバックで参照するため）
+        from markup import load_presets, save_preset, MarkupPreset
+        presets = load_presets()
+        preset_names = ["（プリセットを選択）"] + [p.name for p in presets]
+
+        def _apply_preset_main():
+            pick = st.session_state.get("preset_pick", "")
+            if pick == "（プリセットを選択）" or not pick:
+                return
+            preset = next((p for p in presets if p.name == pick), None)
+            if not preset:
+                return
+            # コールバックはwidget render前に実行されるのでsession_stateを安全に変更可
+            st.session_state["base_markup_rate_input"] = preset.base_rate
+            for tname, rate in preset.tier_rates.items():
+                st.session_state[f"markup_{tname}"] = rate
+            st.session_state["_applied_preset_msg"] = f"✅ プリセット「{preset.name}」を適用"
+
         base_cols = st.columns([2, 3, 2])
         with base_cols[0]:
             base_markup_rate = st.number_input(
@@ -176,9 +195,6 @@ with tab_design:
                 help="`-1`で価格帯別ルール、`50`で全等1.5倍、`0`で上乗せなし。等別の値が指定されればそちらが優先",
             )
         with base_cols[1]:
-            from markup import load_presets, save_preset, MarkupPreset
-            presets = load_presets()
-            preset_names = ["（プリセットを選択）"] + [p.name for p in presets]
             preset_pick = st.selectbox(
                 "プリセット",
                 options=preset_names,
@@ -186,21 +202,16 @@ with tab_design:
                 help="保存済みのプリセットから上乗せ率を一括ロード",
             )
         with base_cols[2]:
-            apply_preset_btn = st.button(
+            st.button(
                 "✅ プリセット適用",
                 disabled=(preset_pick == "（プリセットを選択）"),
                 use_container_width=True,
                 key="apply_preset_btn",
+                on_click=_apply_preset_main,
             )
 
-        if apply_preset_btn and preset_pick != "（プリセットを選択）":
-            preset = next((p for p in presets if p.name == preset_pick), None)
-            if preset:
-                st.session_state["base_markup_rate_input"] = preset.base_rate
-                for tname, rate in preset.tier_rates.items():
-                    st.session_state[f"markup_{tname}"] = rate
-                st.success(f"✅ プリセット「{preset.name}」を適用")
-                st.rerun()
+        if st.session_state.get("_applied_preset_msg"):
+            st.success(st.session_state.pop("_applied_preset_msg"))
 
         st.markdown("---")
         st.markdown("**各等の設定**")
@@ -568,6 +579,25 @@ with tab_premium:
     st.info(f"💰 売上: ¥{pg_revenue:,}（{pg_total:,}口 × {pg_price:,}pt）")
 
     st.markdown("### ② 上乗せ率設定（商品全体）")
+
+    from markup import load_presets as _load_pg_presets
+    pg_presets = _load_pg_presets()
+    pg_preset_names = ["（プリセットを選択）"] + [p.name for p in pg_presets]
+
+    def _apply_preset_premium():
+        pick = st.session_state.get("pg_preset_pick", "")
+        if pick == "（プリセットを選択）" or not pick:
+            return
+        preset = next((p for p in pg_presets if p.name == pick), None)
+        if not preset:
+            return
+        st.session_state["pg_base_markup_input"] = preset.base_rate
+        for i in range(st.session_state.get("pg_card_tier_count", 3)):
+            pg_tname_val = st.session_state.get(f"pg_tname_{i}", "")
+            if pg_tname_val in preset.tier_rates:
+                st.session_state[f"pg_tmarkup_{i}"] = preset.tier_rates[pg_tname_val]
+        st.session_state["_applied_pg_preset_msg"] = f"✅ プリセット「{preset.name}」を適用"
+
     pg_base_cols = st.columns([2, 3, 2])
     with pg_base_cols[0]:
         pg_base_markup = st.number_input(
@@ -578,31 +608,19 @@ with tab_premium:
             help="`-1`で価格帯別ルール、`50`で全等1.5倍",
         )
     with pg_base_cols[1]:
-        from markup import load_presets as _load_pg_presets
-        pg_presets = _load_pg_presets()
-        pg_preset_names = ["（プリセットを選択）"] + [p.name for p in pg_presets]
         pg_preset_pick = st.selectbox(
             "プリセット", options=pg_preset_names, key="pg_preset_pick",
         )
     with pg_base_cols[2]:
-        pg_apply_preset = st.button(
+        st.button(
             "✅ プリセット適用",
             disabled=(pg_preset_pick == "（プリセットを選択）"),
             key="pg_apply_preset", use_container_width=True,
+            on_click=_apply_preset_premium,
         )
 
-    if pg_apply_preset and pg_preset_pick != "（プリセットを選択）":
-        preset = next((p for p in pg_presets if p.name == pg_preset_pick), None)
-        if preset:
-            st.session_state["pg_base_markup_input"] = preset.base_rate
-            # 等別の値も書き戻し
-            for i in range(st.session_state.get("pg_card_tier_count", 3)):
-                # 各pg_tname_iから等名を取って対応するrateをセット
-                pg_tname_val = st.session_state.get(f"pg_tname_{i}", "")
-                if pg_tname_val in preset.tier_rates:
-                    st.session_state[f"pg_tmarkup_{i}"] = preset.tier_rates[pg_tname_val]
-            st.success(f"✅ プリセット「{preset.name}」を適用")
-            st.rerun()
+    if st.session_state.get("_applied_pg_preset_msg"):
+        st.success(st.session_state.pop("_applied_pg_preset_msg"))
 
     st.markdown("### ③ ポイント還元設定")
     pp1, pp2 = st.columns(2)
