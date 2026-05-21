@@ -45,6 +45,7 @@ class PremiumDesignSpec:
     last_one_point: int = 0               # ポイントの場合
 
     note: str = ""
+    base_markup_rate: float = -1.0        # 商品全体ベース上乗せ率（%）。-1=価格帯別フォールバック
 
 
 @dataclass
@@ -242,10 +243,14 @@ def _build_premium_result(spec, card_tier_results, point_result, last_one_result
     if spec.last_one_tier:
         tier_markup_map["ラストワン賞"] = spec.last_one_tier.markup_rate_pct
 
+    base_rate = getattr(spec, "base_markup_rate", -1.0)
+
     def coin_for(item, tier_name):
         rate = tier_markup_map.get(tier_name, -1)
         if rate >= 0:
             return int(round(item.price * (1 + rate / 100)))
+        if base_rate >= 0:
+            return int(round(item.price * (1 + base_rate / 100)))
         return coin_price_for(item.price, bands)
 
     total_card_cost = 0

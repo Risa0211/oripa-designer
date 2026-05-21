@@ -32,6 +32,7 @@ class DesignSpec:
     tiers: List[TierSpec]
     note: str = ""
     stock_mode: str = "linked"  # "linked" (在庫連動) or "no_stock" (無在庫)
+    base_markup_rate: float = -1.0  # 商品全体ベース上乗せ率（%）。-1=価格帯別ルール、0以上=この値をベースとして使う
 
 
 @dataclass
@@ -196,25 +197,31 @@ def design(spec: DesignSpec, inventory: Optional[List[InventoryItem]] = None, re
 
 
 def _build_result(spec, tier_results, total_revenue, inventory, reference):
-    """tier_results から各種メトリクスを計算して DesignResult を構築"""
+    """tier_results から各種メトリクスを計算して DesignResult を構築
+
+    上乗せ率の優先順位: 等別 > 商品全体ベース > 価格帯別ルール
+    """
     from markup import load_markup_bands, coin_price_for
     from warnings_gen import generate_warnings
 
     bands = load_markup_bands()
-    # 等名 → 等別上乗せ率（%）のマップ
     tier_markup_map = {ts.name: ts.markup_rate_pct for ts in spec.tiers}
+    base_rate = getattr(spec, "base_markup_rate", -1.0)
 
-    total_cost = 0       # 仕入れベース合計
-    total_market = 0     # 相場合計
-    total_coin = 0       # コイン額面合計
+    total_cost = 0
+    total_market = 0
+    total_coin = 0
     for tr in tier_results:
         tier_rate = tier_markup_map.get(tr.name, -1.0)
         for it in tr.selected:
             total_cost += it.cost_price
             total_market += it.price
             if tier_rate >= 0:
-                # 等別の上乗せ率を適用
+                # 等別の上乗せ率を適用（最優先）
                 total_coin += int(round(it.price * (1 + tier_rate / 100)))
+            elif base_rate >= 0:
+                # 商品全体ベース倍率
+                total_coin += int(round(it.price * (1 + base_rate / 100)))
             else:
                 # 価格帯別ルールにフォールバック
                 total_coin += coin_price_for(it.price, bands)

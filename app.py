@@ -164,7 +164,46 @@ with tab_design:
 
     tier_specs: list[TierSpec] = []
     if selected_tier_names:
-        st.markdown("各等の設定")
+        # --- 商品全体ベース上乗せ率＋プリセット ---
+        st.markdown("**🎯 商品全体の上乗せ率設定**")
+        base_cols = st.columns([2, 3, 2])
+        with base_cols[0]:
+            base_markup_rate = st.number_input(
+                "商品全体ベース上乗せ率（%）",
+                min_value=-1.0, max_value=200.0, step=5.0,
+                value=float(st.session_state.get("base_markup_rate_input", 50.0)),
+                key="base_markup_rate_input",
+                help="`-1`で価格帯別ルール、`50`で全等1.5倍、`0`で上乗せなし。等別の値が指定されればそちらが優先",
+            )
+        with base_cols[1]:
+            from markup import load_presets, save_preset, MarkupPreset
+            presets = load_presets()
+            preset_names = ["（プリセットを選択）"] + [p.name for p in presets]
+            preset_pick = st.selectbox(
+                "プリセット",
+                options=preset_names,
+                key="preset_pick",
+                help="保存済みのプリセットから上乗せ率を一括ロード",
+            )
+        with base_cols[2]:
+            apply_preset_btn = st.button(
+                "✅ プリセット適用",
+                disabled=(preset_pick == "（プリセットを選択）"),
+                use_container_width=True,
+                key="apply_preset_btn",
+            )
+
+        if apply_preset_btn and preset_pick != "（プリセットを選択）":
+            preset = next((p for p in presets if p.name == preset_pick), None)
+            if preset:
+                st.session_state["base_markup_rate_input"] = preset.base_rate
+                for tname, rate in preset.tier_rates.items():
+                    st.session_state[f"markup_{tname}"] = rate
+                st.success(f"✅ プリセット「{preset.name}」を適用")
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("**各等の設定**")
 
         # 等別上乗せ率の自動提案ボタン
         suggest_col1, suggest_col2 = st.columns([1, 5])
@@ -272,6 +311,7 @@ with tab_design:
             target_return_rate=return_rate / 100,
             tiers=tier_specs, note=note,
             stock_mode=stock_mode,
+            base_markup_rate=base_markup_rate,
         )
 
     if preview_btn or reset_btn:
@@ -527,7 +567,44 @@ with tab_premium:
     pg_revenue = pg_total * pg_price
     st.info(f"💰 売上: ¥{pg_revenue:,}（{pg_total:,}口 × {pg_price:,}pt）")
 
-    st.markdown("### ② ポイント還元設定")
+    st.markdown("### ② 上乗せ率設定（商品全体）")
+    pg_base_cols = st.columns([2, 3, 2])
+    with pg_base_cols[0]:
+        pg_base_markup = st.number_input(
+            "商品全体ベース上乗せ率（%）",
+            min_value=-1.0, max_value=200.0, step=5.0,
+            value=float(st.session_state.get("pg_base_markup_input", 30.0)),
+            key="pg_base_markup_input",
+            help="`-1`で価格帯別ルール、`50`で全等1.5倍",
+        )
+    with pg_base_cols[1]:
+        from markup import load_presets as _load_pg_presets
+        pg_presets = _load_pg_presets()
+        pg_preset_names = ["（プリセットを選択）"] + [p.name for p in pg_presets]
+        pg_preset_pick = st.selectbox(
+            "プリセット", options=pg_preset_names, key="pg_preset_pick",
+        )
+    with pg_base_cols[2]:
+        pg_apply_preset = st.button(
+            "✅ プリセット適用",
+            disabled=(pg_preset_pick == "（プリセットを選択）"),
+            key="pg_apply_preset", use_container_width=True,
+        )
+
+    if pg_apply_preset and pg_preset_pick != "（プリセットを選択）":
+        preset = next((p for p in pg_presets if p.name == pg_preset_pick), None)
+        if preset:
+            st.session_state["pg_base_markup_input"] = preset.base_rate
+            # 等別の値も書き戻し
+            for i in range(st.session_state.get("pg_card_tier_count", 3)):
+                # 各pg_tname_iから等名を取って対応するrateをセット
+                pg_tname_val = st.session_state.get(f"pg_tname_{i}", "")
+                if pg_tname_val in preset.tier_rates:
+                    st.session_state[f"pg_tmarkup_{i}"] = preset.tier_rates[pg_tname_val]
+            st.success(f"✅ プリセット「{preset.name}」を適用")
+            st.rerun()
+
+    st.markdown("### ③ ポイント還元設定")
     pp1, pp2 = st.columns(2)
     with pp1:
         pg_min_guarantee = st.number_input(
@@ -544,7 +621,7 @@ with tab_premium:
             key="pg_real_cost_rate",
         )
 
-    st.markdown("### ③ 当たりカード等構成")
+    st.markdown("### ④ 当たりカード等構成")
     if "pg_card_tier_count" not in st.session_state:
         st.session_state.pg_card_tier_count = 3
 
@@ -585,7 +662,7 @@ with tab_premium:
             st.session_state.pg_card_tier_count -= 1
             st.rerun()
 
-    st.markdown("### ④ 外れポイント枠（区分指定）")
+    st.markdown("### ⑤ 外れポイント枠（区分指定）")
     st.caption("ここで指定したpt×口数の合計を超える残口数には、最低保証ptが配られます")
     if "pg_bucket_count" not in st.session_state:
         st.session_state.pg_bucket_count = 3
@@ -616,7 +693,7 @@ with tab_premium:
             st.session_state.pg_bucket_count -= 1
             st.rerun()
 
-    st.markdown("### ⑤ ラストワン賞（任意）")
+    st.markdown("### ⑥ ラストワン賞（任意）")
     pg_has_last = st.checkbox("ラストワン賞あり（最後の1口を引いた人に確定）", value=True, key="pg_has_last")
     pg_last_tier = None
     pg_last_pt = 0
@@ -636,7 +713,7 @@ with tab_premium:
         else:
             pg_last_pt = st.number_input("ラストワンpt", min_value=0, value=100000, step=1000, key="pg_last_pt")
 
-    st.markdown("### ⑥ 競合参考（任意）")
+    st.markdown("### ⑦ 競合参考（任意）")
     pg_use_ref = st.checkbox("既存リサーチDBから参考競合を選ぶ", value=False, key="pg_use_ref")
     pg_selected_ref = None
     if pg_use_ref:
@@ -685,6 +762,7 @@ with tab_premium:
             last_one_tier=pg_last_tier,
             last_one_point=pg_last_pt,
             note=pg_note,
+            base_markup_rate=pg_base_markup,
         )
 
     if pg_preview_btn or pg_reset_btn:
@@ -1019,6 +1097,57 @@ with tab_markup:
     rate = find_markup_rate(int(test_price), bands)
     coin = coin_price_for(int(test_price), bands)
     st.info(f"相場 ¥{int(test_price):,} → 上乗せ {rate}% → コイン額面 **{coin:,} コイン**（=¥{coin:,}換算）")
+
+    st.markdown("---")
+    st.subheader("📋 上乗せ率プリセット")
+    st.markdown("""
+商品ごとに使い回せる上乗せ率パターンを保存します。商品設計画面の「プリセット適用」から呼び出せます。
+
+| 列 | 意味 |
+|---|---|
+| ベース上乗せ率（%） | 商品全体に適用される倍率（-1なら価格帯別ルール） |
+| 各等の列（1等/2等/.../S賞/...） | 等別の上書き値（-1ならベース倍率を使う、0以上ならその値で上書き） |
+""")
+    from markup import load_presets, save_preset, MarkupPreset, clear_cache as _mclear
+    presets_ui = load_presets(force=True)
+    df_presets = pd.DataFrame([
+        {
+            "プリセット名": p.name,
+            "ベース上乗せ率（%）": p.base_rate,
+            **p.tier_rates,
+            "備考": p.note,
+        } for p in presets_ui
+    ])
+    edited_ps = st.data_editor(
+        df_presets,
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key="preset_editor",
+    )
+
+    if st.button("💾 プリセットを保存", type="primary", key="save_presets"):
+        # 全行を書き戻し
+        inv = open_inventory()
+        ws_p = inv.worksheet(config.TAB_MARKUP_PRESETS)
+        headers_p = ws_p.row_values(1) or config.PRESET_HEADERS
+        rows = []
+        for _, row in edited_ps.iterrows():
+            if pd.isna(row.get("プリセット名")) or not str(row.get("プリセット名", "")).strip():
+                continue
+            r = []
+            for h in headers_p:
+                v = row.get(h, "")
+                if pd.isna(v) or v == "":
+                    r.append(-1 if h not in ("プリセット名", "ベース上乗せ率（%）", "備考") else "")
+                else:
+                    r.append(v)
+            rows.append(r)
+        ws_p.clear()
+        ws_p.update([headers_p] + rows, "A1", value_input_option="USER_ENTERED")
+        _mclear()
+        st.success("✅ プリセットを保存しました")
+        st.rerun()
 
 
 # ---------- 在庫タブ ----------

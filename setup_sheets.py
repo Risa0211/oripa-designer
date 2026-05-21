@@ -85,6 +85,21 @@ def ensure_markup_tab(inv):
     print(f"  {config.TAB_MARKUP}: 初期化（{len(config.DEFAULT_MARKUP_ROWS)}行）")
 
 
+def ensure_preset_tab(inv):
+    """上乗せ率プリセットタブを作成"""
+    try:
+        ws = inv.worksheet(config.TAB_MARKUP_PRESETS)
+        existing = ws.row_values(1)
+        if existing == config.PRESET_HEADERS:
+            print(f"  {config.TAB_MARKUP_PRESETS}: 既存")
+            return
+    except Exception:
+        ws = inv.add_worksheet(title=config.TAB_MARKUP_PRESETS, rows=50, cols=20)
+
+    ws.update([config.PRESET_HEADERS] + config.DEFAULT_PRESETS, "A1", value_input_option="USER_ENTERED")
+    print(f"  {config.TAB_MARKUP_PRESETS}: 初期化（{len(config.DEFAULT_PRESETS)}件）")
+
+
 def main():
     inv = open_inventory()
     print("=== 在庫シート: 引当・仕入れ・相場更新日時列追加 ===")
@@ -100,6 +115,7 @@ def main():
 
     print("\n=== 上乗せ率設定タブ ===")
     ensure_markup_tab(inv)
+    ensure_preset_tab(inv)
 
     print("\n✅ セットアップ完了")
 
