@@ -620,13 +620,42 @@ with tab_template:
                 st.warning(f"商品No.{no_input} は景品明細・リサーチDB双方に見つかりませんでした")
         elif dopa_pick and dopa_pick != "（DOPA商品から選ぶ）":
             g = dopa_list[dopa_options.index(dopa_pick) - 1]
+            # DOPA個別ページから賞構成・カード明細を自動取得
+            from dopa_scraper import fetch_pack_detail
+            cards_data = []
+            try:
+                detail = fetch_pack_detail(str(g.product_id).replace("DOPA-", ""), "pokemon")
+                if detail and detail.get("cards"):
+                    for c in detail["cards"]:
+                        kind_note = ""
+                        if c["kind"] == "hazure":
+                            kind_note = "（外れpt還元）"
+                        elif c["kind"] == "lastone":
+                            kind_note = "（ラストワン）"
+                        cm = find_card_in_master(c["name"], c["rarity"])
+                        # point は DOPA表示pt = 1pt=1円換算
+                        # カードの「実価値」 は スニダン価格があればそちら、なければ point を初期値
+                        real_value = int(cm.buy_price) if cm else int(c["point"])
+                        cards_data.append({
+                            "賞": c["rank"] + kind_note,
+                            "カード名": c["name"],
+                            "レアリティ": c["rarity"],
+                            "本数": int(c["quantity"]),
+                            "実価値/枚(円)": real_value,
+                            "snkrdunk URL": cm.snkrdunk_url if cm else "",
+                            "上乗せ倍率": 0.0,
+                            "除外": False,
+                        })
+            except Exception as ex:
+                st.warning(f"カード明細の自動取得に失敗: {ex}")
             loaded = {
                 "no": g.product_id, "title": g.title, "url": g.url,
                 "price": g.price, "total_tickets": g.total_tickets,
                 "charge_amount": 0,
-                "cards": [],  # DOPAは賞構成のAPI認証必要、現状空
+                "cards": cards_data,
             }
-            loaded_src = f"DOPA｜{g.title}（ラストワン={'あり' if g.has_last_one else 'なし'}・残{g.remaining:,}）"
+            note = f"ラストワン={'あり' if g.has_last_one else 'なし'}・最低保証{g.min_point}pt・残{g.remaining:,}・カード明細{len(cards_data)}件"
+            loaded_src = f"DOPA｜{g.title}（{note}）"
         elif paid_pick and paid_pick != "（有料ガチャから選ぶ）":
             g = paid_list[paid_options.index(paid_pick) - 1]
             # DOPA等の有料ガチャは景品明細を独自に持つ場合あり

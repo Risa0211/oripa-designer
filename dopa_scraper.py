@@ -122,7 +122,7 @@ def fetch_listing(category: str = "pokemon") -> List[Dict]:
 
 
 def fetch_pack_detail(gacha_id, category: str = "pokemon") -> Optional[Dict]:
-    """個別ガチャページから詳細を取得"""
+    """個別ガチャページから詳細+カード明細を取得"""
     url = f"https://dopa-game.jp/{category}/gacha/{gacha_id}"
     try:
         r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
@@ -141,7 +141,112 @@ def fetch_pack_detail(gacha_id, category: str = "pokemon") -> Optional[Dict]:
         target = packs[0]["attributes"]
     if not target:
         return None
-    return _normalize_pack(target, category)
+    result = _normalize_pack(target, category)
+    result["cards"] = _extract_ranked_cards(all_text)
+    return result
+
+
+def _extract_ranked_cards(all_text: str) -> List[Dict]:
+    """ranked_cards 構造からカード明細を抽出
+
+    返り値: [{rank, type(atari/hazure), name, point, rarity, quantity, image_url, item_number}]
+    """
+    out = []
+    # "ranked_cards":[ ... ] を抽出
+    m = re.search(r'"ranked_cards":\[', all_text)
+    if not m:
+        return out
+    start = m.end() - 1  # '[' 位置
+    depth, j, in_str, esc = 0, start, False, False
+    while j < len(all_text):
+        ch = all_text[j]
+        if esc:
+            esc = False
+        elif ch == '\\':
+            esc = True
+        elif ch == '"':
+            in_str = not in_str
+        elif not in_str:
+            if ch == '[':
+                depth += 1
+            elif ch == ']':
+                depth -= 1
+                if depth == 0:
+                    break
+        j += 1
+    arr_text = all_text[start:j + 1]
+    try:
+        ranked = json.loads(arr_text)
+    except json.JSONDecodeError:
+        return out
+
+    rank_label = {"s": "S賞", "a": "A賞", "b": "B賞", "c": "C賞", "d": "D賞", "e": "E賞"}
+    for rg in ranked:
+        rank = rg.get("rank", "")
+        label = rank_label.get(rank.lower(), rank.upper() + "賞" if rank else "")
+        cards_data = (rg.get("cards") or {}).get("data") or []
+        # last_one カードは別フィールド: rg.get("last_one_cards") など探す
+        for c in cards_data:
+            a = c.get("attributes", {}) or {}
+            card_type = a.get("type", "")  # AtariCard / HazureCard
+            kind = "atari" if card_type == "AtariCard" else (
+                "hazure" if card_type == "HazureCard" else "")
+            out.append({
+                "rank": label,
+                "kind": kind,
+                "name": _html.unescape(str(a.get("name") or "")),
+                "rarity": str(a.get("rarity") or ""),
+                "point": int(a.get("point") or 0),  # 実価値pt = 1pt=1円
+                "quantity": int(a.get("quantity") or 0) if a.get("quantity") else 0,
+                "psa_point": int(a.get("psa_point") or 0),
+                "image_url": ((a.get("image") or {}) or {}).get("url") or "",
+                "item_number": str(a.get("item_number") or ""),
+                "shipping_limited": bool(a.get("shipping_limited")),
+                "stock": int(a.get("stock") or 0),
+            })
+
+    # ラストワンカード（別構造に格納されている場合）
+    m2 = re.search(r'"last_one_cards":\{"data":\[', all_text)
+    if m2:
+        start = m2.end() - 1
+        depth, j, in_str, esc = 0, start, False, False
+        while j < len(all_text):
+            ch = all_text[j]
+            if esc:
+                esc = False
+            elif ch == '\\':
+                esc = True
+            elif ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == '[':
+                    depth += 1
+                elif ch == ']':
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        try:
+            last_one = json.loads(all_text[start:j + 1])
+            for c in last_one:
+                a = c.get("attributes", {}) or {}
+                out.append({
+                    "rank": "ラストワン",
+                    "kind": "lastone",
+                    "name": _html.unescape(str(a.get("name") or "")),
+                    "rarity": str(a.get("rarity") or ""),
+                    "point": int(a.get("point") or 0),
+                    "quantity": int(a.get("quantity") or 0) if a.get("quantity") else 1,
+                    "psa_point": int(a.get("psa_point") or 0),
+                    "image_url": ((a.get("image") or {}) or {}).get("url") or "",
+                    "item_number": str(a.get("item_number") or ""),
+                    "shipping_limited": bool(a.get("shipping_limited")),
+                    "stock": int(a.get("stock") or 0),
+                })
+        except json.JSONDecodeError:
+            pass
+
+    return out
 
 
 def _normalize_pack(a: dict, category: str) -> Dict:
