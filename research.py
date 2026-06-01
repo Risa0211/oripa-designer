@@ -537,6 +537,101 @@ def load_premium_gacha_prizes(product_id: str) -> List[PrizeCard]:
     return out
 
 
+# ============================================================
+# DOPA商品一覧 (過去現在の全商品の参考DB)
+# ============================================================
+
+@dataclass
+class DopaProduct:
+    product_id: str       # "DOPA-285731"
+    category: str         # "pokemon"
+    title: str
+    url: str
+    price: int            # 単価(pt)
+    total_tickets: int    # 総口数
+    remaining: int        # 残口数
+    has_last_one: bool
+    min_point: int        # 最低保証pt
+    limit_day: int        # 期限(日)
+    limit_quantity: int   # 制限数量
+    pull_restriction: bool
+    rank_restriction: bool
+    user_group_restriction: bool
+    is_new_gacha: bool
+    is_paid_gacha: bool
+    status: str
+    note: str
+    updated_at: str
+
+
+def _open_dopa_tab():
+    return get_or_create_tab(open_research(), config.TAB_DOPA_PRODUCTS, config.DOPA_PRODUCTS_HEADERS)
+
+
+def load_dopa_products() -> List[DopaProduct]:
+    try:
+        ws = _retry(_open_dopa_tab)
+        rows = _retry(lambda: ws.get_all_records())
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        if not r.get("商品ID"):
+            continue
+        out.append(DopaProduct(
+            product_id=str(r.get("商品ID", "")),
+            category=str(r.get("カテゴリ", "")),
+            title=str(r.get("タイトル", "")),
+            url=str(r.get("商品URL", "")),
+            price=parse_int(r.get("単価(pt)")) or 0,
+            total_tickets=parse_int(r.get("総口数")) or 0,
+            remaining=parse_int(r.get("残口数")) or 0,
+            has_last_one=str(r.get("ラストワン", "")).strip().lower() in ("true", "yes", "○", "あり", "1"),
+            min_point=parse_int(r.get("最低保証pt")) or 0,
+            limit_day=parse_int(r.get("期限(日)")) or 0,
+            limit_quantity=parse_int(r.get("制限数量")) or 0,
+            pull_restriction=str(r.get("プル制限", "")).strip().lower() in ("true", "yes", "○", "あり", "1"),
+            rank_restriction=str(r.get("ランク制限", "")).strip().lower() in ("true", "yes", "○", "あり", "1"),
+            user_group_restriction=str(r.get("ユーザーグループ制限", "")).strip().lower() in ("true", "yes", "○", "あり", "1"),
+            is_new_gacha=str(r.get("新規ガチャ判定", "")).strip().lower() in ("true", "yes", "○", "あり", "1"),
+            is_paid_gacha=str(r.get("有料ガチャ判定", "")).strip().lower() in ("true", "yes", "○", "あり", "1"),
+            status=str(r.get("ステータス", "")),
+            note=str(r.get("備考", "")),
+            updated_at=str(r.get("更新日時", "")),
+        ))
+    return out
+
+
+def bulk_upsert_dopa_products(products: List[DopaProduct]):
+    """大量データ用: DOPA商品一覧をまとめてupsert"""
+    ws = _retry(_open_dopa_tab)
+    all_vals = _retry(lambda: ws.get_all_values())
+    headers = all_vals[0] if all_vals else config.DOPA_PRODUCTS_HEADERS
+    body = all_vals[1:] if len(all_vals) > 1 else []
+    existing_idx = {v[0]: i for i, v in enumerate(body) if v and len(v) > 0}
+    for p in products:
+        row = [
+            p.product_id, p.category, p.title, p.url,
+            p.price, p.total_tickets, p.remaining,
+            "○" if p.has_last_one else "",
+            p.min_point, p.limit_day, p.limit_quantity,
+            "○" if p.pull_restriction else "",
+            "○" if p.rank_restriction else "",
+            "○" if p.user_group_restriction else "",
+            "○" if p.is_new_gacha else "",
+            "○" if p.is_paid_gacha else "",
+            p.status, p.note, p.updated_at,
+        ]
+        row = [str(x) if x is not None else "" for x in row]
+        if p.product_id in existing_idx:
+            body[existing_idx[p.product_id]] = row
+        else:
+            existing_idx[p.product_id] = len(body)
+            body.append(row)
+    _retry(lambda: ws.clear())
+    _retry(lambda: ws.update([headers] + body, "A1", value_input_option="USER_ENTERED"))
+
+
 def save_premium_gacha_prizes(product_id: str, cards: List[PrizeCard], snkrdunk_urls: List[str] = None):
     """有料ガチャの景品明細を一括登録(既存はクリアして全置換)"""
     ws = _open_premium_prizes_tab()

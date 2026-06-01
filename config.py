@@ -24,21 +24,32 @@ def get_active_inventory_sheet_id() -> str:
 TAB_PSA10 = "PSA10在庫登録"
 TAB_BOX = "ボックス在庫記録"
 TAB_RESEARCH = "完売オリパ一覧"
-TAB_PREMIUM_GACHA = "有料ガチャ一覧"
+TAB_PREMIUM_GACHA = "有料ガチャ一覧"  # 課金条件付き限定ガチャ専用
 TAB_NEW_GACHA = "新規ガチャ一覧"
 TAB_CARD_MASTER = "カードマスタ"
 TAB_PREMIUM_PRIZES = "有料ガチャ景品明細"
+TAB_DOPA_PRODUCTS = "DOPA商品一覧"  # DOPA全商品（過去現在）
 TAB_DESIGN_SUMMARY = "商品設計"
 TAB_DESIGN_DETAIL = "商品設計明細"
 
 # 景品明細(エクセル由来・読み取り専用)
 PRIZE_DETAILS_PARQUET = str(ROOT / "data" / "prize_details.parquet")
 
-# 有料ガチャ一覧 ヘッダ
+# 有料ガチャ一覧 ヘッダ（課金条件付き限定ガチャ専用）
 PREMIUM_GACHA_HEADERS = [
     "商品ID", "サイト", "タイトル", "商品URL",
     "単価(円)", "総口数", "カード種数",
-    "課金額(pt買い増し相当)", "備考", "更新日時"
+    "引く権利の事前課金額(円)", "備考", "更新日時"
+]
+
+# DOPA商品一覧 ヘッダ（過去現在の全商品の参考データベース）
+DOPA_PRODUCTS_HEADERS = [
+    "商品ID", "カテゴリ", "タイトル", "商品URL",
+    "単価(pt)", "総口数", "残口数",
+    "ラストワン", "最低保証pt", "期限(日)", "制限数量",
+    "プル制限", "ランク制限", "ユーザーグループ制限",
+    "新規ガチャ判定", "有料ガチャ判定",
+    "ステータス", "備考", "更新日時"
 ]
 
 # 新規ガチャ一覧 ヘッダ
