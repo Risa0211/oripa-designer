@@ -26,3 +26,6 @@ Thumbs.db
 # ログ・一時ファイル
 *.log
 .tmp/
+
+# Drive画像 (DBに登録すれば画像本体は不要、ローカルのみ保持)
+data/dopa_paid_images/
