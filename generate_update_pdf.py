@@ -113,7 +113,7 @@ a { color: #c79400; text-decoration: none; }
 }
 """
 
-today = "2026-05-21"
+today = "2026-06-02"
 full_html = f"""<!DOCTYPE html>
 <html lang="ja">
 <head>

@@ -579,40 +579,79 @@ with tab_template:
 
     # ---- 読み込み処理 ----
     if load_btn:
+        from research import find_card_in_master, snkrdunk_search_url
         loaded = None
         loaded_src = ""
         if no_input.strip():
             tpl = load_design_template(no_input.strip())
             if tpl:
+                # 各カードに対してマスタDB照合してsnkrdunk URLと買取価格を引く
+                cards_data = []
+                for c in tpl.cards:
+                    cm = find_card_in_master(c.card_name, c.rarity)
+                    cards_data.append({
+                        "賞": c.tier, "カード名": c.card_name, "レアリティ": c.rarity,
+                        "本数": int(c.qty),
+                        "実価値/枚(円)": int(cm.buy_price) if cm else 0,
+                        "snkrdunk URL": cm.snkrdunk_url if cm else "",
+                        "上乗せ倍率": 0.0, "除外": False,
+                    })
                 loaded = {
                     "no": str(tpl.no), "title": tpl.title, "url": tpl.url,
                     "price": int(tpl.price or 0),
                     "total_tickets": int(tpl.total_tickets or 0),
                     "charge_amount": 0,
-                    "cards": [{
-                        "賞": c.tier, "カード名": c.card_name, "レアリティ": c.rarity,
-                        "本数": int(c.qty), "実価値/枚(円)": 0, "上乗せ倍率": 1.0, "除外": False,
-                    } for c in tpl.cards],
+                    "cards": cards_data,
                 }
                 loaded_src = f"商品No.{tpl.no}（トレカセンター）"
             else:
                 st.warning(f"商品No.{no_input} は景品明細・リサーチDB双方に見つかりませんでした")
         elif paid_pick and paid_pick != "（有料ガチャから選ぶ）":
             g = paid_list[paid_options.index(paid_pick) - 1]
+            # DOPA等の有料ガチャは景品明細を独自に持つ場合あり
+            from research import load_premium_gacha_prizes
+            try:
+                prize_cards = load_premium_gacha_prizes(g.product_id)
+            except Exception:
+                prize_cards = []
+            cards_data = []
+            for c in prize_cards:
+                cm = find_card_in_master(c.card_name, c.rarity)
+                cards_data.append({
+                    "賞": c.tier, "カード名": c.card_name, "レアリティ": c.rarity,
+                    "本数": int(c.qty),
+                    "実価値/枚(円)": int(cm.buy_price) if cm else 0,
+                    "snkrdunk URL": cm.snkrdunk_url if cm else "",
+                    "上乗せ倍率": 0.0, "除外": False,
+                })
             loaded = {
                 "no": g.product_id, "title": g.title, "url": g.url,
                 "price": g.price, "total_tickets": g.total_tickets,
                 "charge_amount": g.charge_amount,
-                "cards": [],
+                "cards": cards_data,
             }
             loaded_src = f"{g.site}｜{g.title}（有料ガチャ）"
         elif new_pick and new_pick != "（新規ガチャから選ぶ）":
             g = new_list[new_options.index(new_pick) - 1]
+            # 新規ガチャがトレカセンター由来ならNoで景品明細を引ける
+            cards_data = []
+            if g.site == "トレカセンター" and g.no:
+                tpl_n = load_design_template(g.no)
+                if tpl_n:
+                    for c in tpl_n.cards:
+                        cm = find_card_in_master(c.card_name, c.rarity)
+                        cards_data.append({
+                            "賞": c.tier, "カード名": c.card_name, "レアリティ": c.rarity,
+                            "本数": int(c.qty),
+                            "実価値/枚(円)": int(cm.buy_price) if cm else 0,
+                            "snkrdunk URL": cm.snkrdunk_url if cm else "",
+                            "上乗せ倍率": 0.0, "除外": False,
+                        })
             loaded = {
                 "no": g.no, "title": g.title, "url": g.url,
                 "price": g.price, "total_tickets": g.total_tickets,
                 "charge_amount": 0,
-                "cards": [],
+                "cards": cards_data,
             }
             loaded_src = f"{g.site}｜{g.title}（新規ガチャ）"
 
@@ -656,13 +695,33 @@ with tab_template:
 
         # ---- カード明細編集 ----
         st.markdown("##### 🎴 景品明細（編集可能）")
+        # snkrdunk URL列がない既存stateに後付け
+        for c in state["cards"]:
+            c.setdefault("snkrdunk URL", "")
+
+        action_row = st.columns([1, 1, 1, 3])
+        with action_row[0]:
+            fetch_all_btn = st.button("🔄 全行の買取価格を取得", key="tmpl_fetch_all",
+                                       help="snkrdunk URL列に入っている全カードの買取価格を取得→マスタにも保存")
+        with action_row[1]:
+            search_links_btn = st.button("🔗 スニダン検索リンク表示", key="tmpl_search_links",
+                                          help="各カードのスニダン検索ページリンクを下に表示")
+
         if state["cards"]:
             df_init = pd.DataFrame(state["cards"])
         else:
             df_init = pd.DataFrame([{
                 "賞": "1等", "カード名": "", "レアリティ": "",
-                "本数": 1, "実価値/枚(円)": 0, "上乗せ倍率": 0.0, "除外": False,
+                "本数": 1, "実価値/枚(円)": 0, "snkrdunk URL": "",
+                "上乗せ倍率": 0.0, "除外": False,
             }])
+
+        # 列順を統一
+        col_order = ["賞", "カード名", "レアリティ", "本数", "実価値/枚(円)", "snkrdunk URL", "上乗せ倍率", "除外"]
+        for c in col_order:
+            if c not in df_init.columns:
+                df_init[c] = "" if c == "snkrdunk URL" else 0
+        df_init = df_init[col_order]
 
         edited = st.data_editor(
             df_init,
@@ -674,12 +733,63 @@ with tab_template:
                 "レアリティ": st.column_config.TextColumn("レア", width="small"),
                 "本数": st.column_config.NumberColumn("本数", min_value=0, step=1, width="small"),
                 "実価値/枚(円)": st.column_config.NumberColumn("実価値/枚(円)", min_value=0, step=100, format="¥%d"),
+                "snkrdunk URL": st.column_config.LinkColumn("snkrdunk URL", help="URLを貼ると🔄ボタンで買取価格取得"),
                 "上乗せ倍率": st.column_config.NumberColumn("上乗せ倍率", min_value=0.0, step=0.1,
                                                   help="0なら一括倍率を適用"),
                 "除外": st.column_config.CheckboxColumn("除外", width="small"),
             },
             key="tmpl_card_editor",
         )
+
+        # ---- 検索リンク表示 ----
+        if search_links_btn:
+            from research import snkrdunk_search_url
+            st.markdown("##### 🔗 スニダン検索リンク（クリックして商品ページを開き、URLをコピー）")
+            for _, r in edited.iterrows():
+                name = str(r.get("カード名", "")).strip()
+                if not name:
+                    continue
+                rarity = str(r.get("レアリティ", "") or "").strip()
+                url = snkrdunk_search_url(name, rarity)
+                st.markdown(f"- **{name}** ({rarity}): [スニダン検索]({url})")
+
+        # ---- 一括価格取得 ----
+        if fetch_all_btn:
+            from snkrdunk_client import fetch_recent_price
+            from research import CardMaster, upsert_card_master
+            updated_count = 0
+            errors = []
+            progress = st.progress(0.0, text="価格取得中...")
+            rows = list(edited.iterrows())
+            new_rows = []
+            for i, (_, r) in enumerate(rows):
+                url = str(r.get("snkrdunk URL", "") or "").strip()
+                name = str(r.get("カード名", "")).strip()
+                rarity = str(r.get("レアリティ", "") or "").strip()
+                new_r = dict(r)
+                if url and name:
+                    price, msg = fetch_recent_price(url, "PSA10" if "PSA" in rarity.upper() else "")
+                    if price:
+                        new_r["実価値/枚(円)"] = int(price)
+                        upsert_card_master(CardMaster(
+                            name=name, rarity=rarity, snkrdunk_url=url,
+                            buy_price=int(price), source=msg, updated_at="",
+                        ))
+                        updated_count += 1
+                    else:
+                        errors.append(f"{name} ({rarity}): {msg}")
+                new_rows.append(new_r)
+                progress.progress((i+1)/max(len(rows), 1), text=f"取得中... {i+1}/{len(rows)}")
+            progress.empty()
+            # stateに反映してrerun
+            st.session_state["tmpl_state"]["cards"] = new_rows
+            if updated_count:
+                st.success(f"✅ {updated_count}件の価格を取得・マスタ保存しました")
+            if errors:
+                with st.expander(f"⚠️ 取得失敗 {len(errors)}件"):
+                    for e in errors[:30]:
+                        st.text(e)
+            st.rerun()
 
         # ---- 計算 ----
         df_calc = edited.fillna({
@@ -763,6 +873,24 @@ with tab_paid_list:
 
     st.subheader("🎰 有料ガチャ一覧（DOPA等）")
     st.caption("DOPAなどの有料ガチャを管理。「📋 景品設計」タブから選択して設計に使えます")
+
+    # DOPA一括同期ボタン
+    sync_cols = st.columns([2, 1, 4])
+    with sync_cols[0]:
+        sync_btn = st.button("🔄 DOPAから最新一覧を取込", key="paid_sync_dopa",
+                              help="DOPA(ポケモン)ガチャを全件取得し有料/新規ガチャ一覧に反映")
+    if sync_btn:
+        with st.spinner("DOPAから取込中... (1-2分)"):
+            try:
+                from dopa_scraper import sync_dopa_to_premium_gachas
+                result = sync_dopa_to_premium_gachas(category="pokemon", sleep_sec=0.3, verbose=False)
+                st.success(
+                    f"✅ 取込完了: 有料ガチャ {result['upserted']}件、"
+                    f"うち新規ガチャ判定 {result['new_gacha_added']}件 / エラー {result['errors']}件"
+                )
+                st.rerun()
+            except Exception as e:
+                st.error(f"DOPA取込エラー: {e}")
 
     try:
         items = _lpg()

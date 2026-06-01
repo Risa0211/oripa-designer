@@ -26,6 +26,8 @@ TAB_BOX = "ボックス在庫記録"
 TAB_RESEARCH = "完売オリパ一覧"
 TAB_PREMIUM_GACHA = "有料ガチャ一覧"
 TAB_NEW_GACHA = "新規ガチャ一覧"
+TAB_CARD_MASTER = "カードマスタ"
+TAB_PREMIUM_PRIZES = "有料ガチャ景品明細"
 TAB_DESIGN_SUMMARY = "商品設計"
 TAB_DESIGN_DETAIL = "商品設計明細"
 
@@ -43,6 +45,17 @@ PREMIUM_GACHA_HEADERS = [
 NEW_GACHA_HEADERS = [
     "No", "サイト", "タイトル", "商品URL",
     "単価(円)", "総口数", "新規限定期間", "登録日", "備考", "更新日時"
+]
+
+# カードマスタ ヘッダ (カード名+レア→snkrdunk URL+買取価格キャッシュ)
+CARD_MASTER_HEADERS = [
+    "カード名", "レアリティ", "snkrdunk URL",
+    "買取価格(円)", "価格取得元", "価格更新日時"
+]
+
+# 有料ガチャ景品明細 ヘッダ
+PREMIUM_PRIZES_HEADERS = [
+    "商品ID", "seq", "賞", "カード名", "レアリティ", "本数", "snkrdunk URL", "備考"
 ]
 
 # 拡張カラム（在庫シートに追加する列）

@@ -323,6 +323,72 @@ def upsert_premium_gacha(g: PremiumGacha):
         ws.append_row(row, value_input_option="USER_ENTERED")
 
 
+def _retry(fn, max_tries: int = 4, base_sleep: float = 3.0):
+    """単純な指数バックオフ付きリトライ"""
+    import time as _t
+    last = None
+    for t in range(max_tries):
+        try:
+            return fn()
+        except Exception as e:
+            last = e
+            _t.sleep(base_sleep * (2 ** t))
+    raise last
+
+
+def bulk_upsert_premium_gachas(gachas: List[PremiumGacha]):
+    """大量データ用: シートを1回読み込み→メモリ上で更新→1回書き込み"""
+    ws = _retry(_open_premium_tab)
+    all_vals = _retry(lambda: ws.get_all_values())
+    headers = all_vals[0] if all_vals else config.PREMIUM_GACHA_HEADERS
+    body = all_vals[1:] if len(all_vals) > 1 else []
+    # product_id → row idx
+    existing_idx = {v[0]: i for i, v in enumerate(body) if v and len(v) > 0}
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for g in gachas:
+        row = [
+            g.product_id, g.site, g.title, g.url,
+            g.price, g.total_tickets, g.card_types,
+            g.charge_amount, g.note, now,
+        ]
+        # pad to 10列
+        row = [str(x) if x is not None else "" for x in row]
+        if g.product_id in existing_idx:
+            body[existing_idx[g.product_id]] = row
+        else:
+            existing_idx[g.product_id] = len(body)
+            body.append(row)
+    # 1回で書き込み
+    _retry(lambda: ws.clear())
+    _retry(lambda: ws.update([headers] + body, "A1", value_input_option="USER_ENTERED"))
+
+
+def bulk_upsert_new_gachas(gachas: List[NewGacha]):
+    """大量データ用: 新規ガチャ一覧の一括upsert"""
+    ws = _retry(_open_new_gacha_tab)
+    all_vals = _retry(lambda: ws.get_all_values())
+    headers = all_vals[0] if all_vals else config.NEW_GACHA_HEADERS
+    body = all_vals[1:] if len(all_vals) > 1 else []
+    existing_idx = {f"{v[0]}|{v[1]}" if len(v) >= 2 else v[0] if v else "": i
+                    for i, v in enumerate(body) if v}
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for g in gachas:
+        row = [
+            g.no, g.site, g.title, g.url,
+            g.price, g.total_tickets, g.new_period,
+            g.registered_at, g.note, now,
+        ]
+        row = [str(x) if x is not None else "" for x in row]
+        key = f"{g.no}|{g.site}"
+        if key in existing_idx:
+            body[existing_idx[key]] = row
+        else:
+            existing_idx[key] = len(body)
+            body.append(row)
+    _retry(lambda: ws.clear())
+    _retry(lambda: ws.update([headers] + body, "A1", value_input_option="USER_ENTERED"))
+
+
 def upsert_new_gacha(g: NewGacha):
     """NoとサイトのペアでUpsert"""
     ws = _open_new_gacha_tab()
@@ -360,3 +426,134 @@ def delete_new_gacha(no: str, site: str):
         if len(vals) >= 2 and vals[0] == no and vals[1] == site:
             ws.delete_rows(i)
             return
+
+
+# ============================================================
+# カードマスタ (カード名+レア → snkrdunk URL + 買取価格キャッシュ)
+# ============================================================
+
+@dataclass
+class CardMaster:
+    name: str
+    rarity: str
+    snkrdunk_url: str
+    buy_price: int
+    source: str
+    updated_at: str
+
+    @property
+    def key(self) -> str:
+        return f"{self.name}|{self.rarity}".lower()
+
+
+def _open_card_master_tab():
+    return get_or_create_tab(open_research(), config.TAB_CARD_MASTER, config.CARD_MASTER_HEADERS)
+
+
+@lru_cache(maxsize=1)
+def load_card_master_index() -> dict:
+    """カードマスタを辞書化（キー = カード名|レア の小文字）"""
+    try:
+        ws = _open_card_master_tab()
+        rows = ws.get_all_records()
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        name = str(r.get("カード名", "")).strip()
+        if not name:
+            continue
+        rarity = str(r.get("レアリティ", "")).strip()
+        cm = CardMaster(
+            name=name, rarity=rarity,
+            snkrdunk_url=str(r.get("snkrdunk URL", "")).strip(),
+            buy_price=parse_int(r.get("買取価格(円)")) or 0,
+            source=str(r.get("価格取得元", "")),
+            updated_at=str(r.get("価格更新日時", "")),
+        )
+        out[cm.key] = cm
+    return out
+
+
+def clear_card_master_cache():
+    """マスタ書込み後にキャッシュをクリア"""
+    load_card_master_index.cache_clear()
+
+
+def upsert_card_master(cm: CardMaster):
+    """カード名+レアでupsert"""
+    ws = _open_card_master_tab()
+    all_vals = ws.get_all_values()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = [cm.name, cm.rarity, cm.snkrdunk_url, cm.buy_price, cm.source, now]
+    target = None
+    for i, v in enumerate(all_vals[1:], start=2):
+        if (len(v) >= 2 and v[0].strip().lower() == cm.name.lower()
+                and v[1].strip().lower() == cm.rarity.lower()):
+            target = i
+            break
+    if target:
+        ws.update([row], f"A{target}:F{target}", value_input_option="USER_ENTERED")
+    else:
+        ws.append_row(row, value_input_option="USER_ENTERED")
+    clear_card_master_cache()
+
+
+def find_card_in_master(name: str, rarity: str) -> Optional[CardMaster]:
+    key = f"{name}|{rarity}".lower()
+    return load_card_master_index().get(key)
+
+
+def snkrdunk_search_url(name: str, rarity: str = "") -> str:
+    """スニダン検索ページURLを生成"""
+    from urllib.parse import quote
+    q = (name + (" " + rarity if rarity else "")).strip()
+    return f"https://snkrdunk.com/apparels?keyword={quote(q)}"
+
+
+# ============================================================
+# 有料ガチャ景品明細 (DOPA等)
+# ============================================================
+
+def _open_premium_prizes_tab():
+    return get_or_create_tab(open_research(), config.TAB_PREMIUM_PRIZES, config.PREMIUM_PRIZES_HEADERS)
+
+
+def load_premium_gacha_prizes(product_id: str) -> List[PrizeCard]:
+    """有料ガチャ商品IDに紐づく景品明細を取得"""
+    ws = _open_premium_prizes_tab()
+    rows = ws.get_all_records()
+    out = []
+    for r in rows:
+        if str(r.get("商品ID", "")).strip() != product_id:
+            continue
+        out.append(PrizeCard(
+            seq=parse_int(r.get("seq")) or 0,
+            tier=str(r.get("賞", "")),
+            card_name=str(r.get("カード名", "")),
+            rarity=str(r.get("レアリティ", "")),
+            qty=parse_int(r.get("本数")) or 0,
+        ))
+    return out
+
+
+def save_premium_gacha_prizes(product_id: str, cards: List[PrizeCard], snkrdunk_urls: List[str] = None):
+    """有料ガチャの景品明細を一括登録(既存はクリアして全置換)"""
+    ws = _open_premium_prizes_tab()
+    all_vals = ws.get_all_values()
+    # 既存の同商品IDを行ごと削除
+    to_delete = []
+    for i, v in enumerate(all_vals[1:], start=2):
+        if v and str(v[0]).strip() == product_id:
+            to_delete.append(i)
+    for i in reversed(to_delete):
+        ws.delete_rows(i)
+    # 新規追加
+    if not snkrdunk_urls:
+        snkrdunk_urls = [""] * len(cards)
+    new_rows = []
+    for i, c in enumerate(cards):
+        url = snkrdunk_urls[i] if i < len(snkrdunk_urls) else ""
+        new_rows.append([product_id, i + 1, c.tier, c.card_name, c.rarity, c.qty, url, ""])
+    if new_rows:
+        ws.append_rows(new_rows, value_input_option="USER_ENTERED")
