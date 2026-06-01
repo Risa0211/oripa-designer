@@ -27,9 +27,9 @@ class Reference:
 
 @lru_cache(maxsize=1)
 def load_all_references() -> List[Reference]:
-    res = open_research()
-    ws = res.worksheet(config.TAB_RESEARCH)
-    values = ws.get_all_values()
+    res = _retry(open_research)
+    ws = _retry(lambda: res.worksheet(config.TAB_RESEARCH))
+    values = _retry(lambda: ws.get_all_values())
     if not values:
         return []
     headers = values[0]
@@ -258,8 +258,8 @@ def _open_new_gacha_tab():
 
 
 def load_premium_gachas() -> List[PremiumGacha]:
-    ws = _open_premium_tab()
-    rows = ws.get_all_records()
+    ws = _retry(_open_premium_tab)
+    rows = _retry(lambda: ws.get_all_records())
     out = []
     for r in rows:
         if not r.get("商品ID") and not r.get("タイトル"):
@@ -282,8 +282,8 @@ def load_premium_gachas() -> List[PremiumGacha]:
 
 
 def load_new_gachas() -> List[NewGacha]:
-    ws = _open_new_gacha_tab()
-    rows = ws.get_all_records()
+    ws = _retry(_open_new_gacha_tab)
+    rows = _retry(lambda: ws.get_all_records())
     out = []
     for r in rows:
         if not r.get("No") and not r.get("タイトル"):
@@ -326,14 +326,19 @@ def upsert_premium_gacha(g: PremiumGacha):
 
 
 def _retry(fn, max_tries: int = 4, base_sleep: float = 3.0):
-    """単純な指数バックオフ付きリトライ"""
+    """指数バックオフ付きリトライ。クォータ系エラーのみリトライ、それ以外は即throw"""
     import time as _t
     last = None
     for t in range(max_tries):
         try:
             return fn()
         except Exception as e:
+            msg = str(e).lower()
+            is_quota = "429" in str(e) or "quota" in msg or "rate" in msg
             last = e
+            if not is_quota and t == 0:
+                # クォータ以外は即上げる(認証エラー等で延々待たない)
+                raise
             _t.sleep(base_sleep * (2 ** t))
     raise last
 

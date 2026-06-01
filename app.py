@@ -25,23 +25,53 @@ from operations import approve, cancel, close_sold_out
 from sheets_client import open_inventory
 
 
-# Sheets API 呼び出し量削減用キャッシュラッパー (300秒)
-@st.cache_data(ttl=300, show_spinner=False)
+# Sheets API クォータ対策: キャッシュ + 自動リトライ + フォールバック
+import time as _time
+
+def _safe_load(loader, retries: int = 4):
+    """Sheets APIを叩く関数を安全に呼ぶ (429/quota時に指数バックオフリトライ)"""
+    last_err = None
+    for attempt in range(retries):
+        try:
+            return loader()
+        except Exception as e:
+            last_err = e
+            msg = str(e).lower()
+            is_quota = "429" in str(e) or "quota" in msg or "rate" in msg
+            if not is_quota:
+                # クォータ以外のエラーは即座に上げる
+                raise
+            wait = 2 ** attempt  # 1, 2, 4, 8秒
+            _time.sleep(wait)
+    # 最終的に諦めて空リスト
+    import streamlit as _st
+    _st.warning(f"⚠️ Sheets API クォータ超過のため一時的に空表示 (再読み込みで復帰): {str(last_err)[:80]}")
+    return []
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
 def cached_premium_gachas():
     from research import load_premium_gachas
-    return load_premium_gachas()
+    return _safe_load(load_premium_gachas)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def cached_new_gachas():
     from research import load_new_gachas
-    return load_new_gachas()
+    return _safe_load(load_new_gachas)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def cached_dopa_products():
     from research import load_dopa_products
-    return load_dopa_products()
+    return _safe_load(load_dopa_products)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_references():
+    """既存リサーチDB 8770件もキャッシュ (TTL 1時間)"""
+    from research import load_all_references
+    return _safe_load(load_all_references)
 
 
 # ロゴヘッダー
@@ -96,7 +126,7 @@ else:
 # ---------- サイドバー: 参考競合 ----------
 with st.sidebar:
     st.header("① 参考競合を選ぶ")
-    refs = load_all_references()
+    refs = cached_references()
 
     # 簡易検索
     search = st.text_input("検索（タイトル・No.）", placeholder="例: おつきみ、1758")
