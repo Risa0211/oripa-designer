@@ -24,8 +24,26 @@ def get_active_inventory_sheet_id() -> str:
 TAB_PSA10 = "PSA10在庫登録"
 TAB_BOX = "ボックス在庫記録"
 TAB_RESEARCH = "完売オリパ一覧"
+TAB_PREMIUM_GACHA = "有料ガチャ一覧"
+TAB_NEW_GACHA = "新規ガチャ一覧"
 TAB_DESIGN_SUMMARY = "商品設計"
 TAB_DESIGN_DETAIL = "商品設計明細"
+
+# 景品明細(エクセル由来・読み取り専用)
+PRIZE_DETAILS_PARQUET = str(ROOT / "data" / "prize_details.parquet")
+
+# 有料ガチャ一覧 ヘッダ
+PREMIUM_GACHA_HEADERS = [
+    "商品ID", "サイト", "タイトル", "商品URL",
+    "単価(円)", "総口数", "カード種数",
+    "課金額(pt買い増し相当)", "備考", "更新日時"
+]
+
+# 新規ガチャ一覧 ヘッダ
+NEW_GACHA_HEADERS = [
+    "No", "サイト", "タイトル", "商品URL",
+    "単価(円)", "総口数", "新規限定期間", "登録日", "備考", "更新日時"
+]
 
 # 拡張カラム（在庫シートに追加する列）
 COL_ALLOCATION_STATUS = "引当ステータス"  # 予約中x3/販売中x2/残5 のような集計表示

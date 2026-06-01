@@ -110,8 +110,11 @@ with st.sidebar:
 
 
 # ---------- メインタブ ----------
-tab_design, tab_premium, tab_products, tab_suggest, tab_inventory, tab_markup = st.tabs([
-    "📝 新規設計", "🎰 限定ガチャ", "📋 商品一覧", "🔄 改善提案", "📦 在庫", "⚙️ 上乗せ率設定"
+(tab_design, tab_premium, tab_template, tab_paid_list, tab_new_list,
+ tab_products, tab_suggest, tab_inventory, tab_markup) = st.tabs([
+    "📝 新規設計", "🎰 限定ガチャ",
+    "📋 景品設計（競合コピー）", "🎰 有料ガチャ一覧", "🆕 新規ガチャ一覧",
+    "📋 商品一覧", "🔄 改善提案", "📦 在庫", "⚙️ 上乗せ率設定"
 ])
 
 
@@ -537,6 +540,380 @@ with tab_design:
                 st.success(f"✅ 予約中として保存しました: **{pid}**")
                 st.session_state.design_session = None
                 st.balloons()
+
+
+# ---------- 景品設計タブ（競合コピー型） ----------
+with tab_template:
+    from research import (
+        load_design_template, load_premium_gachas, load_new_gachas,
+        PremiumGacha, NewGacha, upsert_premium_gacha, upsert_new_gacha,
+        delete_premium_gacha, delete_new_gacha,
+    )
+    from datetime import datetime as _dt
+
+    st.subheader("📋 景品設計（競合コピー型）")
+    st.caption("競合の商品No.を入力すると景品明細が展開され、カード・本数・上乗せ倍率を編集して還元率を試算できます")
+
+    # 商品No検索 + 一覧/有料/新規からの選択
+    top_cols = st.columns([2, 3, 3, 3])
+    with top_cols[0]:
+        no_input = st.text_input("商品No.", placeholder="例: 7401", key="tmpl_no_input")
+    with top_cols[1]:
+        # 有料ガチャから選ぶ
+        try:
+            paid_list = load_premium_gachas()
+        except Exception:
+            paid_list = []
+        paid_options = ["（有料ガチャから選ぶ）"] + [f"{g.site}｜{g.title}" for g in paid_list]
+        paid_pick = st.selectbox("🎰 有料ガチャから", paid_options, key="tmpl_paid_pick")
+    with top_cols[2]:
+        # 新規ガチャから選ぶ
+        try:
+            new_list = load_new_gachas()
+        except Exception:
+            new_list = []
+        new_options = ["（新規ガチャから選ぶ）"] + [f"{g.site}｜{g.title}" for g in new_list]
+        new_pick = st.selectbox("🆕 新規ガチャから", new_options, key="tmpl_new_pick")
+    with top_cols[3]:
+        load_btn = st.button("📥 読み込み", type="primary", use_container_width=True, key="tmpl_load_btn")
+
+    # ---- 読み込み処理 ----
+    if load_btn:
+        loaded = None
+        loaded_src = ""
+        if no_input.strip():
+            tpl = load_design_template(no_input.strip())
+            if tpl:
+                loaded = {
+                    "no": str(tpl.no), "title": tpl.title, "url": tpl.url,
+                    "price": int(tpl.price or 0),
+                    "total_tickets": int(tpl.total_tickets or 0),
+                    "charge_amount": 0,
+                    "cards": [{
+                        "賞": c.tier, "カード名": c.card_name, "レアリティ": c.rarity,
+                        "本数": int(c.qty), "実価値/枚(円)": 0, "上乗せ倍率": 1.0, "除外": False,
+                    } for c in tpl.cards],
+                }
+                loaded_src = f"商品No.{tpl.no}（トレカセンター）"
+            else:
+                st.warning(f"商品No.{no_input} は景品明細・リサーチDB双方に見つかりませんでした")
+        elif paid_pick and paid_pick != "（有料ガチャから選ぶ）":
+            g = paid_list[paid_options.index(paid_pick) - 1]
+            loaded = {
+                "no": g.product_id, "title": g.title, "url": g.url,
+                "price": g.price, "total_tickets": g.total_tickets,
+                "charge_amount": g.charge_amount,
+                "cards": [],
+            }
+            loaded_src = f"{g.site}｜{g.title}（有料ガチャ）"
+        elif new_pick and new_pick != "（新規ガチャから選ぶ）":
+            g = new_list[new_options.index(new_pick) - 1]
+            loaded = {
+                "no": g.no, "title": g.title, "url": g.url,
+                "price": g.price, "total_tickets": g.total_tickets,
+                "charge_amount": 0,
+                "cards": [],
+            }
+            loaded_src = f"{g.site}｜{g.title}（新規ガチャ）"
+
+        if loaded:
+            st.session_state["tmpl_state"] = loaded
+            st.session_state["tmpl_loaded_src"] = loaded_src
+            st.rerun()
+
+    state = st.session_state.get("tmpl_state")
+    if not state:
+        st.info("👆 商品No.を入力するか、有料ガチャ/新規ガチャから選んで「読み込み」を押してください")
+    else:
+        # ---- ヘッダ情報 ----
+        st.markdown("---")
+        header_row = st.columns([3, 2, 2, 2, 2])
+        with header_row[0]:
+            st.markdown(f"**📦 {state['title']}**")
+            if state.get("url"):
+                st.markdown(f"商品No: `{state['no']}`　[商品ページを開く]({state['url']})")
+            else:
+                st.markdown(f"商品No: `{state['no']}`")
+            st.caption(f"出典: {st.session_state.get('tmpl_loaded_src', '')}")
+        with header_row[1]:
+            price = st.number_input("単価/口(円)", min_value=0, value=int(state["price"]),
+                                    step=100, key="tmpl_price")
+        with header_row[2]:
+            total_tickets = st.number_input("総口数", min_value=0, value=int(state["total_tickets"]),
+                                            step=1, key="tmpl_total")
+        with header_row[3]:
+            charge_amount = st.number_input(
+                "課金額(pt買い増し相当・円)", min_value=0,
+                value=int(state.get("charge_amount", 0)), step=1000, key="tmpl_charge",
+                help="有料ガチャの場合の課金分。売上に上乗せされます"
+            )
+        with header_row[4]:
+            bulk_markup = st.number_input(
+                "一括上乗せ倍率", min_value=0.0, value=1.0, step=0.05,
+                key="tmpl_bulk_markup",
+                help="各カード行の倍率が空(0)の場合、この倍率を適用"
+            )
+
+        # ---- カード明細編集 ----
+        st.markdown("##### 🎴 景品明細（編集可能）")
+        if state["cards"]:
+            df_init = pd.DataFrame(state["cards"])
+        else:
+            df_init = pd.DataFrame([{
+                "賞": "1等", "カード名": "", "レアリティ": "",
+                "本数": 1, "実価値/枚(円)": 0, "上乗せ倍率": 0.0, "除外": False,
+            }])
+
+        edited = st.data_editor(
+            df_init,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "賞": st.column_config.TextColumn("賞", width="small"),
+                "カード名": st.column_config.TextColumn("カード名", width="medium"),
+                "レアリティ": st.column_config.TextColumn("レア", width="small"),
+                "本数": st.column_config.NumberColumn("本数", min_value=0, step=1, width="small"),
+                "実価値/枚(円)": st.column_config.NumberColumn("実価値/枚(円)", min_value=0, step=100, format="¥%d"),
+                "上乗せ倍率": st.column_config.NumberColumn("上乗せ倍率", min_value=0.0, step=0.1,
+                                                  help="0なら一括倍率を適用"),
+                "除外": st.column_config.CheckboxColumn("除外", width="small"),
+            },
+            key="tmpl_card_editor",
+        )
+
+        # ---- 計算 ----
+        df_calc = edited.fillna({
+            "本数": 0, "実価値/枚(円)": 0, "上乗せ倍率": 0.0, "除外": False
+        })
+        df_calc["本数"] = pd.to_numeric(df_calc["本数"], errors="coerce").fillna(0).astype(int)
+        df_calc["実価値/枚(円)"] = pd.to_numeric(df_calc["実価値/枚(円)"], errors="coerce").fillna(0).astype(int)
+        df_calc["上乗せ倍率"] = pd.to_numeric(df_calc["上乗せ倍率"], errors="coerce").fillna(0.0).astype(float)
+
+        # 各行の倍率（0なら一括倍率を使う）
+        df_calc["適用倍率"] = df_calc["上乗せ倍率"].where(df_calc["上乗せ倍率"] > 0, bulk_markup)
+        df_calc["表示PT/枚"] = (df_calc["実価値/枚(円)"] * df_calc["適用倍率"]).round().astype(int)
+        df_calc["表示PT合計"] = df_calc["表示PT/枚"] * df_calc["本数"]
+        df_calc["実価値合計"] = df_calc["実価値/枚(円)"] * df_calc["本数"]
+        # 除外を反映
+        active = df_calc[~df_calc["除外"].astype(bool)]
+
+        total_card_qty = int(active["本数"].sum())
+        total_real = int(active["実価値合計"].sum())
+        total_pt_view = int(active["表示PT合計"].sum())
+
+        revenue = price * total_tickets + charge_amount
+        cost = total_real
+        gross = revenue - cost
+        gross_rate = (gross / revenue) if revenue else 0
+        real_return = (cost / revenue) if revenue else 0
+        coin_return = (total_pt_view / revenue) if revenue else 0
+        markup_diff = coin_return - real_return
+
+        # ---- 結果表示 ----
+        st.markdown("##### 📊 計算結果")
+        r1 = st.columns(4)
+        r1[0].metric("売上", f"¥{revenue:,}", help=f"単価 ¥{price:,} × {total_tickets:,}口" + (f" + 課金 ¥{charge_amount:,}" if charge_amount else ""))
+        r1[1].metric("仕入れ合計", f"¥{cost:,}")
+        r1[2].metric("粗利", f"¥{gross:,}", f"{gross_rate:.1%}")
+        r1[3].metric("カード合計", f"{total_card_qty:,}枚")
+
+        r2 = st.columns(4)
+        r2[0].metric("顧客還元率(コイン)", f"{coin_return:.1%}",
+                     help="顧客が見る還元率 = 表示PT合計 / 売上")
+        r2[1].metric("実還元率(仕入れ)", f"{real_return:.1%}",
+                     help="運営の本当の還元率 = 仕入れ合計 / 売上")
+        r2[2].metric("上乗せ差分", f"+{markup_diff:.1%}")
+        r2[3].metric("総口数 vs カード本数",
+                     f"{total_tickets:,} / {total_card_qty:,}",
+                     delta=f"差 {total_tickets - total_card_qty:+,}枚" if total_tickets != total_card_qty else "一致",
+                     delta_color="off" if total_tickets == total_card_qty else "inverse")
+
+        if total_tickets != total_card_qty and total_card_qty > 0:
+            st.warning(f"⚠️ 総口数 {total_tickets:,} と カード本数 {total_card_qty:,} が一致しません")
+
+        if coin_return > 1.0:
+            st.error(f"❌ 顧客還元率が100%超え（{coin_return:.1%}）。上乗せ倍率を見直してください")
+        elif gross_rate < 0:
+            st.error(f"❌ 粗利マイナス（仕入れが売上を超過）")
+
+        # ---- 出現率(参考) ----
+        if total_card_qty > 0:
+            df_calc["出現率"] = (df_calc["本数"] / total_card_qty * 100).round(2).astype(str) + "%"
+            with st.expander("📋 行ごとの内訳"):
+                show_cols = ["賞", "カード名", "レアリティ", "本数", "出現率",
+                             "実価値/枚(円)", "適用倍率", "表示PT/枚", "表示PT合計", "実価値合計", "除外"]
+                st.dataframe(df_calc[show_cols], use_container_width=True, hide_index=True)
+
+        # ---- アクション ----
+        st.markdown("---")
+        act_cols = st.columns([1, 1, 1, 3])
+        with act_cols[0]:
+            if st.button("🔄 読み込みやり直し", key="tmpl_reset"):
+                st.session_state.pop("tmpl_state", None)
+                st.rerun()
+
+
+# ---------- 有料ガチャ一覧タブ ----------
+with tab_paid_list:
+    from research import (
+        load_premium_gachas as _lpg, PremiumGacha as _PG,
+        upsert_premium_gacha as _upg, delete_premium_gacha as _dpg,
+    )
+    from datetime import datetime as _dt2
+
+    st.subheader("🎰 有料ガチャ一覧（DOPA等）")
+    st.caption("DOPAなどの有料ガチャを管理。「📋 景品設計」タブから選択して設計に使えます")
+
+    try:
+        items = _lpg()
+    except Exception as e:
+        st.error(f"読み込みエラー: {e}")
+        items = []
+
+    # 表示
+    if items:
+        df = pd.DataFrame([{
+            "商品ID": g.product_id, "サイト": g.site, "タイトル": g.title,
+            "単価(円)": g.price, "総口数": g.total_tickets, "カード種数": g.card_types,
+            "課金額(pt買い増し相当)": g.charge_amount,
+            "URL": g.url, "備考": g.note, "更新日時": g.updated_at,
+        } for g in items])
+        st.dataframe(df, use_container_width=True, hide_index=True,
+                     column_config={"URL": st.column_config.LinkColumn("URL")})
+    else:
+        st.info("まだ登録なし。下のフォームから追加してください")
+
+    st.markdown("---")
+    st.markdown("##### ➕ 新規追加 / 更新")
+    with st.form("paid_add_form", clear_on_submit=False):
+        cols = st.columns([2, 1, 3])
+        with cols[0]:
+            pf_id = st.text_input("商品ID(任意、空なら自動生成)", placeholder="例: DOPA-555")
+        with cols[1]:
+            pf_site = st.selectbox("サイト", ["DOPA", "DOKKAN", "EXTRECA", "JTC", "その他"])
+        with cols[2]:
+            pf_title = st.text_input("タイトル *", placeholder="例: 激100連祭")
+        cols2 = st.columns([1, 1, 1, 1])
+        with cols2[0]:
+            pf_price = st.number_input("単価(円) *", min_value=0, step=100)
+        with cols2[1]:
+            pf_total = st.number_input("総口数 *", min_value=0, step=1)
+        with cols2[2]:
+            pf_card_types = st.number_input("カード種数", min_value=0, step=1)
+        with cols2[3]:
+            pf_charge = st.number_input("課金額(円)", min_value=0, step=1000,
+                                        help="pt買い増し相当額。売上に加算される")
+        pf_url = st.text_input("商品URL", placeholder="https://...")
+        pf_note = st.text_area("備考", height=60)
+
+        submitted = st.form_submit_button("💾 保存", type="primary")
+        if submitted:
+            if not pf_title or pf_price <= 0 or pf_total <= 0:
+                st.error("タイトル・単価・総口数は必須です")
+            else:
+                pid = pf_id.strip() or f"{pf_site}-{_dt2.now().strftime('%Y%m%d%H%M%S')}"
+                _upg(_PG(
+                    product_id=pid, site=pf_site, title=pf_title, url=pf_url,
+                    price=int(pf_price), total_tickets=int(pf_total),
+                    card_types=int(pf_card_types), charge_amount=int(pf_charge),
+                    note=pf_note, updated_at="",
+                ))
+                st.success(f"✅ 保存しました: {pid}")
+                st.rerun()
+
+    if items:
+        st.markdown("##### 🗑️ 削除")
+        del_cols = st.columns([3, 1])
+        with del_cols[0]:
+            del_id = st.selectbox("削除する商品", [g.product_id for g in items], key="paid_del_pick")
+        with del_cols[1]:
+            if st.button("削除", key="paid_del_btn"):
+                _dpg(del_id)
+                st.success(f"削除しました: {del_id}")
+                st.rerun()
+
+
+# ---------- 新規ガチャ一覧タブ ----------
+with tab_new_list:
+    from research import (
+        load_new_gachas as _lng, NewGacha as _NG,
+        upsert_new_gacha as _ung, delete_new_gacha as _dng,
+    )
+
+    st.subheader("🆕 新規ガチャ一覧（トレカセンター登録後X日限定など）")
+    st.caption("新規限定オリパを管理。「📋 景品設計」タブから選択して設計に使えます")
+
+    try:
+        items_n = _lng()
+    except Exception as e:
+        st.error(f"読み込みエラー: {e}")
+        items_n = []
+
+    if items_n:
+        df = pd.DataFrame([{
+            "No": g.no, "サイト": g.site, "タイトル": g.title,
+            "単価(円)": g.price, "総口数": g.total_tickets,
+            "新規限定期間": g.new_period, "登録日": g.registered_at,
+            "URL": g.url, "備考": g.note, "更新日時": g.updated_at,
+        } for g in items_n])
+        st.dataframe(df, use_container_width=True, hide_index=True,
+                     column_config={"URL": st.column_config.LinkColumn("URL")})
+    else:
+        st.info("まだ登録なし。下のフォームから追加してください")
+
+    st.markdown("---")
+    st.markdown("##### ➕ 新規追加 / 更新")
+    with st.form("new_add_form", clear_on_submit=False):
+        cols = st.columns([1, 1, 3])
+        with cols[0]:
+            nf_no = st.text_input("商品No. *", placeholder="例: 7401")
+        with cols[1]:
+            nf_site = st.selectbox("サイト", ["トレカセンター", "DOPA", "その他"], key="nf_site")
+        with cols[2]:
+            nf_title = st.text_input("タイトル *", placeholder="例: 新規限定オリパ")
+        cols2 = st.columns([1, 1, 1, 1])
+        with cols2[0]:
+            nf_price = st.number_input("単価(円) *", min_value=0, step=100, key="nf_price")
+        with cols2[1]:
+            nf_total = st.number_input("総口数 *", min_value=0, step=1, key="nf_total")
+        with cols2[2]:
+            nf_period = st.text_input("新規限定期間", placeholder="例: 登録後7日", key="nf_period")
+        with cols2[3]:
+            nf_reg = st.date_input("登録日", value=None, key="nf_reg")
+        nf_url = st.text_input("商品URL", placeholder="https://japan-toreca.com/oripa/pokemon/...", key="nf_url")
+        nf_note = st.text_area("備考", height=60, key="nf_note")
+
+        submitted = st.form_submit_button("💾 保存", type="primary")
+        if submitted:
+            if not nf_no or not nf_title or nf_price <= 0 or nf_total <= 0:
+                st.error("No・タイトル・単価・総口数は必須です")
+            else:
+                _ung(_NG(
+                    no=nf_no.strip(), site=nf_site, title=nf_title, url=nf_url,
+                    price=int(nf_price), total_tickets=int(nf_total),
+                    new_period=nf_period, registered_at=str(nf_reg) if nf_reg else "",
+                    note=nf_note, updated_at="",
+                ))
+                st.success(f"✅ 保存しました: {nf_no}")
+                st.rerun()
+
+    if items_n:
+        st.markdown("##### 🗑️ 削除")
+        del_cols = st.columns([3, 1])
+        with del_cols[0]:
+            del_key = st.selectbox(
+                "削除する商品",
+                [f"{g.no}｜{g.site}｜{g.title}" for g in items_n],
+                key="new_del_pick",
+            )
+            # 選択値から No と site を抽出
+            sel_idx = [f"{g.no}｜{g.site}｜{g.title}" for g in items_n].index(del_key)
+            sel_g = items_n[sel_idx]
+        with del_cols[1]:
+            if st.button("削除", key="new_del_btn"):
+                _dng(sel_g.no, sel_g.site)
+                st.success(f"削除しました: {sel_g.no}")
+                st.rerun()
 
 
 # ---------- 限定ガチャタブ ----------
