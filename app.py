@@ -25,6 +25,25 @@ from operations import approve, cancel, close_sold_out
 from sheets_client import open_inventory
 
 
+# Sheets API 呼び出し量削減用キャッシュラッパー (300秒)
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_premium_gachas():
+    from research import load_premium_gachas
+    return load_premium_gachas()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_new_gachas():
+    from research import load_new_gachas
+    return load_new_gachas()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_dopa_products():
+    from research import load_dopa_products
+    return load_dopa_products()
+
+
 # ロゴヘッダー
 header_cols = st.columns([1, 4, 1])
 with header_cols[0]:
@@ -561,18 +580,18 @@ with tab_template:
     with top_cols[0]:
         no_input = st.text_input("トレカセンター商品No.", placeholder="例: 7401", key="tmpl_no_input")
     with top_cols[1]:
-        # DOPA商品一覧から選ぶ
+        # DOPA商品一覧から選ぶ (キャッシュ経由)
         try:
-            from research import load_dopa_products
-            dopa_list = load_dopa_products()
-        except Exception:
+            dopa_list = cached_dopa_products()
+        except Exception as ex:
+            st.warning(f"DOPA一覧ロード失敗: {ex}")
             dopa_list = []
         dopa_options = ["（DOPA商品から選ぶ）"] + [f"{g.title[:40]}（{g.price}pt×{g.total_tickets:,}口）" for g in dopa_list]
         dopa_pick = st.selectbox("🎲 DOPA商品から", dopa_options, key="tmpl_dopa_pick")
     with top_cols[2]:
         # 有料ガチャから選ぶ
         try:
-            paid_list = load_premium_gachas()
+            paid_list = cached_premium_gachas()
         except Exception:
             paid_list = []
         paid_options = ["（有料ガチャから選ぶ）"] + [f"{g.site}｜{g.title}" for g in paid_list]
@@ -580,7 +599,7 @@ with tab_template:
     with top_cols[3]:
         # 新規ガチャから選ぶ
         try:
-            new_list = load_new_gachas()
+            new_list = cached_new_gachas()
         except Exception:
             new_list = []
         new_options = ["（新規ガチャから選ぶ）"] + [f"{g.site}｜{g.title}" for g in new_list]
@@ -915,7 +934,7 @@ with tab_template:
 
 # ---------- DOPA商品一覧タブ ----------
 with tab_dopa_list:
-    from research import load_dopa_products as _ldopa
+    _ldopa = cached_dopa_products  # cached経由
 
     st.subheader("🎲 DOPA商品一覧")
     st.caption("DOPAの全商品（参考データベース）。「📋 景品設計」タブから選んで設計に流用できます")
@@ -929,6 +948,9 @@ with tab_dopa_list:
             try:
                 from dopa_scraper import sync_dopa_to_sheets
                 result = sync_dopa_to_sheets(category="pokemon", sleep_sec=0.3, verbose=False)
+                cached_dopa_products.clear()
+                cached_premium_gachas.clear()
+                cached_new_gachas.clear()
                 st.success(
                     f"✅ 完了: DOPA商品 {result['dopa_products']}件 / "
                     f"新規ガチャ {result['new_gachas']}件 / 有料ガチャ {result['premium_gachas']}件"
@@ -995,9 +1017,10 @@ with tab_dopa_list:
 # ---------- 有料ガチャ一覧タブ ----------
 with tab_paid_list:
     from research import (
-        load_premium_gachas as _lpg, PremiumGacha as _PG,
+        PremiumGacha as _PG,
         upsert_premium_gacha as _upg, delete_premium_gacha as _dpg,
     )
+    _lpg = cached_premium_gachas
     from datetime import datetime as _dt2
 
     st.subheader("🎰 有料ガチャ一覧")
@@ -1051,6 +1074,7 @@ with tab_paid_list:
                 st.error("タイトル・単価・総口数は必須です")
             else:
                 pid = pf_id.strip() or f"{pf_site}-{_dt2.now().strftime('%Y%m%d%H%M%S')}"
+                cached_premium_gachas.clear()
                 _upg(_PG(
                     product_id=pid, site=pf_site, title=pf_title, url=pf_url,
                     price=int(pf_price), total_tickets=int(pf_total),
@@ -1067,6 +1091,7 @@ with tab_paid_list:
             del_id = st.selectbox("削除する商品", [g.product_id for g in items], key="paid_del_pick")
         with del_cols[1]:
             if st.button("削除", key="paid_del_btn"):
+                cached_premium_gachas.clear()
                 _dpg(del_id)
                 st.success(f"削除しました: {del_id}")
                 st.rerun()
@@ -1075,9 +1100,10 @@ with tab_paid_list:
 # ---------- 新規ガチャ一覧タブ ----------
 with tab_new_list:
     from research import (
-        load_new_gachas as _lng, NewGacha as _NG,
+        NewGacha as _NG,
         upsert_new_gacha as _ung, delete_new_gacha as _dng,
     )
+    _lng = cached_new_gachas
 
     st.subheader("🆕 新規ガチャ一覧（トレカセンター登録後X日限定など）")
     st.caption("新規限定オリパを管理。「📋 景品設計」タブから選択して設計に使えます")
@@ -1127,6 +1153,7 @@ with tab_new_list:
             if not nf_no or not nf_title or nf_price <= 0 or nf_total <= 0:
                 st.error("No・タイトル・単価・総口数は必須です")
             else:
+                cached_new_gachas.clear()
                 _ung(_NG(
                     no=nf_no.strip(), site=nf_site, title=nf_title, url=nf_url,
                     price=int(nf_price), total_tickets=int(nf_total),
@@ -1150,6 +1177,7 @@ with tab_new_list:
             sel_g = items_n[sel_idx]
         with del_cols[1]:
             if st.button("削除", key="new_del_btn"):
+                cached_new_gachas.clear()
                 _dng(sel_g.no, sel_g.site)
                 st.success(f"削除しました: {sel_g.no}")
                 st.rerun()
