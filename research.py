@@ -230,7 +230,7 @@ class PremiumGacha:
     price: int
     total_tickets: int
     card_types: int
-    charge_amount: int    # 課金額(pt買い増し相当)
+    charge_amount: int    # 引く権利の事前課金額(円)
     note: str
     updated_at: str
 
@@ -272,7 +272,9 @@ def load_premium_gachas() -> List[PremiumGacha]:
             price=parse_int(r.get("単価(円)")) or 0,
             total_tickets=parse_int(r.get("総口数")) or 0,
             card_types=parse_int(r.get("カード種数")) or 0,
-            charge_amount=parse_int(r.get("課金額(pt買い増し相当)")) or 0,
+            charge_amount=(parse_int(r.get("引く権利の事前課金額(円)"))
+                           or parse_int(r.get("課金額(pt買い増し相当)"))  # 旧名称フォールバック
+                           or 0),
             note=str(r.get("備考", "")),
             updated_at=str(r.get("更新日時", "")),
         ))

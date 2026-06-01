@@ -1,0 +1,119 @@
+[
+  {
+    "product_id": "DOPA-PAID-001",
+    "title": "超高還元ドリーム",
+    "url": "",
+    "price": 6666,
+    "total_tickets": 6000,
+    "charge_amount": 5000,
+    "note": "総還元率108% / 1/1.8の確率で12,000pt以上確定 / 残862時点(画像IMG_0300)"
+  },
+  {
+    "product_id": "DOPA-PAID-002",
+    "title": "超激アツ到来!!",
+    "url": "",
+    "price": 750,
+    "total_tickets": 6000,
+    "charge_amount": 5000,
+    "note": "残4,041時点(IMG_2804) / S賞:ボイドゲイル等4種 / C賞:ポイント還元"
+  },
+  {
+    "product_id": "DOPA-PAID-003",
+    "title": "Girls Party Time!!",
+    "url": "",
+    "price": 380,
+    "total_tickets": 79000,
+    "charge_amount": 150,
+    "note": "総還元率103% / 80%の確率で480pt以上排出 / 残19,998時点(IMG_2806/2807)"
+  },
+  {
+    "product_id": "DOPA-PAID-004",
+    "title": "COLORS",
+    "url": "",
+    "price": 0,
+    "total_tickets": 0,
+    "charge_amount": 0,
+    "note": "総還元率99% / 詳細未取得(IMG_2812)"
+  },
+  {
+    "product_id": "DOPA-PAID-005",
+    "title": "ラッキーカラーはイエロー!!",
+    "url": "",
+    "price": 1500,
+    "total_tickets": 0,
+    "charge_amount": 0,
+    "note": "総還元率99% / 1/1.6の確率で2,000pt以上排出 / 完売(IMG_2812)"
+  },
+  {
+    "product_id": "DOPA-PAID-006",
+    "title": "極上ガチャ",
+    "url": "",
+    "price": 1300,
+    "total_tickets": 4000,
+    "charge_amount": 10000,
+    "note": "1/2の確率でDOPAくん登場 / DOPAくん登場で3,300pt以上獲得 / 最低保証1,300pt / 残2,965時点(IMG_2824)"
+  },
+  {
+    "product_id": "DOPA-PAID-007",
+    "title": "Volcano Challenge!!",
+    "url": "",
+    "price": 0,
+    "total_tickets": 0,
+    "charge_amount": 0,
+    "note": "総還元率105% / 詳細未取得(IMG_2824)"
+  },
+  {
+    "product_id": "DOPA-PAID-008",
+    "title": "ニブイチで激アツの極み",
+    "url": "",
+    "price": 1200,
+    "total_tickets": 6000,
+    "charge_amount": 5000,
+    "note": "総還元率99% / 1/2の確率でロゴ落下で2,000pt以上確定 / 最低保証1,400pt / 残130時点(IMG_2489)"
+  },
+  {
+    "product_id": "DOPA-PAID-009",
+    "title": "絶発生で3,000pt以上確定!!",
+    "url": "",
+    "price": 1500,
+    "total_tickets": 4000,
+    "charge_amount": 10000,
+    "note": "最低保証1,500pt / 1/1.5の確率で絶発生 / 残1,861時点(IMG_2619)"
+  },
+  {
+    "product_id": "DOPA-PAID-010",
+    "title": "朝の激アツチャンス",
+    "url": "",
+    "price": 777,
+    "total_tickets": 38000,
+    "charge_amount": 100,
+    "note": "総還元率101% / 70%の確率で1,000pt以上排出 / 最低保証50pt / 残15,584時点(IMG_2790)"
+  },
+  {
+    "product_id": "DOPA-PAID-011",
+    "title": "毎月15日はチャンスくんの日",
+    "url": "",
+    "price": 1555,
+    "total_tickets": 32000,
+    "charge_amount": 3000,
+    "note": "総還元率115.15% / 1/1.555で開眼成功 / 開眼成功で2,500pt以上確定 / 最低保証30pt / 期間2026/05/15 20:59まで / 残12,647時点(IMG_2398)"
+  },
+  {
+    "product_id": "DOPA-PAID-012",
+    "title": "毎月11日はゾロ目の日! 11連豪炎の物語",
+    "url": "",
+    "price": 611,
+    "total_tickets": 500000,
+    "charge_amount": 0,
+    "note": "総還元率100.111% / 61.1%の確率で880pt以上排出 / S賞リザードン運が11倍 / 最低保証10pt / 5,000口口数制限 / 期間2026/05/12 11:59まで / 残11,760時点(IMG_2710)"
+  },
+  {
+    "product_id": "DOPA-PAID-013",
+    "title": "金のチャンスを逃すな!!",
+    "url": "",
+    "price": 1500,
+    "total_tickets": 4000,
+    "charge_amount": 10000,
+    "note": "1/1.5の確率で絶発生 / 絶発生で3,000pt以上確定 / 最低保証1,500pt / 残1,861時点(IMG_2619)"
+  }
+]
