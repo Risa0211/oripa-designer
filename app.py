@@ -1,6 +1,7 @@
 """Streamlit UI — みんなのトレカ オリパ商品設計ツール"""
 from __future__ import annotations
 
+from datetime import datetime
 import streamlit as st
 import pandas as pd
 
@@ -127,44 +128,89 @@ else:
 with st.sidebar:
     st.header("① 参考競合を選ぶ")
     refs = cached_references()
+    dopa_for_sidebar = []
+    try:
+        dopa_for_sidebar = cached_dopa_products()
+    except Exception:
+        pass
 
-    # 簡易検索
-    search = st.text_input("検索（タイトル・No.）", placeholder="例: おつきみ、1758")
+    # 簡易検索 (トレカセンター + DOPA)
+    search = st.text_input("検索（タイトル・No.・DOPA-ID）", placeholder="例: おつきみ、1758、DOPA-285731")
     filtered = refs
+    filtered_dopa = []
     if search:
         s = search.strip().lower()
-        filtered = [r for r in refs if s in r.title.lower() or s in r.no]
-    if not filtered:
+        filtered = [r for r in refs if s in r.title.lower() or s in str(r.no)]
+        filtered_dopa = [d for d in dopa_for_sidebar
+                         if s in d.title.lower() or s in d.product_id.lower()
+                         or s in str(d.product_id).replace("DOPA-", "")]
+
+    # 表示候補: 検索ありなら結果を統合、なしならトレカセンターのみ
+    options = []
+    option_items = []  # 元オブジェクト
+    for r in filtered[:500]:
+        options.append(f"[トレカセンター] No.{r.no}｜{r.title[:50]}（¥{r.price_per_coin}×{r.total_tickets:,}口）")
+        option_items.append(("torecacenter", r))
+    for d in filtered_dopa[:200]:
+        options.append(f"[DOPA] {d.product_id}｜{d.title[:50]}（{d.price}pt×{d.total_tickets:,}口）")
+        option_items.append(("dopa", d))
+
+    if not options:
         st.warning("該当なし")
         st.stop()
 
-    options = [f"No.{r.no}｜{r.title}（¥{r.price_per_coin}×{r.total_tickets:,}口）" for r in filtered[:500]]
     idx = st.selectbox("競合", range(len(options)), format_func=lambda i: options[i])
-    selected_ref = filtered[idx]
+    sel_type, selected_ref = option_items[idx]
 
     st.markdown("---")
-    st.markdown(f"**{selected_ref.title}**")
-    st.markdown(f"- 1回: ¥{selected_ref.price_per_coin:,}")
-    st.markdown(f"- 総口数: {selected_ref.total_tickets:,}")
-    if selected_ref.sold_date:
-        st.markdown(f"- 完売: {selected_ref.sold_date}")
-    if selected_ref.url:
-        st.markdown(f"- [商品URL]({selected_ref.url})")
-
-    st.markdown("**等構成（参考）**")
-    for t, text in selected_ref.tiers.items():
-        cnt = count_cards_in_tier(text)
-        with st.expander(f"{t}（約{cnt}枚）"):
-            st.write(text)
+    if sel_type == "torecacenter":
+        st.markdown(f"**🎴 {selected_ref.title}**")
+        st.markdown(f"- 1回: ¥{selected_ref.price_per_coin:,}")
+        st.markdown(f"- 総口数: {selected_ref.total_tickets:,}")
+        if selected_ref.sold_date:
+            st.markdown(f"- 完売: {selected_ref.sold_date}")
+        if selected_ref.url:
+            st.markdown(f"- [商品URL]({selected_ref.url})")
+        st.markdown("**等構成（参考）**")
+        for t, text in selected_ref.tiers.items():
+            cnt = count_cards_in_tier(text)
+            with st.expander(f"{t}（約{cnt}枚）"):
+                st.write(text)
+    else:  # dopa
+        st.markdown(f"**🎲 {selected_ref.title}**")
+        st.markdown(f"- 1回: {selected_ref.price}pt")
+        st.markdown(f"- 総口数: {selected_ref.total_tickets:,}")
+        st.markdown(f"- 残: {selected_ref.remaining:,}")
+        if selected_ref.has_last_one:
+            st.markdown(f"- ⭐ ラストワン賞あり")
+        if selected_ref.is_new_gacha:
+            st.markdown(f"- 🆕 新規限定ガチャ")
+        if selected_ref.url:
+            st.markdown(f"- [商品ページ]({selected_ref.url})")
+        # Reference互換オブジェクトに変換（既存設計フローでも参照可能に）
+        from dataclasses import make_dataclass
+        # 既存DesignSpec等が選択refを使うため、Reference互換でラップ
+        class _DopaRefShim:
+            def __init__(self, d):
+                self.no = d.product_id
+                self.title = d.title
+                self.url = d.url
+                self.price_per_coin = d.price
+                self.total_tickets = d.total_tickets
+                self.sold_date = ""
+                self.tags = "DOPA"
+                self.tiers = {}
+        selected_ref = _DopaRefShim(selected_ref)
 
 
 # ---------- メインタブ ----------
 (tab_design, tab_premium, tab_template,
- tab_dopa_list, tab_paid_list, tab_new_list,
+ tab_torecacenter, tab_dopa_list, tab_paid_list, tab_new_list,
  tab_products, tab_suggest, tab_inventory, tab_markup) = st.tabs([
     "📝 新規設計", "🎰 限定ガチャ",
     "📋 景品設計（競合コピー）",
-    "🎲 DOPA商品一覧", "🎰 有料ガチャ一覧", "🆕 新規ガチャ一覧",
+    "🎴 トレカセンター商品一覧", "🎲 DOPA商品一覧",
+    "🎰 有料ガチャ一覧", "🆕 新規ガチャ一覧",
     "📋 商品一覧", "🔄 改善提案", "📦 在庫", "⚙️ 上乗せ率設定"
 ])
 
@@ -606,6 +652,15 @@ with tab_template:
     st.caption("競合の商品No.を入力すると景品明細が展開され、カード・本数・上乗せ倍率を編集して還元率を試算できます")
 
     # 商品No検索 + 各タブからの選択
+    # 商品一覧タブからの転送を受け取る
+    jump_no = st.session_state.pop("_jump_to_template_no", None)
+    jump_dopa = st.session_state.pop("_jump_to_template_dopa_id", None)
+    if jump_no:
+        st.session_state["tmpl_no_input"] = str(jump_no)
+        st.info(f"📌 商品No.{jump_no} がセットされました。下の「📥 読み込み」を押してください")
+    if jump_dopa:
+        st.info(f"📌 DOPA商品 {jump_dopa} を「🎲 DOPA商品から」で選んで「📥 読み込み」を押してください")
+
     top_cols = st.columns([2, 2.5, 2.5, 2.5, 2])
     with top_cols[0]:
         no_input = st.text_input("トレカセンター商品No.", placeholder="例: 7401", key="tmpl_no_input")
@@ -962,6 +1017,64 @@ with tab_template:
                 st.rerun()
 
 
+# ---------- トレカセンター商品一覧タブ ----------
+with tab_torecacenter:
+    st.subheader("🎴 トレカセンター商品一覧")
+    st.caption(f"リサーチDB完売オリパ {len(cached_references()):,}件。検索→「📋設計する」で景品設計タブに自動転送")
+
+    refs_all = cached_references()
+    f_cols = st.columns([3, 1, 1, 1])
+    with f_cols[0]:
+        tc_search = st.text_input("🔍 タイトル / No.", key="tc_search",
+                                   placeholder="例: ピカチュウ、3532、JACKPONCHO")
+    with f_cols[1]:
+        tc_min_price = st.number_input("単価下限(コイン)", min_value=0, value=0, step=100, key="tc_min_price")
+    with f_cols[2]:
+        tc_max_price = st.number_input("単価上限(コイン)", min_value=0, value=0, step=100,
+                                        key="tc_max_price", help="0=制限なし")
+    with f_cols[3]:
+        tc_limit = st.number_input("表示上限", min_value=20, max_value=2000, value=100, step=50, key="tc_limit")
+
+    filtered_refs = refs_all
+    if tc_search:
+        s = tc_search.strip().lower()
+        filtered_refs = [r for r in filtered_refs if s in r.title.lower() or s in str(r.no)]
+    if tc_min_price > 0:
+        filtered_refs = [r for r in filtered_refs if r.price_per_coin >= tc_min_price]
+    if tc_max_price > 0:
+        filtered_refs = [r for r in filtered_refs if r.price_per_coin <= tc_max_price]
+
+    st.markdown(f"**{len(filtered_refs):,}件** / 全{len(refs_all):,}件 (上位{min(tc_limit, len(filtered_refs))}件表示)")
+
+    if filtered_refs:
+        # データフレーム表示
+        df_tc = pd.DataFrame([{
+            "No": r.no, "タイトル": r.title,
+            "単価(coin)": r.price_per_coin,
+            "総口数": r.total_tickets,
+            "完売日": r.sold_date,
+            "URL": r.url,
+            "タグ": r.tags,
+        } for r in filtered_refs[:int(tc_limit)]])
+        st.dataframe(df_tc, use_container_width=True, hide_index=True,
+                     column_config={"URL": st.column_config.LinkColumn("URL")})
+
+        # 設計フロー転送
+        st.markdown("##### 📋 商品から景品設計タブへ転送")
+        action_cols = st.columns([3, 2])
+        with action_cols[0]:
+            target_no = st.selectbox(
+                "設計に転送する商品", filtered_refs[:int(tc_limit)],
+                format_func=lambda r: f"No.{r.no} | {r.title[:50]} (¥{r.price_per_coin}×{r.total_tickets:,})",
+                key="tc_target",
+            )
+        with action_cols[1]:
+            if st.button("📋 景品設計に転送", type="primary", key="tc_to_template", use_container_width=True):
+                # tmpl_state を直接セットしてタブ移動を促す
+                st.session_state["_jump_to_template_no"] = str(target_no.no)
+                st.success(f"📋 景品設計タブに移動して 'No.{target_no.no}' で読み込んでください（自動入力済）")
+
+
 # ---------- DOPA商品一覧タブ ----------
 with tab_dopa_list:
     _ldopa = cached_dopa_products  # cached経由
@@ -1042,6 +1155,20 @@ with tab_dopa_list:
                 "残口数": st.column_config.NumberColumn(format="%d"),
             },
         )
+
+        # 設計フロー転送
+        st.markdown("##### 📋 商品から景品設計タブへ転送")
+        d_action = st.columns([3, 2])
+        with d_action[0]:
+            d_target = st.selectbox(
+                "設計に転送するDOPA商品", filtered,
+                format_func=lambda g: f"{g.product_id} | {g.title[:50]} ({g.price}pt×{g.total_tickets:,})",
+                key="dopa_target",
+            )
+        with d_action[1]:
+            if st.button("📋 景品設計に転送", type="primary", key="dopa_to_template", use_container_width=True):
+                st.session_state["_jump_to_template_dopa_id"] = d_target.product_id
+                st.success(f"📋 景品設計タブに移動: {d_target.title}")
 
 
 # ---------- 有料ガチャ一覧タブ ----------
@@ -1138,11 +1265,52 @@ with tab_new_list:
     st.subheader("🆕 新規ガチャ一覧（トレカセンター登録後X日限定など）")
     st.caption("新規限定オリパを管理。「📋 景品設計」タブから選択して設計に使えます")
 
+    # トレカセンター自動候補スキャン
+    auto_scan = st.checkbox("🔍 トレカセンター8770件からも新規限定っぽい商品を表示", value=True, key="new_scan_tc")
+
     try:
         items_n = _lng()
     except Exception as e:
         st.error(f"読み込みエラー: {e}")
         items_n = []
+
+    # トレカセンター自動候補抽出
+    tc_candidates = []
+    if auto_scan:
+        try:
+            from dopa_scraper import detect_new_gacha_period
+            tc_refs = cached_references()
+            for r in tc_refs:
+                period = detect_new_gacha_period(r.title)
+                if period:
+                    tc_candidates.append({
+                        "No": r.no, "サイト": "トレカセンター", "タイトル": r.title,
+                        "単価(coin)": r.price_per_coin, "総口数": r.total_tickets,
+                        "新規限定期間": period, "完売日": r.sold_date,
+                        "URL": r.url,
+                    })
+        except Exception:
+            pass
+        if tc_candidates:
+            st.markdown(f"##### 🎴 トレカセンター 自動候補 {len(tc_candidates)}件")
+            df_tc = pd.DataFrame(tc_candidates)
+            st.dataframe(df_tc, use_container_width=True, hide_index=True,
+                         column_config={"URL": st.column_config.LinkColumn("URL")})
+            # 一括登録ボタン
+            if st.button(f"💾 トレカセンター候補 {len(tc_candidates)}件をDBに登録", key="tc_new_bulk_save"):
+                from research import bulk_upsert_new_gachas
+                today = datetime.now().strftime("%Y-%m-%d")
+                new_gachas = [_NG(
+                    no=str(c["No"]), site="トレカセンター", title=c["タイトル"], url=c["URL"],
+                    price=int(c["単価(coin)"] or 0), total_tickets=int(c["総口数"] or 0),
+                    new_period=c["新規限定期間"], registered_at=today,
+                    note="自動候補(トレカセンター タイトル判定)", updated_at="",
+                ) for c in tc_candidates]
+                bulk_upsert_new_gachas(new_gachas)
+                cached_new_gachas.clear()
+                st.success(f"✅ {len(new_gachas)}件をDB登録")
+                st.rerun()
+            st.markdown("---")
 
     if items_n:
         df = pd.DataFrame([{
