@@ -1087,11 +1087,35 @@ with tab_torecacenter:
             try:
                 from torecacenter_scraper import sync_to_research_db
                 result = sync_to_research_db(category=tc_sync_cat, verbose=False)
-                cached_references.clear()  # キャッシュクリアで再取得
-                st.success(f"✅ 完了: 取得 {result['fetched']}件 / 既存除外後 {result['added']}件追加")
+                cached_references.clear()
+                cached_new_gachas.clear()
+                # 結果を session_state に保存して再描画後も表示
+                st.session_state["_tc_sync_result"] = result
                 st.rerun()
             except Exception as e:
                 st.error(f"取込エラー: {e}")
+
+    # 同期結果表示 (session_stateから)
+    tc_result = st.session_state.get("_tc_sync_result")
+    if tc_result:
+        st.success(
+            f"✅ 取得 {tc_result['fetched']}件 / **{tc_result['added']}件 新規追加** "
+            f"/ うち 🆕新規限定 {tc_result.get('new_gacha_added', 0)}件 自動振り分け"
+        )
+        items = tc_result.get("added_items", [])
+        if items:
+            with st.expander(f"📋 追加された {len(items)}件 一覧", expanded=True):
+                df_added = pd.DataFrame([{
+                    "No": x["no"], "タイトル": x["title"],
+                    "単価(coin)": x["price"], "総口数": x["total_tickets"],
+                    "残数": x.get("left_cards", 0),
+                    "URL": x["url"], "タグ": x.get("tags", ""),
+                } for x in items])
+                st.dataframe(df_added, use_container_width=True, hide_index=True,
+                             column_config={"URL": st.column_config.LinkColumn("URL")})
+        if st.button("× 結果を閉じる", key="tc_close_result"):
+            st.session_state.pop("_tc_sync_result", None)
+            st.rerun()
 
     refs_all = cached_references()
     f_cols = st.columns([3, 1, 1, 1])
@@ -1167,13 +1191,37 @@ with tab_dopa_list:
                 cached_dopa_products.clear()
                 cached_premium_gachas.clear()
                 cached_new_gachas.clear()
-                st.success(
-                    f"✅ 完了: DOPA商品 {result['dopa_products']}件 / "
-                    f"新規ガチャ {result['new_gachas']}件 / 有料ガチャ {result['premium_gachas']}件"
-                )
+                st.session_state["_dopa_sync_result"] = result
                 st.rerun()
             except Exception as e:
                 st.error(f"DOPA取込エラー: {e}")
+
+    # 同期結果表示
+    dopa_result = st.session_state.get("_dopa_sync_result")
+    if dopa_result:
+        st.success(
+            f"✅ 取得 {dopa_result['fetched']}件 / 全DOPA商品 {dopa_result['dopa_products']}件 "
+            f"/ **{dopa_result.get('added', 0)}件 新規追加** "
+            f"/ うち 🆕新規限定 {dopa_result['new_gachas']}件 / 🎰有料 {dopa_result['premium_gachas']}件"
+        )
+        items = dopa_result.get("added_items", [])
+        if items:
+            with st.expander(f"📋 追加された {len(items)}件 一覧", expanded=True):
+                df_added = pd.DataFrame([{
+                    "商品ID": x["product_id"], "タイトル": x["title"],
+                    "単価(pt)": x["price"], "総口数": x["total_tickets"],
+                    "残口数": x["remaining"],
+                    "🆕新規限定": "○" if x.get("is_new") else "",
+                    "🎰有料限定": "○" if x.get("is_paid") else "",
+                    "URL": x["url"],
+                } for x in items])
+                st.dataframe(df_added, use_container_width=True, hide_index=True,
+                             column_config={"URL": st.column_config.LinkColumn("URL")})
+        else:
+            st.info("既存DBと差分なし(新商品リリースなし)")
+        if st.button("× 結果を閉じる", key="dopa_close_result"):
+            st.session_state.pop("_dopa_sync_result", None)
+            st.rerun()
     with sync_cols[1]:
         st.caption("⚠️ 現状取得できるのは「開催中」のみ。完売分はDOPA認証要")
 

@@ -183,12 +183,19 @@ def extract_cards_from_detail(detail: Dict) -> List[Dict]:
 
 # ---------- Sync to research DB ----------
 
-def sync_to_research_db(category: str = "pokemon", verbose: bool = True) -> Dict[str, int]:
-    """販売中の商品を取得して、既存リサーチDBに不足分を追加"""
+def sync_to_research_db(category: str = "pokemon", verbose: bool = True) -> Dict:
+    """販売中の商品を取得して既存リサーチDBに不足分を追加。
+    同時に新規限定オリパは新規ガチャ一覧にも自動振り分け。
+
+    戻り値: {fetched, added, added_items[{no,title,price,total_tickets,url}], new_gacha_added}
+    """
     import sys
     sys.path.insert(0, "/Users/risa/oripa-designer")
-    from research import load_all_references
+    from research import (
+        load_all_references, bulk_upsert_new_gachas, NewGacha,
+    )
     from sheets_client import open_research
+    from dopa_scraper import detect_new_gacha_period
     import config
 
     if verbose:
@@ -197,18 +204,20 @@ def sync_to_research_db(category: str = "pokemon", verbose: bool = True) -> Dict
     if verbose:
         print(f"[JTC] 取得: {len(lotteries)}件")
 
-    # 既存DBのID一覧
     existing_refs = load_all_references()
     existing_ids = {r.no for r in existing_refs}
     if verbose:
-        print(f"[JTC] 既存DB: {len(existing_ids):,}件 / うちID既知")
+        print(f"[JTC] 既存DB: {len(existing_ids):,}件")
 
     new_rows = []
+    added_items = []
+    new_gacha_candidates: List[NewGacha] = []
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
     for l in lotteries:
         norm = normalize_for_reference(l)
         if norm["no"] in existing_ids:
             continue
-        # detail取得してカード明細
         detail = fetch_detail(l["id"])
         cards_by_rank = {}
         if detail:
@@ -219,16 +228,32 @@ def sync_to_research_db(category: str = "pokemon", verbose: bool = True) -> Dict
                 cards_by_rank.setdefault(c["rank"], []).append(
                     f"{c['name']}{rarity_suffix}{qty_suffix}"
                 )
-        # 既存スキーマに合わせる: No / サムネ / タイトル / 商品URL / 価格 / 総口数 / 完売日時 / 画像ファイル / サムネURL / 1〜7等 / キリ番 / ラストワン / タグ
         row = [
             norm["no"], "", norm["title"], norm["url"], norm["price_per_coin"], norm["total_tickets"],
-            "",  # 完売日時 (販売中)
-            "", norm["header_image_url"] or "",
+            "", "", norm["header_image_url"] or "",
         ]
         for r_label in ["1等", "2等", "3等", "4等", "5等", "6等", "7等", "キリ番", "ラストワン"]:
             row.append(" / ".join(cards_by_rank.get(r_label, [])))
         row.append(norm["tags"])
         new_rows.append(row)
+        added_items.append({
+            "no": norm["no"], "title": norm["title"],
+            "price": norm["price_per_coin"], "total_tickets": norm["total_tickets"],
+            "url": norm["url"], "tags": norm["tags"],
+            "left_cards": norm.get("left_cards", 0),
+        })
+
+        # 新規ガチャ自動判定
+        period = detect_new_gacha_period(norm["title"])
+        if period:
+            new_gacha_candidates.append(NewGacha(
+                no=norm["no"], site="トレカセンター",
+                title=norm["title"], url=norm["url"],
+                price=norm["price_per_coin"], total_tickets=norm["total_tickets"],
+                new_period=period, registered_at=today_str,
+                note="自動候補(トレカセンター 最新取込)", updated_at="",
+            ))
+
         if verbose and len(new_rows) % 10 == 0:
             print(f"  追加候補 {len(new_rows)}件 (現在: {norm['title'][:30]})")
         time.sleep(0.1)
@@ -236,18 +261,28 @@ def sync_to_research_db(category: str = "pokemon", verbose: bool = True) -> Dict
     if not new_rows:
         if verbose:
             print(f"[JTC] DBに不足する商品なし")
-        return {"fetched": len(lotteries), "added": 0}
+        return {"fetched": len(lotteries), "added": 0, "added_items": [], "new_gacha_added": 0}
 
-    # 既存リサーチDBに append
     if verbose:
-        print(f"[JTC] Sheets書き込み: {len(new_rows)}件追加")
+        print(f"[JTC] Sheets書き込み: 完売オリパ一覧に {len(new_rows)}件追加")
     res = open_research()
     ws = res.worksheet(config.TAB_RESEARCH)
     ws.append_rows(new_rows, value_input_option="USER_ENTERED")
 
+    # 新規ガチャ一覧にも追加
+    if new_gacha_candidates:
+        if verbose:
+            print(f"[JTC] Sheets書き込み: 新規ガチャ一覧に {len(new_gacha_candidates)}件振り分け")
+        bulk_upsert_new_gachas(new_gacha_candidates)
+
     if verbose:
-        print(f"[JTC] 完了: 取得{len(lotteries)} / 既存除外後追加{len(new_rows)}")
-    return {"fetched": len(lotteries), "added": len(new_rows)}
+        print(f"[JTC] 完了: 取得{len(lotteries)} / 追加{len(new_rows)} / うち新規限定{len(new_gacha_candidates)}")
+    return {
+        "fetched": len(lotteries),
+        "added": len(new_rows),
+        "added_items": added_items,
+        "new_gacha_added": len(new_gacha_candidates),
+    }
 
 
 # ---------- 個別URL貼り付け対応 ----------

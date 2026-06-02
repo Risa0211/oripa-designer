@@ -308,9 +308,15 @@ def sync_dopa_to_sheets(category: str = "pokemon", limit: Optional[int] = None,
     import sys
     sys.path.insert(0, "/Users/risa/oripa-designer")
     from research import (
-        DopaProduct, PremiumGacha, NewGacha,
+        DopaProduct, PremiumGacha, NewGacha, load_dopa_products,
         bulk_upsert_dopa_products, bulk_upsert_premium_gachas, bulk_upsert_new_gachas,
     )
+
+    # 既存のDOPA商品IDで差分検出
+    try:
+        existing_dopa_ids = {d.product_id for d in load_dopa_products()}
+    except Exception:
+        existing_dopa_ids = set()
 
     if verbose:
         print(f"[DOPA] {category} 一覧取得中...")
@@ -339,6 +345,7 @@ def sync_dopa_to_sheets(category: str = "pokemon", limit: Optional[int] = None,
     dopa_products = []
     new_gachas = []
     premium_gachas = []
+    added_items = []  # 新規追加分(既存DBになかった)
 
     for p in packs:
         cls = classify_pack(p)
@@ -364,6 +371,13 @@ def sync_dopa_to_sheets(category: str = "pokemon", limit: Optional[int] = None,
             updated_at=now_str,
         )
         dopa_products.append(dp)
+        if dp.product_id not in existing_dopa_ids:
+            added_items.append({
+                "product_id": dp.product_id, "title": dp.title, "url": dp.url,
+                "price": dp.price, "total_tickets": dp.total_tickets,
+                "remaining": dp.remaining,
+                "is_new": cls["new_gacha"], "is_paid": cls["paid_gacha"],
+            })
 
         if cls["new_gacha"]:
             period = detect_new_gacha_period(p["title"]) or "pull_restriction"
@@ -399,9 +413,11 @@ def sync_dopa_to_sheets(category: str = "pokemon", limit: Optional[int] = None,
         "dopa_products": len(dopa_products),
         "new_gachas": len(new_gachas),
         "premium_gachas": len(premium_gachas),
+        "added": len(added_items),       # 新規追加件数 (既存DBになかった)
+        "added_items": added_items,
     }
     if verbose:
-        print(f"[DOPA] 完了: {result}")
+        print(f"[DOPA] 完了: {result['added']}件新規追加 / 新規限定{result['new_gachas']} / 有料{result['premium_gachas']}")
     return result
 
 
