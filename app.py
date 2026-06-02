@@ -661,6 +661,58 @@ with tab_template:
     if jump_dopa:
         st.info(f"📌 DOPA商品 {jump_dopa} を「🎲 DOPA商品から」で選んで「📥 読み込み」を押してください")
 
+    # ===== 商品ページURL貼り付けで即取込 =====
+    st.markdown("##### 🔗 商品URLを貼って即取込（最速）")
+    url_cols = st.columns([5, 1])
+    with url_cols[0]:
+        paste_url = st.text_input(
+            "商品URL",
+            placeholder="https://japan-toreca.com/oripa/pokemon/71871 または https://dopa-game.jp/pokemon/gacha/...",
+            key="tmpl_paste_url",
+        )
+    with url_cols[1]:
+        st.write("")
+        url_fetch_btn = st.button("📥 URLから取込", type="primary", key="tmpl_url_fetch", use_container_width=True)
+    if url_fetch_btn and paste_url.strip():
+        from torecacenter_scraper import fetch_by_url
+        from research import find_card_in_master
+        with st.spinner("URLから商品情報取得中..."):
+            try:
+                data = fetch_by_url(paste_url.strip())
+            except Exception as e:
+                st.error(f"取得失敗: {e}")
+                data = None
+        if not data:
+            st.error("URLから情報を取得できませんでした (URL形式を確認してください)")
+        else:
+            cards_data = []
+            for c in data.get("cards", []):
+                cm = find_card_in_master(c.get("name", ""), c.get("rarity", ""))
+                cards_data.append({
+                    "賞": c.get("rank", ""),
+                    "カード名": c.get("name", ""),
+                    "レアリティ": c.get("rarity", ""),
+                    "本数": int(c.get("quantity", 0)),
+                    "実価値/枚(円)": int(cm.buy_price) if cm else 0,
+                    "snkrdunk URL": cm.snkrdunk_url if cm else "",
+                    "上乗せ倍率": 0.0, "除外": False,
+                })
+            st.session_state["tmpl_state"] = {
+                "no": str(data.get("no", "")),
+                "title": data.get("title", ""),
+                "url": data.get("url", ""),
+                "price": int(data.get("price_per_coin", 0)),
+                "total_tickets": int(data.get("total_tickets", 0)),
+                "charge_amount": 0,
+                "cards": cards_data,
+            }
+            st.session_state["tmpl_loaded_src"] = f"{data.get('source', '')}｜URL直接取込"
+            st.success(f"✅ 取得完了: {data.get('title')} | カード明細{len(cards_data)}件")
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("##### または、商品リストから選択")
+
     top_cols = st.columns([2, 2.5, 2.5, 2.5, 2])
     with top_cols[0]:
         no_input = st.text_input("トレカセンター商品No.", placeholder="例: 7401", key="tmpl_no_input")
@@ -1021,6 +1073,25 @@ with tab_template:
 with tab_torecacenter:
     st.subheader("🎴 トレカセンター商品一覧")
     st.caption(f"リサーチDB完売オリパ {len(cached_references()):,}件。検索→「📋設計する」で景品設計タブに自動転送")
+
+    # 最新情報取得ボタン
+    sync_col = st.columns([2, 1, 4])
+    with sync_col[0]:
+        tc_sync_btn = st.button("🔄 トレカセンター販売中の最新を取得",
+                                 help="japan-toreca.com APIから現在販売中の商品を取得。既存DBにないものを追加します")
+    with sync_col[1]:
+        tc_sync_cat = st.selectbox("カテゴリ", ["pokemon", "onepiece", "yugioh", "hobby", "ws_tcg", "mtg", "duel_masters", "popmart"],
+                                    key="tc_sync_cat")
+    if tc_sync_btn:
+        with st.spinner(f"トレカセンター {tc_sync_cat} 取込中..."):
+            try:
+                from torecacenter_scraper import sync_to_research_db
+                result = sync_to_research_db(category=tc_sync_cat, verbose=False)
+                cached_references.clear()  # キャッシュクリアで再取得
+                st.success(f"✅ 完了: 取得 {result['fetched']}件 / 既存除外後 {result['added']}件追加")
+                st.rerun()
+            except Exception as e:
+                st.error(f"取込エラー: {e}")
 
     refs_all = cached_references()
     f_cols = st.columns([3, 1, 1, 1])
