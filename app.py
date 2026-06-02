@@ -972,7 +972,8 @@ with tab_template:
                                        help="snkrdunk URL列に入っている全カードの買取価格を取得→マスタにも保存")
         with action_row[1]:
             auto_search_btn = st.button("🔎 URL空欄を自動検索", key="tmpl_auto_search",
-                                         help="URLが空の行に対してカード名+レアでスニダンを検索→候補URLを自動セット+価格取得")
+                                         help="URL空の行をスニダン検索→URLセット+価格取得。"
+                                              "**一度検索したカードはカードマスタDBに保存され、次回読込時は自動入力**で再検索不要")
         with action_row[2]:
             search_links_btn = st.button("🔗 検索リンク表示", key="tmpl_search_links",
                                           help="各カードのスニダン検索ページリンクを下に表示")
@@ -1085,7 +1086,11 @@ with tab_template:
                 _t.sleep(0.6)  # DDGレート対策
             progress.empty()
             st.session_state["tmpl_state"]["cards"] = new_rows
-            st.success(f"✅ {updated_count}件の自動検索→URL+価格セット完了")
+            st.success(
+                f"✅ {updated_count}件の自動検索→URL+価格セット完了\n\n"
+                f"💾 結果はカードマスタDBに保存されました。"
+                f"**次回以降は同じカード名で景品明細を読み込めば自動入力**されます（再検索不要）"
+            )
             if errors:
                 with st.expander(f"⚠️ 検索できなかった/失敗 {len(errors)}件"):
                     for e in errors[:30]:
