@@ -118,3 +118,79 @@ def fetch_recent_price(snkrdunk_url: str, grade: str = "") -> Tuple[Optional[int
         pass
 
     return None, note_prefix + "／取得失敗"
+
+
+def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidates: int = 5) -> list:
+    """カード名(+レア)からスニダン商品ID候補を検索
+
+    DuckDuckGo HTML検索 → 失敗時Bingフォールバック。
+    Bot検出された場合は空リスト返却(ベストエフォート)。
+    """
+    if not card_name:
+        return []
+    from urllib.parse import quote
+    query = card_name
+    if rarity:
+        query = f"{card_name} {rarity}"
+    encoded = quote(query + " site:snkrdunk.com")
+
+    browser_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ja,en;q=0.5",
+    }
+
+    def _extract_ids(text):
+        ids, seen = [], set()
+        for m in re.finditer(r'snkrdunk\.com/apparels/(\d+)', text):
+            aid = m.group(1)
+            if aid not in seen:
+                seen.add(aid)
+                ids.append(aid)
+            if len(ids) >= max_candidates:
+                break
+        return ids
+
+    # 1. DuckDuckGo HTML
+    try:
+        r = requests.get(f"https://html.duckduckgo.com/html/?q={encoded}",
+                         headers=browser_headers, timeout=8)
+        if r.status_code == 200:
+            ids = _extract_ids(r.text)
+            if ids:
+                return [{"id": i, "url": f"https://snkrdunk.com/apparels/{i}"} for i in ids]
+    except requests.RequestException:
+        pass
+
+    # 2. Bing fallback
+    try:
+        r = requests.get(f"https://www.bing.com/search?q={encoded}",
+                         headers=browser_headers, timeout=8)
+        if r.status_code == 200:
+            ids = _extract_ids(r.text)
+            if ids:
+                return [{"id": i, "url": f"https://snkrdunk.com/apparels/{i}"} for i in ids]
+    except requests.RequestException:
+        pass
+
+    return []
+
+
+def fetch_apparel_meta(apparel_id: str) -> Optional[dict]:
+    """スニダン商品の基本メタ情報を取得（name, productNumber, minPrice等）"""
+    try:
+        r = requests.get(
+            f"https://snkrdunk.com/v1/apparels/{apparel_id}",
+            headers=HEADERS, timeout=TIMEOUT,
+        )
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        return {
+            "id": d.get("id"),
+            "name": d.get("localizedName") or d.get("name"),
+            "product_number": d.get("productNumber"),
+            "min_price": d.get("usedMinPrice") or d.get("minPrice") or 0,
+        }
+    except (requests.RequestException, ValueError):
+        return None

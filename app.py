@@ -947,12 +947,15 @@ with tab_template:
         for c in state["cards"]:
             c.setdefault("snkrdunk URL", "")
 
-        action_row = st.columns([1, 1, 1, 3])
+        action_row = st.columns([1, 1.2, 1, 3])
         with action_row[0]:
             fetch_all_btn = st.button("🔄 全行の買取価格を取得", key="tmpl_fetch_all",
                                        help="snkrdunk URL列に入っている全カードの買取価格を取得→マスタにも保存")
         with action_row[1]:
-            search_links_btn = st.button("🔗 スニダン検索リンク表示", key="tmpl_search_links",
+            auto_search_btn = st.button("🔎 URL空欄を自動検索", key="tmpl_auto_search",
+                                         help="URLが空の行に対してカード名+レアでスニダンを検索→候補URLを自動セット+価格取得")
+        with action_row[2]:
+            search_links_btn = st.button("🔗 検索リンク表示", key="tmpl_search_links",
                                           help="各カードのスニダン検索ページリンクを下に表示")
 
         if state["cards"]:
@@ -1000,6 +1003,63 @@ with tab_template:
                 rarity = str(r.get("レアリティ", "") or "").strip()
                 url = snkrdunk_search_url(name, rarity)
                 st.markdown(f"- **{name}** ({rarity}): [スニダン検索]({url})")
+
+        # ---- 自動URL検索（空欄行に対して） ----
+        if auto_search_btn:
+            from snkrdunk_client import search_apparel_id_by_keyword, fetch_recent_price
+            from research import CardMaster, upsert_card_master
+            import time as _t
+            updated_count = 0
+            errors = []
+            rows = list(edited.iterrows())
+            progress = st.progress(0.0, text="スニダン検索中...")
+            new_rows = []
+            for i, (_, r) in enumerate(rows):
+                new_r = dict(r)
+                cur_url = str(r.get("snkrdunk URL", "") or "").strip()
+                name = str(r.get("カード名", "")).strip()
+                rarity = str(r.get("レアリティ", "") or "").strip()
+                if cur_url or not name:
+                    new_rows.append(new_r)
+                    progress.progress((i + 1) / max(len(rows), 1))
+                    continue
+                # DDGで検索
+                try:
+                    cands = search_apparel_id_by_keyword(name, rarity, max_candidates=3)
+                except Exception as ex:
+                    cands = []
+                    errors.append(f"{name}: search失敗 {ex}")
+                if cands:
+                    found_url = cands[0]["url"]
+                    new_r["snkrdunk URL"] = found_url
+                    # 価格取得も同時に
+                    try:
+                        price, msg = fetch_recent_price(found_url, "PSA10" if "PSA" in rarity.upper() else "")
+                        if price:
+                            new_r["実価値/枚(円)"] = int(price)
+                            upsert_card_master(CardMaster(
+                                name=name, rarity=rarity, snkrdunk_url=found_url,
+                                buy_price=int(price), source=msg, updated_at="",
+                            ))
+                            updated_count += 1
+                        else:
+                            errors.append(f"{name}: URLは取得したが価格取れず ({msg})")
+                    except Exception as ex:
+                        errors.append(f"{name}: 価格取得失敗 {ex}")
+                else:
+                    errors.append(f"{name}: 候補なし")
+                new_rows.append(new_r)
+                progress.progress((i + 1) / max(len(rows), 1),
+                                  text=f"検索中... {i + 1}/{len(rows)}")
+                _t.sleep(0.6)  # DDGレート対策
+            progress.empty()
+            st.session_state["tmpl_state"]["cards"] = new_rows
+            st.success(f"✅ {updated_count}件の自動検索→URL+価格セット完了")
+            if errors:
+                with st.expander(f"⚠️ 検索できなかった/失敗 {len(errors)}件"):
+                    for e in errors[:30]:
+                        st.text(e)
+            st.rerun()
 
         # ---- 一括価格取得 ----
         if fetch_all_btn:
