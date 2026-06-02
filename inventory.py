@@ -54,7 +54,8 @@ def _col_index(headers: List[str], name: str) -> int:
 
 
 def _load_tab(ws, tab_label: str) -> List[InventoryItem]:
-    values = ws.get_all_values()
+    from research import _retry
+    values = _retry(lambda: ws.get_all_values())
     if not values:
         return []
     headers = values[0]
@@ -110,9 +111,12 @@ def _load_tab(ws, tab_label: str) -> List[InventoryItem]:
 
 
 def load_all_inventory() -> List[InventoryItem]:
-    inv = open_inventory()
-    psa = _load_tab(inv.worksheet(config.TAB_PSA10), "PSA10")
-    box = _load_tab(inv.worksheet(config.TAB_BOX), "BOX")
+    from research import _retry
+    inv = _retry(open_inventory)
+    psa_ws = _retry(lambda: inv.worksheet(config.TAB_PSA10))
+    box_ws = _retry(lambda: inv.worksheet(config.TAB_BOX))
+    psa = _load_tab(psa_ws, "PSA10")
+    box = _load_tab(box_ws, "BOX")
     return psa + box
 
 

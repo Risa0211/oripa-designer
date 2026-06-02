@@ -1199,12 +1199,15 @@ with tab_dopa_list:
     # 同期結果表示
     dopa_result = st.session_state.get("_dopa_sync_result")
     if dopa_result:
-        st.success(
-            f"✅ 取得 {dopa_result['fetched']}件 / 全DOPA商品 {dopa_result['dopa_products']}件 "
-            f"/ **{dopa_result.get('added', 0)}件 新規追加** "
-            f"/ うち 🆕新規限定 {dopa_result['new_gachas']}件 / 🎰有料 {dopa_result['premium_gachas']}件"
-        )
         items = dopa_result.get("added_items", [])
+        added_new = sum(1 for x in items if x.get("is_new"))
+        added_paid = sum(1 for x in items if x.get("is_paid"))
+        st.success(
+            f"✅ 取得 {dopa_result['fetched']}件 / 全DOPA商品 {dopa_result['dopa_products']}件\n\n"
+            f"**{dopa_result.get('added', 0)}件 新規追加** "
+            f"(うち 🆕新規限定 {added_new}件 / 🎰有料 {added_paid}件)\n\n"
+            f"📊 DB全体: 🆕新規限定 {dopa_result['new_gachas']}件 / 🎰有料 {dopa_result['premium_gachas']}件"
+        )
         if items:
             with st.expander(f"📋 追加された {len(items)}件 一覧", expanded=True):
                 df_added = pd.DataFrame([{
@@ -1265,28 +1268,100 @@ with tab_dopa_list:
             "有料限定": "○" if g.is_paid_gacha else "",
             "URL": g.url,
         } for g in filtered])
-        st.caption("⬇️ **行をクリックして選択** → 下に転送ボタンが表示されます")
-        ev_d = st.dataframe(
-            df, use_container_width=True, hide_index=True,
-            on_select="rerun", selection_mode="single-row",
-            column_config={
-                "URL": st.column_config.LinkColumn("URL"),
-                "単価(pt)": st.column_config.NumberColumn(format="%d pt"),
-                "残口数": st.column_config.NumberColumn(format="%d"),
-            },
-            key="dopa_table",
-        )
-        sel_rows_d = (ev_d.selection or {}).get("rows", [])
-        if sel_rows_d:
-            sel_d = filtered[sel_rows_d[0]]
-            ca, cb = st.columns([4, 2])
-            with ca:
-                st.success(f"選択中: {sel_d.product_id}｜{sel_d.title}（{sel_d.price}pt×{sel_d.total_tickets:,}・残{sel_d.remaining:,}）")
-            with cb:
-                if st.button("📋 景品設計に転送", type="primary", key="dopa_to_template_quick",
-                              use_container_width=True):
-                    st.session_state["_jump_to_template_dopa_id"] = sel_d.product_id
-                    st.toast(f"📋 景品設計タブで「🎲 DOPA商品から」セレクトしてください ({sel_d.title[:30]})")
+        st.caption("⬇️ **行をクリックして選択** → 下に転送ボタンが表示されます。**新規限定/有料限定の○は編集可** (📝表示モード切替)")
+
+        # 編集モード切替
+        edit_mode = st.toggle("🔧 振り分け編集モード", key="dopa_edit_mode",
+                               help="ONにすると新規限定/有料限定をチェックボックスで編集できる")
+
+        if edit_mode:
+            edit_df = df.copy()
+            edit_df["🆕新規限定_bool"] = edit_df["新規限定"] == "○"
+            edit_df["🎰有料限定_bool"] = edit_df["有料限定"] == "○"
+            shown = edit_df[["商品ID", "タイトル", "単価(pt)", "総口数", "残口数",
+                             "🆕新規限定_bool", "🎰有料限定_bool", "URL"]]
+            edited = st.data_editor(
+                shown, use_container_width=True, hide_index=True,
+                column_config={
+                    "🆕新規限定_bool": st.column_config.CheckboxColumn("🆕新規限定"),
+                    "🎰有料限定_bool": st.column_config.CheckboxColumn("🎰有料限定"),
+                    "URL": st.column_config.LinkColumn("URL"),
+                    "商品ID": st.column_config.TextColumn(disabled=True),
+                    "タイトル": st.column_config.TextColumn(disabled=True),
+                    "単価(pt)": st.column_config.NumberColumn(disabled=True),
+                    "総口数": st.column_config.NumberColumn(disabled=True),
+                    "残口数": st.column_config.NumberColumn(disabled=True),
+                },
+                key="dopa_editor",
+            )
+            if st.button("💾 振り分けを保存", type="primary", key="dopa_save_classification"):
+                # filtered とインデックス対応で更新
+                from research import DopaProduct, bulk_upsert_dopa_products, NewGacha, PremiumGacha
+                from research import bulk_upsert_new_gachas, bulk_upsert_premium_gachas
+                today = datetime.now().strftime("%Y-%m-%d")
+                updated_products = []
+                add_new_gachas = []
+                add_paid_gachas = []
+                for i, row in edited.iterrows():
+                    orig = next((g for g in filtered if g.product_id == row["商品ID"]), None)
+                    if not orig:
+                        continue
+                    is_new = bool(row["🆕新規限定_bool"])
+                    is_paid = bool(row["🎰有料限定_bool"])
+                    if orig.is_new_gacha == is_new and orig.is_paid_gacha == is_paid:
+                        continue
+                    orig.is_new_gacha = is_new
+                    orig.is_paid_gacha = is_paid
+                    updated_products.append(orig)
+                    if is_new:
+                        add_new_gachas.append(NewGacha(
+                            no=orig.product_id, site="DOPA", title=orig.title, url=orig.url,
+                            price=orig.price, total_tickets=orig.total_tickets,
+                            new_period="手動指定", registered_at=today,
+                            note="手動振り分け", updated_at="",
+                        ))
+                    if is_paid:
+                        add_paid_gachas.append(PremiumGacha(
+                            product_id=orig.product_id, site="DOPA", title=orig.title, url=orig.url,
+                            price=orig.price, total_tickets=orig.total_tickets,
+                            card_types=0, charge_amount=0,
+                            note="手動振り分け", updated_at="",
+                        ))
+                if updated_products:
+                    bulk_upsert_dopa_products(updated_products)
+                    if add_new_gachas:
+                        bulk_upsert_new_gachas(add_new_gachas)
+                        cached_new_gachas.clear()
+                    if add_paid_gachas:
+                        bulk_upsert_premium_gachas(add_paid_gachas)
+                        cached_premium_gachas.clear()
+                    cached_dopa_products.clear()
+                    st.success(f"✅ {len(updated_products)}件の振り分けを保存しました")
+                    st.rerun()
+                else:
+                    st.info("変更なし")
+        else:
+            ev_d = st.dataframe(
+                df, use_container_width=True, hide_index=True,
+                on_select="rerun", selection_mode="single-row",
+                column_config={
+                    "URL": st.column_config.LinkColumn("URL"),
+                    "単価(pt)": st.column_config.NumberColumn(format="%d pt"),
+                    "残口数": st.column_config.NumberColumn(format="%d"),
+                },
+                key="dopa_table",
+            )
+            sel_rows_d = (ev_d.selection or {}).get("rows", [])
+            if sel_rows_d:
+                sel_d = filtered[sel_rows_d[0]]
+                ca, cb = st.columns([4, 2])
+                with ca:
+                    st.success(f"選択中: {sel_d.product_id}｜{sel_d.title}（{sel_d.price}pt×{sel_d.total_tickets:,}・残{sel_d.remaining:,}）")
+                with cb:
+                    if st.button("📋 景品設計に転送", type="primary", key="dopa_to_template_quick",
+                                  use_container_width=True):
+                        st.session_state["_jump_to_template_dopa_id"] = sel_d.product_id
+                        st.toast(f"📋 景品設計タブで「🎲 DOPA商品から」セレクトしてください ({sel_d.title[:30]})")
 
 
 # ---------- 有料ガチャ一覧タブ ----------
