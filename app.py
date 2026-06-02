@@ -1056,14 +1056,16 @@ with tab_template:
                     best = cands[0]
                     found_url = best["url"]
                     new_r["snkrdunk URL"] = found_url
-                    # 商品名からPSA10判定（rarityが「-」でもスニダン側名前で判別）
+                    # 商品名からPSA10/パック判別
                     target_name = (best.get("name") or "")
+                    import re as _re
+                    is_pack_target = bool(_re.search(r'(パック|BOX|ボックス|箱)', target_name))
                     if "PSA" in target_name.upper() or "PSA" in rarity.upper():
                         grade_hint = "PSA10"
                     else:
                         grade_hint = ""
                     try:
-                        price, msg = fetch_recent_price(found_url, grade_hint)
+                        price, msg = fetch_recent_price(found_url, grade_hint, is_pack=is_pack_target)
                         if price:
                             new_r["実価値/枚(円)"] = int(price)
                             upsert_card_master(CardMaster(
@@ -1092,8 +1094,9 @@ with tab_template:
 
         # ---- 一括価格取得 ----
         if fetch_all_btn:
-            from snkrdunk_client import fetch_recent_price
+            from snkrdunk_client import fetch_recent_price, fetch_apparel_meta
             from research import CardMaster, upsert_card_master
+            import re as _re
             updated_count = 0
             errors = []
             progress = st.progress(0.0, text="価格取得中...")
@@ -1105,7 +1108,15 @@ with tab_template:
                 rarity = str(r.get("レアリティ", "") or "").strip()
                 new_r = dict(r)
                 if url and name:
-                    price, msg = fetch_recent_price(url, "PSA10" if "PSA" in rarity.upper() else "")
+                    # URLからスニダン商品メタ取得しパック判定
+                    meta = fetch_apparel_meta(url.rsplit("/", 1)[-1]) if "/apparels/" in url else None
+                    target_name = (meta.get("name") or "") if meta else ""
+                    is_pack_target = bool(_re.search(r'(パック|BOX|ボックス|箱)', target_name + name))
+                    if "PSA" in target_name.upper() or "PSA" in rarity.upper():
+                        grade_hint = "PSA10"
+                    else:
+                        grade_hint = ""
+                    price, msg = fetch_recent_price(url, grade_hint, is_pack=is_pack_target)
                     if price:
                         new_r["実価値/枚(円)"] = int(price)
                         upsert_card_master(CardMaster(

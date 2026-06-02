@@ -28,25 +28,40 @@ def _normalize_grade(grade: str) -> str:
     return g.upper()
 
 
-def fetch_recent_price(snkrdunk_url: str, grade: str = "") -> Tuple[Optional[int], str]:
+def fetch_recent_price(snkrdunk_url: str, grade: str = "", is_pack: bool = False) -> Tuple[Optional[int], str]:
     """
-    snkrdunk URLから直近の販売価格を取得。
+    snkrdunk URLから価格取得。
 
-    引数:
-      snkrdunk_url: スニダン商品URL
-      grade: 在庫のグレード（"PSA 10", "PSA 9", "BOX" 等）。
-             指定すると優先的にそのグレード一致の履歴を採用。
-
-    返り値: (price_jpy or None, status_message)
-    優先順位:
-      1. sales-history で condition が grade と一致する直近販売
-      2. sales-history のサイズ "1個"/"1枚" の直近販売（gradeなし or 一致なしの場合）
-      3. used-prices "1枚"/"1個" の最安価格（中古最安）
-      4. apparels の usedMinPrice / minPrice
+    is_pack=True (パック/BOX商品):
+      → 新品最安(minPriceOfNewListing or minPrice)を優先
+    is_pack=False (シングルカード等):
+      → 1. sales-history グレード一致(PSA10等)の直近販売
+        2. sales-history サイズ1個/1枚の直近販売
+        3. used-prices 中古最安
+        4. apparels usedMinPrice / minPrice
     """
     apparel_id = extract_apparel_id(snkrdunk_url)
     if not apparel_id:
         return None, "URL不正: apparel ID抽出失敗"
+
+    # パック商品: 新品最安を最優先で取得
+    if is_pack:
+        try:
+            r = requests.get(
+                f"https://snkrdunk.com/v1/apparels/{apparel_id}",
+                headers=HEADERS, timeout=TIMEOUT,
+            )
+            if r.status_code == 200:
+                d = r.json()
+                mp_new = d.get("minPriceOfNewListing") or 0
+                mp = d.get("minPrice") or 0
+                price = mp_new if mp_new > 0 else mp
+                if price > 0:
+                    return int(price), f"新品最安 ¥{int(price):,}〜 (パック)"
+        except (requests.RequestException, ValueError):
+            pass
+        # パック商品で新品なし→sales-historyにフォールバック
+        # (下のロジックへ進む)
 
     norm_grade = _normalize_grade(grade)
     note_prefix = ""
