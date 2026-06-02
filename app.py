@@ -676,6 +676,7 @@ with tab_template:
     if url_fetch_btn and paste_url.strip():
         from torecacenter_scraper import fetch_by_url
         from research import find_card_in_master
+        from inventory import find_card_in_inventory, load_all_inventory
         with st.spinner("URLから商品情報取得中..."):
             try:
                 data = fetch_by_url(paste_url.strip())
@@ -685,16 +686,29 @@ with tab_template:
         if not data:
             st.error("URLから情報を取得できませんでした (URL形式を確認してください)")
         else:
+            try:
+                _inv_pool_url = load_all_inventory()
+            except Exception:
+                _inv_pool_url = []
             cards_data = []
             for c in data.get("cards", []):
-                cm = find_card_in_master(c.get("name", ""), c.get("rarity", ""))
+                nm = c.get("name", "")
+                rar = c.get("rarity", "")
+                inv_hit = find_card_in_inventory(nm, rar, inventory=_inv_pool_url)
+                if inv_hit:
+                    val = inv_hit.purchase_price if inv_hit.purchase_price > 0 else inv_hit.price
+                    snk = inv_hit.snkrdunk_url
+                else:
+                    cm = find_card_in_master(nm, rar)
+                    val = int(cm.buy_price) if cm else 0
+                    snk = cm.snkrdunk_url if cm else ""
                 cards_data.append({
                     "賞": c.get("rank", ""),
-                    "カード名": c.get("name", ""),
-                    "レアリティ": c.get("rarity", ""),
+                    "カード名": nm,
+                    "レアリティ": rar,
                     "本数": int(c.get("quantity", 0)),
-                    "実価値/枚(円)": int(cm.buy_price) if cm else 0,
-                    "snkrdunk URL": cm.snkrdunk_url if cm else "",
+                    "実価値/枚(円)": val,
+                    "snkrdunk URL": snk,
                     "上乗せ倍率": 0.0, "除外": False,
                 })
             st.session_state["tmpl_state"] = {
@@ -748,20 +762,51 @@ with tab_template:
     # ---- 読み込み処理 ----
     if load_btn:
         from research import find_card_in_master, snkrdunk_search_url
+        from inventory import find_card_in_inventory, load_all_inventory
+
+        # 在庫を1回ロードして使い回す
+        try:
+            _inv_pool = load_all_inventory()
+        except Exception:
+            _inv_pool = []
+
+        def _resolve_card(name, rarity):
+            """カードに対し: 在庫スプシ→カードマスタDBの順でsnkrdunk URL+価格を引く"""
+            # 1. 在庫からマッチ(スニダンURL+相場or仕入価格を取得)
+            inv_hit = find_card_in_inventory(name, rarity, inventory=_inv_pool)
+            if inv_hit:
+                val = inv_hit.purchase_price if inv_hit.purchase_price > 0 else inv_hit.price
+                return {
+                    "実価値/枚(円)": int(val),
+                    "snkrdunk URL": inv_hit.snkrdunk_url,
+                    "_src": f"在庫({inv_hit.tab})",
+                }
+            # 2. カードマスタDB
+            cm = find_card_in_master(name, rarity)
+            if cm:
+                return {
+                    "実価値/枚(円)": int(cm.buy_price),
+                    "snkrdunk URL": cm.snkrdunk_url,
+                    "_src": "カードマスタ",
+                }
+            return {"実価値/枚(円)": 0, "snkrdunk URL": "", "_src": ""}
+
         loaded = None
         loaded_src = ""
         if no_input.strip():
             tpl = load_design_template(no_input.strip())
             if tpl:
-                # 各カードに対してマスタDB照合してsnkrdunk URLと買取価格を引く
                 cards_data = []
+                resolved_count = 0
                 for c in tpl.cards:
-                    cm = find_card_in_master(c.card_name, c.rarity)
+                    r = _resolve_card(c.card_name, c.rarity)
+                    if r["_src"]:
+                        resolved_count += 1
                     cards_data.append({
                         "賞": c.tier, "カード名": c.card_name, "レアリティ": c.rarity,
                         "本数": int(c.qty),
-                        "実価値/枚(円)": int(cm.buy_price) if cm else 0,
-                        "snkrdunk URL": cm.snkrdunk_url if cm else "",
+                        "実価値/枚(円)": r["実価値/枚(円)"],
+                        "snkrdunk URL": r["snkrdunk URL"],
                         "上乗せ倍率": 0.0, "除外": False,
                     })
                 loaded = {
@@ -776,7 +821,6 @@ with tab_template:
                 st.warning(f"商品No.{no_input} は景品明細・リサーチDB双方に見つかりませんでした")
         elif dopa_pick and dopa_pick != "（DOPA商品から選ぶ）":
             g = dopa_list[dopa_options.index(dopa_pick) - 1]
-            # DOPA個別ページから賞構成・カード明細を自動取得
             from dopa_scraper import fetch_pack_detail
             cards_data = []
             try:
@@ -788,17 +832,16 @@ with tab_template:
                             kind_note = "（外れpt還元）"
                         elif c["kind"] == "lastone":
                             kind_note = "（ラストワン）"
-                        cm = find_card_in_master(c["name"], c["rarity"])
-                        # point は DOPA表示pt = 1pt=1円換算
-                        # カードの「実価値」 は スニダン価格があればそちら、なければ point を初期値
-                        real_value = int(cm.buy_price) if cm else int(c["point"])
+                        r = _resolve_card(c["name"], c["rarity"])
+                        # 在庫/マスタにあればその価格、なければDOPA表示pt(1pt=1円換算)を初期値
+                        real_value = r["実価値/枚(円)"] if r["_src"] else int(c["point"])
                         cards_data.append({
                             "賞": c["rank"] + kind_note,
                             "カード名": c["name"],
                             "レアリティ": c["rarity"],
                             "本数": int(c["quantity"]),
                             "実価値/枚(円)": real_value,
-                            "snkrdunk URL": cm.snkrdunk_url if cm else "",
+                            "snkrdunk URL": r["snkrdunk URL"],
                             "上乗せ倍率": 0.0,
                             "除外": False,
                         })
@@ -839,18 +882,17 @@ with tab_template:
             loaded_src = f"{g.site}｜{g.title}（有料ガチャ）"
         elif new_pick and new_pick != "（新規ガチャから選ぶ）":
             g = new_list[new_options.index(new_pick) - 1]
-            # 新規ガチャがトレカセンター由来ならNoで景品明細を引ける
             cards_data = []
             if g.site == "トレカセンター" and g.no:
                 tpl_n = load_design_template(g.no)
                 if tpl_n:
                     for c in tpl_n.cards:
-                        cm = find_card_in_master(c.card_name, c.rarity)
+                        r = _resolve_card(c.card_name, c.rarity)
                         cards_data.append({
                             "賞": c.tier, "カード名": c.card_name, "レアリティ": c.rarity,
                             "本数": int(c.qty),
-                            "実価値/枚(円)": int(cm.buy_price) if cm else 0,
-                            "snkrdunk URL": cm.snkrdunk_url if cm else "",
+                            "実価値/枚(円)": r["実価値/枚(円)"],
+                            "snkrdunk URL": r["snkrdunk URL"],
                             "上乗せ倍率": 0.0, "除外": False,
                         })
             loaded = {

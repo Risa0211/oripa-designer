@@ -120,6 +120,61 @@ def load_all_inventory() -> List[InventoryItem]:
     return psa + box
 
 
+def _norm_name(s: str) -> str:
+    """カード名の表記揺れを吸収（全角空白除去、英数全半角統一）"""
+    if not s:
+        return ""
+    import unicodedata
+    return unicodedata.normalize("NFKC", s).replace(" ", "").replace("　", "").lower()
+
+
+def find_card_in_inventory(name: str, rarity: str = "", inventory: Optional[List[InventoryItem]] = None) -> Optional[InventoryItem]:
+    """カード名(+レア)で在庫から最初の一致を探す
+
+    マッチ優先順位:
+      1. 名前(正規化)完全一致 + (rarityがあればgradeとも部分一致)
+      2. 名前(正規化)完全一致
+      3. 名前(正規化)部分一致
+    """
+    if inventory is None:
+        inventory = load_all_inventory()
+    if not name:
+        return None
+    n = _norm_name(name)
+    r = _norm_name(rarity)
+
+    def _pick_best(cands: List[InventoryItem]) -> Optional[InventoryItem]:
+        """URL付きを優先、その後仕入価格 or 相場が大きい順"""
+        if not cands:
+            return None
+        with_url = [c for c in cands if c.snkrdunk_url]
+        pool = with_url or cands
+        # 仕入or相場ある順
+        pool.sort(key=lambda c: (c.purchase_price or c.price or 0), reverse=True)
+        return pool[0]
+
+    # ステップ1: 名前+グレード両方一致
+    if r:
+        cands1 = [it for it in inventory if _norm_name(it.name) == n and r in _norm_name(it.grade)]
+        best = _pick_best(cands1)
+        if best:
+            return best
+
+    # ステップ2: 名前完全一致
+    cands2 = [it for it in inventory if _norm_name(it.name) == n]
+    best = _pick_best(cands2)
+    if best:
+        return best
+
+    # ステップ3: 名前部分一致
+    cands3 = []
+    for it in inventory:
+        inv_n = _norm_name(it.name)
+        if n in inv_n or inv_n in n:
+            cands3.append(it)
+    return _pick_best(cands3)
+
+
 def _status_text(reserved: int, on_sale: int, remaining: int) -> str:
     parts = []
     if reserved > 0:
