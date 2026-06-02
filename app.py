@@ -1182,7 +1182,7 @@ with tab_dopa_list:
     sync_cols = st.columns([2, 1, 4])
     with sync_cols[0]:
         sync_btn = st.button("🔄 DOPAから最新一覧を取込",
-                              help="DOPAのHTMLから現開催中の全件を取得。完売分は別途、ログイン経由が必要")
+                              help="DOPAから現在表示中の全件を取得")
     if sync_btn:
         with st.spinner("DOPAから取込中..."):
             try:
@@ -1222,9 +1222,6 @@ with tab_dopa_list:
         if st.button("× 結果を閉じる", key="dopa_close_result"):
             st.session_state.pop("_dopa_sync_result", None)
             st.rerun()
-    with sync_cols[1]:
-        st.caption("⚠️ 現状取得できるのは「開催中」のみ。完売分はDOPA認証要")
-
     try:
         dopa_items = _ldopa()
     except Exception as e:
