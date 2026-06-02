@@ -1118,7 +1118,7 @@ with tab_torecacenter:
     st.markdown(f"**{len(filtered_refs):,}件** / 全{len(refs_all):,}件 (上位{min(tc_limit, len(filtered_refs))}件表示)")
 
     if filtered_refs:
-        # データフレーム表示
+        view_refs = filtered_refs[:int(tc_limit)]
         df_tc = pd.DataFrame([{
             "No": r.no, "タイトル": r.title,
             "単価(coin)": r.price_per_coin,
@@ -1126,24 +1126,26 @@ with tab_torecacenter:
             "完売日": r.sold_date,
             "URL": r.url,
             "タグ": r.tags,
-        } for r in filtered_refs[:int(tc_limit)]])
-        st.dataframe(df_tc, use_container_width=True, hide_index=True,
-                     column_config={"URL": st.column_config.LinkColumn("URL")})
+        } for r in view_refs])
 
-        # 設計フロー転送
-        st.markdown("##### 📋 商品から景品設計タブへ転送")
-        action_cols = st.columns([3, 2])
-        with action_cols[0]:
-            target_no = st.selectbox(
-                "設計に転送する商品", filtered_refs[:int(tc_limit)],
-                format_func=lambda r: f"No.{r.no} | {r.title[:50]} (¥{r.price_per_coin}×{r.total_tickets:,})",
-                key="tc_target",
-            )
-        with action_cols[1]:
-            if st.button("📋 景品設計に転送", type="primary", key="tc_to_template", use_container_width=True):
-                # tmpl_state を直接セットしてタブ移動を促す
-                st.session_state["_jump_to_template_no"] = str(target_no.no)
-                st.success(f"📋 景品設計タブに移動して 'No.{target_no.no}' で読み込んでください（自動入力済）")
+        st.caption("⬇️ **行をクリックして選択** → 下に転送ボタンが表示されます")
+        ev = st.dataframe(
+            df_tc, use_container_width=True, hide_index=True,
+            on_select="rerun", selection_mode="single-row",
+            column_config={"URL": st.column_config.LinkColumn("URL")},
+            key="tc_table",
+        )
+        sel_rows = (ev.selection or {}).get("rows", [])
+        if sel_rows:
+            sel = view_refs[sel_rows[0]]
+            sa, sb = st.columns([4, 2])
+            with sa:
+                st.success(f"選択中: No.{sel.no}｜{sel.title}（¥{sel.price_per_coin:,}×{sel.total_tickets:,}口）")
+            with sb:
+                if st.button("📋 景品設計に転送", type="primary", key="tc_to_template_quick",
+                              use_container_width=True):
+                    st.session_state["_jump_to_template_no"] = str(sel.no)
+                    st.toast(f"📋 景品設計タブで「📥 読み込み」を押してください (No.{sel.no} セット済)")
 
 
 # ---------- DOPA商品一覧タブ ----------
@@ -1218,28 +1220,28 @@ with tab_dopa_list:
             "有料限定": "○" if g.is_paid_gacha else "",
             "URL": g.url,
         } for g in filtered])
-        st.dataframe(
+        st.caption("⬇️ **行をクリックして選択** → 下に転送ボタンが表示されます")
+        ev_d = st.dataframe(
             df, use_container_width=True, hide_index=True,
+            on_select="rerun", selection_mode="single-row",
             column_config={
                 "URL": st.column_config.LinkColumn("URL"),
                 "単価(pt)": st.column_config.NumberColumn(format="%d pt"),
                 "残口数": st.column_config.NumberColumn(format="%d"),
             },
+            key="dopa_table",
         )
-
-        # 設計フロー転送
-        st.markdown("##### 📋 商品から景品設計タブへ転送")
-        d_action = st.columns([3, 2])
-        with d_action[0]:
-            d_target = st.selectbox(
-                "設計に転送するDOPA商品", filtered,
-                format_func=lambda g: f"{g.product_id} | {g.title[:50]} ({g.price}pt×{g.total_tickets:,})",
-                key="dopa_target",
-            )
-        with d_action[1]:
-            if st.button("📋 景品設計に転送", type="primary", key="dopa_to_template", use_container_width=True):
-                st.session_state["_jump_to_template_dopa_id"] = d_target.product_id
-                st.success(f"📋 景品設計タブに移動: {d_target.title}")
+        sel_rows_d = (ev_d.selection or {}).get("rows", [])
+        if sel_rows_d:
+            sel_d = filtered[sel_rows_d[0]]
+            ca, cb = st.columns([4, 2])
+            with ca:
+                st.success(f"選択中: {sel_d.product_id}｜{sel_d.title}（{sel_d.price}pt×{sel_d.total_tickets:,}・残{sel_d.remaining:,}）")
+            with cb:
+                if st.button("📋 景品設計に転送", type="primary", key="dopa_to_template_quick",
+                              use_container_width=True):
+                    st.session_state["_jump_to_template_dopa_id"] = sel_d.product_id
+                    st.toast(f"📋 景品設計タブで「🎲 DOPA商品から」セレクトしてください ({sel_d.title[:30]})")
 
 
 # ---------- 有料ガチャ一覧タブ ----------
