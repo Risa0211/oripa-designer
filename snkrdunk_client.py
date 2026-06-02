@@ -121,36 +121,64 @@ def fetch_recent_price(snkrdunk_url: str, grade: str = "") -> Tuple[Optional[int
 
 
 def _normalize_search_query(card_name: str, rarity: str = "") -> str:
-    """検索クエリを整形:
+    """検索クエリを整形(控えめ):
     - 「『1パック』」「『1BOX』」等の接頭辞を除去
-    - 末尾のカード番号 [105/100] を分離
-    - パック/BOX商品は末尾に「パック」を追加
+    - 末尾の [SV9 105/100] 等のカード番号を除去
+    クエリは元の名前ベース。パック/PSAはスコアリング側で判定
     """
     if not card_name:
         return ""
     name = card_name.strip()
-    # 『1パック』 / 『1BOX』 / 『3パックセット』 等を除く
     name = re.sub(r'^[『「]?\d+\s*(?:パック|BOX|箱|セット)[』」]?\s*', '', name)
-    # 末尾 [SV9 105/100] 等のカード番号
     name = re.sub(r'\[[^\]]*\]\s*$', '', name).strip()
-    # パック/BOX商品の指示
-    is_pack = bool(re.search(r'(パック|BOX|箱)', card_name))
-    if is_pack and "パック" not in name and "BOX" not in name:
-        name = name + " パック"
-    # PSA10指定があれば残す
-    if rarity and rarity not in ("-", ""):
-        if "PSA" in rarity.upper() and "PSA" not in name.upper():
-            name = name + " PSA10"
-        elif rarity not in name:
-            name = name + " " + rarity
     return name
+
+
+def _detect_pack_request(card_name: str) -> bool:
+    """カード名がパック/BOX商品を指しているか"""
+    return bool(re.search(r'(パック|BOX|箱|ボックス)', card_name or ""))
+
+
+def _detect_pack_in_meta(meta_name: str) -> bool:
+    """スニダン商品名がパック/BOXか"""
+    return bool(re.search(r'(パック|BOX|箱|ボックス)', meta_name or ""))
+
+
+def _search_snkrdunk_official(keyword: str, max_candidates: int = 10) -> list:
+    """スニダン公式検索ページ /search?keywords=... のSSR HTMLから候補ID抽出"""
+    from urllib.parse import quote
+    if not keyword:
+        return []
+    url = f"https://snkrdunk.com/search?keywords={quote(keyword)}"
+    try:
+        r = requests.get(url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=10)
+        if r.status_code != 200:
+            return []
+    except requests.RequestException:
+        return []
+    chunks = re.findall(r'self\.__next_f\.push\(\[1,\s*"((?:[^"\\]|\\.)+)"\]\)', r.text)
+    all_text = "".join(
+        c.replace('\\"', '"').replace("\\'", "'")
+         .replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\')
+        for c in chunks
+    )
+    ids = []
+    seen = set()
+    for m in re.finditer(r'/apparels/(\d+)', all_text):
+        aid = m.group(1)
+        if aid not in seen:
+            seen.add(aid)
+            ids.append(aid)
+        if len(ids) >= max_candidates:
+            break
+    return ids
 
 
 def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidates: int = 5) -> list:
     """カード名(+レア)からスニダン商品ID候補を検索
 
-    DuckDuckGo HTML検索 → 失敗時Bingフォールバック。
-    Bot検出された場合は空リスト返却(ベストエフォート)。
+    優先順位: スニダン公式検索 → DuckDuckGo → Bing
+    全部失敗時は空リスト(ベストエフォート)。
     """
     if not card_name:
         return []
@@ -175,17 +203,21 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
                 break
         return ids
 
-    ids = []
-    # 1. DuckDuckGo HTML
-    try:
-        r = requests.get(f"https://html.duckduckgo.com/html/?q={encoded}",
-                         headers=browser_headers, timeout=8)
-        if r.status_code == 200:
-            ids = _extract_ids(r.text)
-    except requests.RequestException:
-        pass
+    # 0. スニダン公式検索 (最優先・最も精度高い)
+    # 上位は関連商品で埋まることがあるので候補多めに取って後でスコアリング
+    ids = _search_snkrdunk_official(query, max_candidates=30)
 
-    # 2. Bing fallback
+    # 1. DuckDuckGo HTML (フォールバック)
+    if not ids:
+        try:
+            r = requests.get(f"https://html.duckduckgo.com/html/?q={encoded}",
+                             headers=browser_headers, timeout=8)
+            if r.status_code == 200:
+                ids = _extract_ids(r.text)
+        except requests.RequestException:
+            pass
+
+    # 2. Bing (最終フォールバック)
     if not ids:
         try:
             r = requests.get(f"https://www.bing.com/search?q={encoded}",
@@ -200,9 +232,12 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
 
     # 候補のスニダンメタを取得し、カード名キーワード一致度でランキング
     cands = []
-    # 整形後クエリの主要キーワード
     key_words = [w for w in re.split(r'\s+', query) if len(w) >= 2]
-    is_pack_search = any(k in query for k in ["パック", "BOX", "箱"])
+    # 元のカード名でパック/BOXを期待しているか判別 (整形後クエリではなく原文で)
+    orig = card_name or ""
+    wants_pack = bool(re.search(r'(パック|pack)', orig, re.IGNORECASE))
+    wants_box = bool(re.search(r'(BOX|ボックス|箱)', orig, re.IGNORECASE))
+    wants_psa = "PSA" in (rarity or "").upper() or "PSA" in orig.upper()
 
     for aid in ids:
         meta = fetch_apparel_meta(aid)
@@ -210,26 +245,41 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
             cands.append({"id": aid, "url": f"https://snkrdunk.com/apparels/{aid}", "name": "", "score": 0})
             continue
         nm = (meta.get("name") or "")
-        # スコアリング
+        # 商品名側でパック/ボックス判定
+        nm_is_pack = bool(re.search(r'パック\s*$', nm)) or nm.endswith("パック")
+        nm_is_box = "ボックス" in nm or "BOX" in nm
+        nm_is_psa = "PSA" in nm.upper()
+        nm_is_single = bool(re.search(r'\[[^\]]+\d+/\d+', nm))  # [SV9 105/100]のようなカード番号
+
         score = 0
+        # キーワード一致
         for w in key_words:
             if w in nm:
                 score += 10
-        # パック検索なのに個別カードなら減点(例: バトルパートナーズ"パック"で「リーリエのアブリボン AR」)
-        if is_pack_search:
-            if "パック" in nm or "BOX" in nm or "ボックス" in nm:
-                score += 30
-            else:
-                score -= 20
-        # PSA10検索でPSA10商品ならボーナス
-        if "PSA" in query.upper() and "PSA" in nm.upper():
-            score += 20
+
+        # カテゴリ一致ボーナス/減点
+        if wants_pack:
+            if nm_is_pack: score += 40
+            elif nm_is_box: score += 5  # 「パック」要望でも「ボックス」は一応関連商品なので少し
+            elif nm_is_single: score -= 30  # 個別カードは減点
+        elif wants_box:
+            if nm_is_box: score += 40
+            elif nm_is_pack: score += 5
+            elif nm_is_single: score -= 30
+        else:
+            # シングル想定(パック/BOXキーワード無し)
+            if nm_is_pack: score -= 20
+            if nm_is_box: score -= 20
+
+        # PSA一致
+        if wants_psa and nm_is_psa: score += 30
+        if wants_psa and not nm_is_psa: score -= 10
+
         cands.append({
             "id": aid, "url": f"https://snkrdunk.com/apparels/{aid}",
             "name": nm, "score": score,
         })
 
-    # スコア降順
     cands.sort(key=lambda x: -x["score"])
     return cands[:max_candidates]
 
