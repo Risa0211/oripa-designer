@@ -943,6 +943,25 @@ with tab_template:
 
         # ---- カード明細編集 ----
         st.markdown("##### 🎴 景品明細（編集可能）")
+        # 明細空のときはテンプレ生成 + 案内
+        if not state["cards"]:
+            st.warning(
+                "⚠️ この商品の景品明細はDB未登録です（完売済みの場合や、トレカセンター側の"
+                "card_detailが取得不可なケース）。\n\n"
+                "下のテンプレ行に **カード名 / レアリティ / 本数** を手入力してください。"
+                "在庫スプシにカード名一致があれば、入力後「🔎 URL空欄を自動検索」"
+                "または「🔄 全行の買取価格を取得」で実価値が自動補完されます。"
+            )
+            state["cards"] = [
+                {"賞": "1等", "カード名": "", "レアリティ": "", "本数": 0,
+                 "実価値/枚(円)": 0, "snkrdunk URL": "", "上乗せ倍率": 0.0, "除外": False},
+                {"賞": "2等", "カード名": "", "レアリティ": "", "本数": 0,
+                 "実価値/枚(円)": 0, "snkrdunk URL": "", "上乗せ倍率": 0.0, "除外": False},
+                {"賞": "3等", "カード名": "", "レアリティ": "", "本数": 0,
+                 "実価値/枚(円)": 0, "snkrdunk URL": "", "上乗せ倍率": 0.0, "除外": False},
+                {"賞": "ラストワン", "カード名": "", "レアリティ": "", "本数": 0,
+                 "実価値/枚(円)": 0, "snkrdunk URL": "", "上乗せ倍率": 0.0, "除外": False},
+            ]
         # snkrdunk URL列がない既存stateに後付け
         for c in state["cards"]:
             c.setdefault("snkrdunk URL", "")
@@ -984,7 +1003,11 @@ with tab_template:
                 "レアリティ": st.column_config.TextColumn("レア", width="small"),
                 "本数": st.column_config.NumberColumn("本数", min_value=0, step=1, width="small"),
                 "実価値/枚(円)": st.column_config.NumberColumn("実価値/枚(円)", min_value=0, step=100, format="¥%d"),
-                "snkrdunk URL": st.column_config.LinkColumn("snkrdunk URL", help="URLを貼ると🔄ボタンで買取価格取得"),
+                "snkrdunk URL": st.column_config.TextColumn(
+                    "snkrdunk URL",
+                    help="貼り直しで修正OK。空欄→🔎自動検索 / URLあり→🔄買取価格取得",
+                    width="medium",
+                ),
                 "上乗せ倍率": st.column_config.NumberColumn("上乗せ倍率", min_value=0.0, step=0.1,
                                                   help="0なら一括倍率を適用"),
                 "除外": st.column_config.CheckboxColumn("除外", width="small"),

@@ -194,7 +194,7 @@ def load_design_template(no) -> Optional[DesignTemplate]:
         for _, r in rows.iterrows()
     ]
 
-    # フォールバック: 景品明細がなくリサーチDBにtiers情報があればパース
+    # フォールバック1: 景品明細がなくリサーチDBにtiers情報があればパース
     if not cards and ref and ref.tiers:
         seq = 1
         for t in TIER_COLS:
@@ -202,6 +202,36 @@ def load_design_template(no) -> Optional[DesignTemplate]:
             parsed = _parse_tier_text_to_cards(t, text, seq)
             cards.extend(parsed)
             seq += len(parsed)
+
+    # フォールバック2: ParquetもリサーチDBもtiers無い場合、japan-toreca.com APIから直接取得
+    if not cards and ref and ref.url:
+        try:
+            import re as _re
+            m = _re.search(r"japan-toreca\.com/oripa/[\w-]+/(\d+)", ref.url)
+            if m:
+                from torecacenter_scraper import fetch_detail, extract_cards_from_detail
+                detail = fetch_detail(m.group(1))
+                if detail:
+                    api_cards = extract_cards_from_detail(detail)
+                    # API応答にカード明細あれば変換
+                    rank_to_label = {
+                        "1等": "1等", "2等": "2等", "3等": "3等", "4等": "4等",
+                        "5等": "5等", "6等": "6等", "7等": "7等",
+                        "キリ番": "キリ番", "ラストワン": "ラストワン",
+                    }
+                    for c in api_cards:
+                        cards.append(PrizeCard(
+                            seq=c["seq"], tier=rank_to_label.get(c["rank"], c["rank"]),
+                            card_name=c["name"], rarity=c["rarity"],
+                            qty=int(c["quantity"] or 0),
+                        ))
+                    # APIから単価/総口数も埋め直す(リサーチDB値より新しい可能性)
+                    if not price and detail.get("price"):
+                        price = int(detail["price"])
+                    if not total_tickets and detail.get("total_cards"):
+                        total_tickets = int(detail["total_cards"])
+        except Exception:
+            pass
 
     if not cards and not ref:
         return None  # 完全未登録
