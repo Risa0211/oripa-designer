@@ -1053,11 +1053,17 @@ with tab_template:
                     cands = []
                     errors.append(f"{name}: search失敗 {ex}")
                 if cands:
-                    found_url = cands[0]["url"]
+                    best = cands[0]
+                    found_url = best["url"]
                     new_r["snkrdunk URL"] = found_url
-                    # 価格取得も同時に
+                    # 商品名からPSA10判定（rarityが「-」でもスニダン側名前で判別）
+                    target_name = (best.get("name") or "")
+                    if "PSA" in target_name.upper() or "PSA" in rarity.upper():
+                        grade_hint = "PSA10"
+                    else:
+                        grade_hint = ""
                     try:
-                        price, msg = fetch_recent_price(found_url, "PSA10" if "PSA" in rarity.upper() else "")
+                        price, msg = fetch_recent_price(found_url, grade_hint)
                         if price:
                             new_r["実価値/枚(円)"] = int(price)
                             upsert_card_master(CardMaster(

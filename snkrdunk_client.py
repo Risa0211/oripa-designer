@@ -120,6 +120,32 @@ def fetch_recent_price(snkrdunk_url: str, grade: str = "") -> Tuple[Optional[int
     return None, note_prefix + "／取得失敗"
 
 
+def _normalize_search_query(card_name: str, rarity: str = "") -> str:
+    """検索クエリを整形:
+    - 「『1パック』」「『1BOX』」等の接頭辞を除去
+    - 末尾のカード番号 [105/100] を分離
+    - パック/BOX商品は末尾に「パック」を追加
+    """
+    if not card_name:
+        return ""
+    name = card_name.strip()
+    # 『1パック』 / 『1BOX』 / 『3パックセット』 等を除く
+    name = re.sub(r'^[『「]?\d+\s*(?:パック|BOX|箱|セット)[』」]?\s*', '', name)
+    # 末尾 [SV9 105/100] 等のカード番号
+    name = re.sub(r'\[[^\]]*\]\s*$', '', name).strip()
+    # パック/BOX商品の指示
+    is_pack = bool(re.search(r'(パック|BOX|箱)', card_name))
+    if is_pack and "パック" not in name and "BOX" not in name:
+        name = name + " パック"
+    # PSA10指定があれば残す
+    if rarity and rarity not in ("-", ""):
+        if "PSA" in rarity.upper() and "PSA" not in name.upper():
+            name = name + " PSA10"
+        elif rarity not in name:
+            name = name + " " + rarity
+    return name
+
+
 def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidates: int = 5) -> list:
     """カード名(+レア)からスニダン商品ID候補を検索
 
@@ -129,9 +155,7 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
     if not card_name:
         return []
     from urllib.parse import quote
-    query = card_name
-    if rarity:
-        query = f"{card_name} {rarity}"
+    query = _normalize_search_query(card_name, rarity)
     encoded = quote(query + " site:snkrdunk.com")
 
     browser_headers = {
@@ -151,29 +175,63 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
                 break
         return ids
 
+    ids = []
     # 1. DuckDuckGo HTML
     try:
         r = requests.get(f"https://html.duckduckgo.com/html/?q={encoded}",
                          headers=browser_headers, timeout=8)
         if r.status_code == 200:
             ids = _extract_ids(r.text)
-            if ids:
-                return [{"id": i, "url": f"https://snkrdunk.com/apparels/{i}"} for i in ids]
     except requests.RequestException:
         pass
 
     # 2. Bing fallback
-    try:
-        r = requests.get(f"https://www.bing.com/search?q={encoded}",
-                         headers=browser_headers, timeout=8)
-        if r.status_code == 200:
-            ids = _extract_ids(r.text)
-            if ids:
-                return [{"id": i, "url": f"https://snkrdunk.com/apparels/{i}"} for i in ids]
-    except requests.RequestException:
-        pass
+    if not ids:
+        try:
+            r = requests.get(f"https://www.bing.com/search?q={encoded}",
+                             headers=browser_headers, timeout=8)
+            if r.status_code == 200:
+                ids = _extract_ids(r.text)
+        except requests.RequestException:
+            pass
 
-    return []
+    if not ids:
+        return []
+
+    # 候補のスニダンメタを取得し、カード名キーワード一致度でランキング
+    cands = []
+    # 整形後クエリの主要キーワード
+    key_words = [w for w in re.split(r'\s+', query) if len(w) >= 2]
+    is_pack_search = any(k in query for k in ["パック", "BOX", "箱"])
+
+    for aid in ids:
+        meta = fetch_apparel_meta(aid)
+        if not meta:
+            cands.append({"id": aid, "url": f"https://snkrdunk.com/apparels/{aid}", "name": "", "score": 0})
+            continue
+        nm = (meta.get("name") or "")
+        # スコアリング
+        score = 0
+        for w in key_words:
+            if w in nm:
+                score += 10
+        # パック検索なのに個別カードなら減点(例: バトルパートナーズ"パック"で「リーリエのアブリボン AR」)
+        if is_pack_search:
+            if "パック" in nm or "BOX" in nm or "ボックス" in nm:
+                score += 30
+            else:
+                score -= 20
+        # PSA10検索でPSA10商品ならボーナス
+        if "PSA" in query.upper() and "PSA" in nm.upper():
+            score += 20
+        cands.append({
+            "id": aid, "url": f"https://snkrdunk.com/apparels/{aid}",
+            "name": nm, "score": score,
+        })
+
+    # スコア降順
+    cands.sort(key=lambda x: -x["score"])
+    return cands[:max_candidates]
 
 
 def fetch_apparel_meta(apparel_id: str) -> Optional[dict]:
