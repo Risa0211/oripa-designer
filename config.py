@@ -31,6 +31,7 @@ TAB_PREMIUM_PRIZES = "有料ガチャ景品明細"
 TAB_DOPA_PRODUCTS = "DOPA商品一覧"  # DOPA全商品（過去現在）
 TAB_DESIGN_SUMMARY = "商品設計"
 TAB_DESIGN_DETAIL = "商品設計明細"
+TAB_REWRITE_CANDIDATES = "リライト商品案"  # トレカセンターをベースにしたリライト案
 
 # 景品明細(エクセル由来・読み取り専用)
 PRIZE_DETAILS_PARQUET = str(ROOT / "data" / "prize_details.parquet")
@@ -67,6 +68,14 @@ CARD_MASTER_HEADERS = [
 # 有料ガチャ景品明細 ヘッダ
 PREMIUM_PRIZES_HEADERS = [
     "商品ID", "seq", "賞", "カード名", "レアリティ", "本数", "snkrdunk URL", "備考"
+]
+
+# リライト商品案 ヘッダ
+REWRITE_CANDIDATES_HEADERS = [
+    "No", "サムネタイトル", "ベースNo", "元タイトル",
+    "単価(coin)", "総口数",
+    "総還元率", "最低保証", "コメント", "その他要素",
+    "使用するカード", "ステータス", "登録日時"
 ]
 
 # 拡張カラム（在庫シートに追加する列）

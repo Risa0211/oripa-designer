@@ -204,11 +204,12 @@ with st.sidebar:
 
 
 # ---------- メインタブ ----------
-(tab_design, tab_premium, tab_template,
+(tab_design, tab_premium, tab_template, tab_rewrite,
  tab_torecacenter, tab_dopa_list, tab_paid_list, tab_new_list,
  tab_products, tab_suggest, tab_inventory, tab_markup) = st.tabs([
     "📝 新規設計", "🎰 限定ガチャ",
     "📋 景品設計（競合コピー）",
+    "✨ リライト商品案",
     "🎴 トレカセンター商品一覧", "🎲 DOPA商品一覧",
     "🎰 有料ガチャ一覧", "🆕 新規ガチャ一覧",
     "📋 商品一覧", "🔄 改善提案", "📦 在庫", "⚙️ 上乗せ率設定"
@@ -1214,6 +1215,116 @@ with tab_template:
             if st.button("🔄 読み込みやり直し", key="tmpl_reset"):
                 st.session_state.pop("tmpl_state", None)
                 st.rerun()
+
+
+# ---------- リライト商品案タブ ----------
+@st.cache_data(ttl=180)
+def _load_rewrite_candidates():
+    """リライト商品案タブから全件取得"""
+    try:
+        from sheets_client import get_client
+        gc = get_client()
+        ss = gc.open_by_key(config.get_active_inventory_sheet_id())
+        ws = ss.worksheet(config.TAB_REWRITE_CANDIDATES)
+        rows = ws.get_all_values()
+        if not rows or len(rows) < 2:
+            return [], []
+        return rows[0], rows[1:]
+    except Exception as e:
+        st.error(f"リライト商品案読込エラー: {e}")
+        return [], []
+
+
+with tab_rewrite:
+    st.subheader("✨ リライト商品案")
+    st.caption("トレカセンター完売商品をベースにリライトした商品案。行を選択→「📋景品設計に転送」で全賞構成展開+価格取得+計算→ユーザーが調整→保存")
+
+    headers, data_rows = _load_rewrite_candidates()
+    if not headers or not data_rows:
+        st.info("リライト商品案がありません。スクリプトで一括投入してください。")
+    else:
+        # データフレーム化
+        df_rw = pd.DataFrame(data_rows, columns=headers)
+        # 数値列に変換
+        for c in ["No", "単価(coin)", "総口数", "設計単価(coin)", "設計売上(円)", "実仕入(円)"]:
+            if c in df_rw.columns:
+                df_rw[c] = pd.to_numeric(df_rw[c], errors="coerce")
+
+        # フィルタ
+        fc = st.columns([3, 2, 2, 1])
+        with fc[0]:
+            rw_search = st.text_input("🔍 タイトル / No.", key="rw_search",
+                                       placeholder="例: ピカチュウ、47、リーリエ")
+        with fc[1]:
+            rw_status_opts = ["全て"] + sorted([s for s in df_rw.get("調整ステータス", pd.Series([])).dropna().unique() if s])
+            rw_status = st.selectbox("ステータス", rw_status_opts, key="rw_status")
+        with fc[2]:
+            rw_judge_opts = ["全て"]
+            if "実利益率" in df_rw.columns:
+                rw_judge_opts += ["利益率45-50%(達成)", "利益率<45%(不足)", "利益率>50%(過剰)", "利益率<0%(赤字)"]
+            rw_judge = st.selectbox("利益率フィルタ", rw_judge_opts, key="rw_judge")
+        with fc[3]:
+            if st.button("🔄 再読込", key="rw_reload"):
+                _load_rewrite_candidates.clear()
+                st.rerun()
+
+        filtered = df_rw.copy()
+        if rw_search:
+            s = rw_search.strip().lower()
+            mask = filtered["サムネタイトル"].fillna("").str.lower().str.contains(s, na=False) \
+                 | filtered["No"].fillna(0).astype(str).str.contains(s, na=False) \
+                 | filtered.get("ベースNo", pd.Series([""]*len(filtered))).fillna("").str.contains(s, na=False)
+            filtered = filtered[mask]
+        if rw_status != "全て" and "調整ステータス" in filtered.columns:
+            filtered = filtered[filtered["調整ステータス"] == rw_status]
+        if rw_judge != "全て" and "実利益率" in filtered.columns:
+            # %記号除去して数値化
+            pr_num = filtered["実利益率"].astype(str).str.rstrip("%").replace("", "0").astype(float)
+            if rw_judge == "利益率45-50%(達成)":
+                filtered = filtered[(pr_num >= 45) & (pr_num <= 50)]
+            elif rw_judge == "利益率<45%(不足)":
+                filtered = filtered[pr_num < 45]
+            elif rw_judge == "利益率>50%(過剰)":
+                filtered = filtered[pr_num > 50]
+            elif rw_judge == "利益率<0%(赤字)":
+                filtered = filtered[pr_num < 0]
+
+        st.markdown(f"**{len(filtered)}件** / 全{len(df_rw)}件")
+
+        if not filtered.empty:
+            # 主要列だけ表示(全列見たければ「全列表示」ボタン)
+            show_all = st.checkbox("全列表示", value=False, key="rw_show_all")
+            if show_all:
+                show_df = filtered
+            else:
+                pref_cols = ["No", "サムネタイトル", "ベースNo", "元タイトル",
+                            "単価(coin)", "総口数", "総還元率", "最低保証",
+                            "実利益率", "上乗せ率", "調整ステータス", "ステータス"]
+                show_cols = [c for c in pref_cols if c in filtered.columns]
+                show_df = filtered[show_cols]
+
+            st.caption("⬇️ **行をクリックして選択** → 下に転送ボタンが表示されます")
+            ev = st.dataframe(
+                show_df.reset_index(drop=True),
+                use_container_width=True, hide_index=True,
+                on_select="rerun", selection_mode="single-row",
+                key="rw_table",
+            )
+            sel_rows = (ev.selection or {}).get("rows", [])
+            if sel_rows:
+                sel = filtered.iloc[sel_rows[0]]
+                sa, sb, sc = st.columns([4, 2, 2])
+                with sa:
+                    st.success(f"選択中: No.{int(sel['No'])}｜{sel['サムネタイトル']} (ベース{sel.get('ベースNo','')})")
+                with sb:
+                    if st.button("📋 景品設計に転送", type="primary", key="rw_to_template",
+                                  use_container_width=True):
+                        st.session_state["_jump_to_template_no"] = str(sel.get('ベースNo', ''))
+                        st.toast(f"📋 景品設計タブで「📥 読み込み」を押してください (ベース{sel.get('ベースNo','')} セット済)")
+                with sc:
+                    st.metric("利益率", str(sel.get("実利益率", "?")), help="目標45-50%")
+        else:
+            st.info("該当する商品がありません")
 
 
 # ---------- トレカセンター商品一覧タブ ----------

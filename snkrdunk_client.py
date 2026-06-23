@@ -136,17 +136,45 @@ def fetch_recent_price(snkrdunk_url: str, grade: str = "", is_pack: bool = False
 
 
 def _normalize_search_query(card_name: str, rarity: str = "") -> str:
-    """検索クエリを整形(控えめ):
-    - 「『1パック』」「『1BOX』」等の接頭辞を除去
-    - 末尾の [SV9 105/100] 等のカード番号を除去
+    """検索クエリを整形:
+    - 接頭辞「『1パック』」「『1BOX』」を除去
+    - 接尾辞「(1BOX)」「(1パック)」等を除去
+    - 末尾の[番号]を除去
     クエリは元の名前ベース。パック/PSAはスコアリング側で判定
     """
     if not card_name:
         return ""
     name = card_name.strip()
-    name = re.sub(r'^[『「]?\d+\s*(?:パック|BOX|箱|セット)[』」]?\s*', '', name)
+    # 接頭辞「1パック」「1BOX」等
+    name = re.sub(r'^[『「]?\d+\s*(?:パック|BOX|箱|セット|PACK)[』」]?\s*', '', name)
+    # 接尾辞「(1BOX)」「(1パック)」「(2PACK)」等
+    name = re.sub(r'[(（]\s*\d+\s*(?:パック|BOX|箱|セット|PACK)\s*[)）]\s*$', '', name)
+    # 末尾[SV9 105/100]等
     name = re.sub(r'\[[^\]]*\]\s*$', '', name).strip()
     return name
+
+
+def _build_search_query_with_rarity(card_name: str, rarity: str = "") -> str:
+    """カード名+レア指定込みの検索クエリ
+    レア指定があれば 「カード名 [レア]」 で絞り込み検索
+    """
+    base = _normalize_search_query(card_name, rarity)
+    r = (rarity or "").strip().upper()
+    # BOX/PACK指定は商品名にBOX含めて検索
+    if r in ("BOX", "PACK", "BOXパック"):
+        return f"{base} BOX" if r == "BOX" else f"{base} パック"
+    # 検索に意味のあるレアのみ追加(C/Rは多数ヒットで逆に絞れない)
+    SEARCH_RARITIES = {"SR", "SAR", "CSR", "CHR", "HR", "RR", "SSR", "MUR", "UR",
+                       "AR", "PROMO", "MA", "BWR", "P"}
+    if r in SEARCH_RARITIES:
+        return f"{base} {r}"
+    return base
+
+
+def _detect_box(card_name: str) -> bool:
+    """カード名がBOX商品(=未開封BOX)を指しているか"""
+    nm = card_name or ""
+    return bool(re.search(r'(BOX|ボックス|未開封|1BOX|拡張パック.*BOX)', nm, re.IGNORECASE))
 
 
 def _detect_pack_request(card_name: str) -> bool:
@@ -192,13 +220,16 @@ def _search_snkrdunk_official(keyword: str, max_candidates: int = 10) -> list:
 def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidates: int = 5) -> list:
     """カード名(+レア)からスニダン商品ID候補を検索
 
-    優先順位: スニダン公式検索 → DuckDuckGo → Bing
+    優先順位: スニダン公式検索(レア込み→レアなしフォールバック) → DuckDuckGo → Bing
     全部失敗時は空リスト(ベストエフォート)。
     """
     if not card_name:
         return []
     from urllib.parse import quote
-    query = _normalize_search_query(card_name, rarity)
+    # レア込みクエリと、フォールバック用ベースクエリ
+    query_with_rarity = _build_search_query_with_rarity(card_name, rarity)
+    query_base = _normalize_search_query(card_name, rarity)
+    query = query_with_rarity  # 検索用は精度高い方
     encoded = quote(query + " site:snkrdunk.com")
 
     browser_headers = {
@@ -219,8 +250,11 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
         return ids
 
     # 0. スニダン公式検索 (最優先・最も精度高い)
-    # 上位は関連商品で埋まることがあるので候補多めに取って後でスコアリング
-    ids = _search_snkrdunk_official(query, max_candidates=30)
+    # レア絞り込みで精度高いので上位10件で十分(API呼び出し削減)
+    ids = _search_snkrdunk_official(query_with_rarity, max_candidates=10)
+    # レア込みで0件ならベース名でリトライ
+    if not ids and query_with_rarity != query_base:
+        ids = _search_snkrdunk_official(query_base, max_candidates=10)
 
     # 1. DuckDuckGo HTML (フォールバック)
     if not ids:
@@ -245,25 +279,51 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
     if not ids:
         return []
 
-    # 候補のスニダンメタを取得し、カード名キーワード一致度でランキング
+    # 候補のスニダンメタを取得し、カード名キーワード一致度+レア一致でランキング
     cands = []
-    key_words = [w for w in re.split(r'\s+', query) if len(w) >= 2]
+    key_words = [w for w in re.split(r'\s+', query_base) if len(w) >= 2]
     # 元のカード名でパック/BOXを期待しているか判別 (整形後クエリではなく原文で)
     orig = card_name or ""
-    wants_pack = bool(re.search(r'(パック|pack)', orig, re.IGNORECASE))
-    wants_box = bool(re.search(r'(BOX|ボックス|箱)', orig, re.IGNORECASE))
+    wants_pack = bool(re.search(r'パック', orig)) and not _detect_box(orig)
+    wants_box = _detect_box(orig)
     wants_psa = "PSA" in (rarity or "").upper() or "PSA" in orig.upper()
+    # 要求レア
+    wanted_rarity = (rarity or "").strip().upper()
+    # SR を含むレア(SR/SAR/CSR/CHR/SSR)の上位識別: SAR/CSR/CHR/SSR は単純な"SR"一致では区別不可
+    # → SARなら「SAR」厳密一致が必要
+    PRECISE_RARITIES = {"SAR", "CSR", "CHR", "SSR", "HR", "RR", "MUR", "UR", "MA", "BWR"}
+
+    def _rarity_match(name_upper, wanted):
+        """商品名から要求レアと完全一致するか判定。SR要求はSAR等を除外"""
+        if not wanted:
+            return None  # レア指定なしは判定対象外
+        if wanted in PRECISE_RARITIES:
+            # SAR等は厳密一致(他レア表記がない・SARが含まれる)
+            return bool(re.search(rf'\b{wanted}\b', name_upper)) or wanted in name_upper
+        elif wanted == "SR":
+            # SR要求はSAR/CSR/CHR/SSRを除く純粋SR
+            has_sar = "SAR" in name_upper
+            has_csr = "CSR" in name_upper
+            has_chr = "CHR" in name_upper
+            has_ssr = "SSR" in name_upper
+            has_sr = "SR" in name_upper and not (has_sar or has_csr or has_chr or has_ssr)
+            return has_sr
+        elif wanted == "PROMO":
+            return ("PROMO" in name_upper) or ("プロモ" in name_upper)
+        else:
+            return wanted in name_upper
 
     for aid in ids:
         meta = fetch_apparel_meta(aid)
         if not meta:
-            cands.append({"id": aid, "url": f"https://snkrdunk.com/apparels/{aid}", "name": "", "score": 0})
+            cands.append({"id": aid, "url": f"https://snkrdunk.com/apparels/{aid}", "name": "", "score": -100})
             continue
         nm = (meta.get("name") or "")
+        nm_upper = nm.upper()
         # 商品名側でパック/ボックス判定
         nm_is_pack = bool(re.search(r'パック\s*$', nm)) or nm.endswith("パック")
-        nm_is_box = "ボックス" in nm or "BOX" in nm
-        nm_is_psa = "PSA" in nm.upper()
+        nm_is_box = ("ボックス" in nm) or ("BOX" in nm_upper) or ("未開封" in nm)
+        nm_is_psa = "PSA" in nm_upper
         nm_is_single = bool(re.search(r'\[[^\]]+\d+/\d+', nm))  # [SV9 105/100]のようなカード番号
 
         score = 0
@@ -273,22 +333,30 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
                 score += 10
 
         # カテゴリ一致ボーナス/減点
-        if wants_pack:
-            if nm_is_pack: score += 40
-            elif nm_is_box: score += 5  # 「パック」要望でも「ボックス」は一応関連商品なので少し
-            elif nm_is_single: score -= 30  # 個別カードは減点
-        elif wants_box:
-            if nm_is_box: score += 40
+        if wants_box:
+            if nm_is_box: score += 60
             elif nm_is_pack: score += 5
-            elif nm_is_single: score -= 30
+            elif nm_is_single: score -= 50
+        elif wants_pack:
+            if nm_is_pack: score += 60
+            elif nm_is_box: score += 5
+            elif nm_is_single: score -= 50
         else:
-            # シングル想定(パック/BOXキーワード無し)
-            if nm_is_pack: score -= 20
-            if nm_is_box: score -= 20
+            # シングル想定
+            if nm_is_pack: score -= 30
+            if nm_is_box: score -= 40
 
         # PSA一致
         if wants_psa and nm_is_psa: score += 30
         if wants_psa and not nm_is_psa: score -= 10
+
+        # レア完全一致を最重要視
+        rarity_ok = _rarity_match(nm_upper, wanted_rarity)
+        if rarity_ok is True:
+            score += 100  # 完全一致は大きく加点
+        elif rarity_ok is False:
+            # 不一致は厳しく減点(SR検索でSARにマッチを防ぐ)
+            score -= 100
 
         cands.append({
             "id": aid, "url": f"https://snkrdunk.com/apparels/{aid}",
@@ -299,21 +367,30 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
     return cands[:max_candidates]
 
 
+_META_CACHE = {}  # apparel_id -> meta dict (プロセス内キャッシュ)
+
+
 def fetch_apparel_meta(apparel_id: str) -> Optional[dict]:
-    """スニダン商品の基本メタ情報を取得（name, productNumber, minPrice等）"""
+    """スニダン商品の基本メタ情報を取得（name, productNumber, minPrice等）。プロセス内キャッシュ"""
+    if apparel_id in _META_CACHE:
+        return _META_CACHE[apparel_id]
     try:
         r = requests.get(
             f"https://snkrdunk.com/v1/apparels/{apparel_id}",
             headers=HEADERS, timeout=TIMEOUT,
         )
         if r.status_code != 200:
+            _META_CACHE[apparel_id] = None
             return None
         d = r.json()
-        return {
+        meta = {
             "id": d.get("id"),
             "name": d.get("localizedName") or d.get("name"),
             "product_number": d.get("productNumber"),
             "min_price": d.get("usedMinPrice") or d.get("minPrice") or 0,
         }
+        _META_CACHE[apparel_id] = meta
+        return meta
     except (requests.RequestException, ValueError):
+        _META_CACHE[apparel_id] = None
         return None
