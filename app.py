@@ -904,11 +904,9 @@ with tab_template:
             }
             loaded_src = f"{g.site}｜{g.title}（新規ガチャ）"
 
-        # リライト商品案からの転送時: 設計単価/総口数/上乗せ率(tier別配分) を反映
+        # リライト商品案からの転送時: 設計単価/総口数を反映 + rewrite_meta を保持
         rw_meta = st.session_state.pop("_jump_to_template_rewrite_meta", None)
         if loaded and rw_meta:
-            import re as _re
-            from collections import defaultdict as _defaultdict
             # 単価/口数を設計値で上書き(空でなければ)
             try:
                 _dp = int(float(rw_meta.get("design_price") or 0))
@@ -922,46 +920,13 @@ with tab_template:
                     loaded["total_tickets"] = _tt
             except Exception:
                 pass
-            # 上乗せ率(平均)を tier別配分(design_v12 と同じロジック)
+            # 上乗せ倍率は読み込み時には入れない(価格データ不完全な場合 還元率が破綻するため)
+            # 代わりに「📊 リライト設計値を再適用」ボタンで価格取得後に反映できるよう meta を保持
+            loaded["_rewrite_meta"] = rw_meta
             try:
                 _avg_markup = float(rw_meta.get("avg_markup") or 0)
             except Exception:
                 _avg_markup = 0.0
-            if _avg_markup > 0 and loaded.get("cards"):
-                _TIER_WEIGHT = {
-                    '1等': 1.6, '2等': 1.3, '3等': 1.0, '4等': 0.8, '5等': 0.7,
-                    '6等': 0.7, '7等': 0.7, 'キリ番': 1.0, 'ラストワン': 1.2,
-                }
-                _MAX_MARKUP_BY_TIER = {
-                    '1等': 3.5, '2等': 2.8, '3等': 2.2, '4等': 1.8, '5等': 1.5,
-                    '6等': 1.5, '7等': 1.5, 'キリ番': 2.2, 'ラストワン': 2.5,
-                }
-                _HAZURE = _re.compile(
-                    r'(coin交換専用|coin\s*$|coin相当|coin引換|ポイント相当|ボーナスpt|'
-                    r'ボーナス\s*$|交換専用|キャッシュバック|ガチャ券|チケット\s*$|ハズレ\s*$)'
-                )
-                _cost_by_tier = _defaultdict(float)
-                for _c in loaded["cards"]:
-                    if _HAZURE.search(_c.get("カード名", "") or ""):
-                        continue
-                    _cost_by_tier[_c.get("賞", "")] += float(_c.get("実価値/枚(円)", 0)) * float(_c.get("本数", 0))
-                _total_cost = sum(_cost_by_tier.values())
-                if _total_cost > 0:
-                    _target_disp = _total_cost * _avg_markup
-                    _weighted = sum(_cost_by_tier[t] * _TIER_WEIGHT.get(t, 1.0) for t in _cost_by_tier)
-                    if _weighted > 0:
-                        _k = _target_disp / _weighted
-                        _tier_markup = {}
-                        for _t in _cost_by_tier:
-                            _m = _TIER_WEIGHT.get(_t, 1.0) * _k
-                            _m = max(_m, 1.0)
-                            _cap = _MAX_MARKUP_BY_TIER.get(_t, 2.0)
-                            _tier_markup[_t] = round(min(_m, _cap), 2)
-                        for _c in loaded["cards"]:
-                            if _HAZURE.search(_c.get("カード名", "") or ""):
-                                _c["上乗せ倍率"] = 0.0
-                            else:
-                                _c["上乗せ倍率"] = _tier_markup.get(_c.get("賞", ""), round(_avg_markup, 2))
             loaded_src = f"{loaded_src}｜リライト商品案転送(目標利益率{rw_meta.get('profit_rate','')}・平均上乗せ{_avg_markup:.2f}x)"
 
         if loaded:
@@ -1027,17 +992,135 @@ with tab_template:
         for c in state["cards"]:
             c.setdefault("snkrdunk URL", "")
 
-        action_row = st.columns([1, 1.2, 1, 3])
+        # ===== 💰 最大の操作: 一括取得+配分 (最目立つ位置) =====
+        rw_meta_state = state.get("_rewrite_meta") if state else None
+        unified_label = "💰 スニダン最新価格を一括取得"
+        if rw_meta_state:
+            unified_label += " ＋ 上乗せ倍率を自動配分"
+        unified_row = st.columns([2.5, 2.5])
+        with unified_row[0]:
+            unified_fetch_btn = st.button(
+                unified_label,
+                type="primary",
+                key="tmpl_unified_fetch",
+                use_container_width=True,
+                help="全カードについて:\n"
+                     "1. URL空欄行→スニダン自動検索→URL+価格セット\n"
+                     "2. URL有り行→スニダン最新価格を再取得\n"
+                     + ("3. リライト商品案の平均上乗せ率を等別配分して各カードの上乗せ倍率に反映\n" if rw_meta_state else "")
+                     + "（カード数×約1-2秒かかります）"
+            )
+        with unified_row[1]:
+            _ncards = len(state.get("cards", []))
+            _est_sec = max(int(_ncards * 1.2), 5)
+            _est_label = f"⏱ 目安: 約 {_ncards} カード / {_est_sec}秒"
+            if rw_meta_state:
+                try:
+                    _am = float(rw_meta_state.get("avg_markup") or 0)
+                except Exception:
+                    _am = 0.0
+                _est_label += f" ｜📌 リライト設計: 平均上乗せ **{_am:.2f}x** / 目標利益率 **{rw_meta_state.get('profit_rate','?')}**"
+            st.markdown(_est_label)
+
+        st.markdown("###### 細かい操作")
+        action_row = st.columns([1, 1.2, 1, 1.4])
         with action_row[0]:
             fetch_all_btn = st.button("🔄 全行の買取価格を取得", key="tmpl_fetch_all",
                                        help="snkrdunk URL列に入っている全カードの買取価格を取得→マスタにも保存")
         with action_row[1]:
             auto_search_btn = st.button("🔎 URL空欄を自動検索", key="tmpl_auto_search",
-                                         help="URL空の行をスニダン検索→URLセット+価格取得。"
-                                              "**一度検索したカードはカードマスタDBに保存され、次回読込時は自動入力**で再検索不要")
+                                         help="URL空の行をスニダン検索→URLセット+価格取得")
         with action_row[2]:
             search_links_btn = st.button("🔗 検索リンク表示", key="tmpl_search_links",
                                           help="各カードのスニダン検索ページリンクを下に表示")
+        reapply_markup_btn = False
+        if rw_meta_state:
+            with action_row[3]:
+                reapply_markup_btn = st.button(
+                    "📊 リライト設計値のみ再適用",
+                    key="tmpl_reapply_markup",
+                    help="価格は触らず、現在の実価値ベースで上乗せ倍率だけ等別配分し直す",
+                )
+
+        if reapply_markup_btn:
+            import re as _re
+            from collections import defaultdict as _defaultdict
+            _TIER_WEIGHT = {
+                '1等': 1.6, '2等': 1.3, '3等': 1.0, '4等': 0.8, '5等': 0.7,
+                '6等': 0.7, '7等': 0.7, 'キリ番': 1.0, 'ラストワン': 1.2,
+            }
+            _MAX_MARKUP_BY_TIER = {
+                '1等': 3.5, '2等': 2.8, '3等': 2.2, '4等': 1.8, '5等': 1.5,
+                '6等': 1.5, '7等': 1.5, 'キリ番': 2.2, 'ラストワン': 2.5,
+            }
+            _HAZURE = _re.compile(
+                r'(coin交換専用|coin\s*$|coin相当|coin引換|ポイント相当|ボーナスpt|'
+                r'ボーナス\s*$|交換専用|キャッシュバック|ガチャ券|チケット\s*$|ハズレ\s*$)'
+            )
+            try:
+                _avg_markup = float(rw_meta_state.get("avg_markup") or 0)
+            except Exception:
+                _avg_markup = 0.0
+            try:
+                _expected_cost = float(rw_meta_state.get("expected_cost") or 0)
+            except Exception:
+                _expected_cost = 0.0
+
+            # 現在の実価値で cost_by_tier 計算
+            _cost_by_tier = _defaultdict(float)
+            _zero_count = 0
+            for _c in state["cards"]:
+                _name = str(_c.get("カード名", "") or "")
+                _val = float(_c.get("実価値/枚(円)", 0) or 0)
+                _qty = float(_c.get("本数", 0) or 0)
+                if _HAZURE.search(_name):
+                    continue
+                if _val <= 0 and _qty > 0:
+                    _zero_count += 1
+                _cost_by_tier[_c.get("賞", "")] += _val * _qty
+            _total_cost = sum(_cost_by_tier.values())
+
+            # cost乖離チェック: 実仕入と現在のcost差が大きい場合は中断
+            if _avg_markup <= 0:
+                st.error("リライト設計の平均上乗せ率が0です。シート側のデータを確認してください")
+            elif _total_cost <= 0:
+                st.error("カードの実価値が全て0です。「🔎 URL空欄を自動検索」「🔄 全行の買取価格を取得」を実行してから再度押してください")
+            elif _expected_cost > 0 and (_total_cost < _expected_cost * 0.5 or _total_cost > _expected_cost * 2.0):
+                st.error(
+                    f"⚠️ 価格データが不完全です。\n\n"
+                    f"想定仕入(リライト時)= **¥{int(_expected_cost):,}** に対し、現在の実価値合計= **¥{int(_total_cost):,}**\n\n"
+                    f"乖離が大きすぎるため上乗せ倍率の自動配分を中断しました。\n"
+                    f"「🔎 URL空欄を自動検索」→「🔄 全行の買取価格を取得」を順に実行して実価値を埋めてから再度お試しください"
+                    + (f"（実価値0のカード: {_zero_count}行）" if _zero_count else "")
+                )
+            else:
+                # tier別配分
+                _target_disp = _total_cost * _avg_markup
+                _weighted = sum(_cost_by_tier[t] * _TIER_WEIGHT.get(t, 1.0) for t in _cost_by_tier)
+                _tier_markup = {}
+                if _weighted > 0:
+                    _k = _target_disp / _weighted
+                    for _t in _cost_by_tier:
+                        _m = _TIER_WEIGHT.get(_t, 1.0) * _k
+                        _m = max(_m, 1.0)
+                        _cap = _MAX_MARKUP_BY_TIER.get(_t, 2.0)
+                        _tier_markup[_t] = round(min(_m, _cap), 2)
+                # editor上の編集も保持しつつ反映
+                _new_cards = []
+                for _i, _c in enumerate(state["cards"]):
+                    _nc = dict(_c)
+                    _name = str(_nc.get("カード名", "") or "")
+                    if _HAZURE.search(_name):
+                        _nc["上乗せ倍率"] = 0.0
+                    else:
+                        _nc["上乗せ倍率"] = _tier_markup.get(_nc.get("賞", ""), round(_avg_markup, 2))
+                    _new_cards.append(_nc)
+                st.session_state["tmpl_state"]["cards"] = _new_cards
+                _msg = "✅ 上乗せ倍率を等別配分しました: " + " / ".join(f"{t} {m}x" for t, m in _tier_markup.items())
+                if _zero_count:
+                    _msg += f"\n\n⚠️ 実価値0のカードが {_zero_count}行あります（これらは表示PTに寄与しません）"
+                st.success(_msg)
+                st.rerun()
 
         if state["cards"]:
             df_init = pd.DataFrame(state["cards"])
@@ -1088,6 +1171,155 @@ with tab_template:
                 rarity = str(r.get("レアリティ", "") or "").strip()
                 url = snkrdunk_search_url(name, rarity)
                 st.markdown(f"- **{name}** ({rarity}): [スニダン検索]({url})")
+
+        # ===== 一括取得+配分 (unified_fetch_btn) =====
+        if unified_fetch_btn:
+            from snkrdunk_client import (
+                search_apparel_id_by_keyword, fetch_recent_price, fetch_apparel_meta
+            )
+            from research import CardMaster, upsert_card_master
+            import time as _t
+            import re as _re
+            rows = list(edited.iterrows())
+            new_rows = []
+            errors = []
+            search_count = 0
+            fetch_count = 0
+            progress = st.progress(0.0, text="スニダン一括取得中...")
+            for i, (_, r) in enumerate(rows):
+                new_r = dict(r)
+                cur_url = str(r.get("snkrdunk URL", "") or "").strip()
+                name = str(r.get("カード名", "")).strip()
+                rarity = str(r.get("レアリティ", "") or "").strip()
+                if not name:
+                    new_rows.append(new_r)
+                    progress.progress((i + 1) / max(len(rows), 1))
+                    continue
+
+                # ステップ1: URL空欄なら検索
+                if not cur_url:
+                    try:
+                        cands = search_apparel_id_by_keyword(name, rarity, max_candidates=3)
+                    except Exception as ex:
+                        cands = []
+                        errors.append(f"{name}: search失敗 {ex}")
+                    if cands:
+                        cur_url = cands[0]["url"]
+                        new_r["snkrdunk URL"] = cur_url
+                        search_count += 1
+                    else:
+                        errors.append(f"{name}: スニダン候補なし")
+                        new_rows.append(new_r)
+                        progress.progress((i + 1) / max(len(rows), 1),
+                                          text=f"取得中 {i+1}/{len(rows)} ({name[:20]})")
+                        _t.sleep(0.6)
+                        continue
+
+                # ステップ2: URL確定→最新価格取得
+                meta = fetch_apparel_meta(cur_url.rsplit("/", 1)[-1]) if "/apparels/" in cur_url else None
+                target_name = (meta.get("name") or "") if meta else ""
+                is_pack_target = bool(_re.search(r'(パック|BOX|ボックス|箱)', target_name + name))
+                if "PSA" in (target_name + rarity).upper():
+                    grade_hint = "PSA10"
+                else:
+                    grade_hint = ""
+                try:
+                    price, msg = fetch_recent_price(cur_url, grade_hint, is_pack=is_pack_target)
+                    if price:
+                        new_r["実価値/枚(円)"] = int(price)
+                        upsert_card_master(CardMaster(
+                            name=name, rarity=rarity, snkrdunk_url=cur_url,
+                            buy_price=int(price), source=msg, updated_at="",
+                        ))
+                        fetch_count += 1
+                    else:
+                        errors.append(f"{name} ({rarity}): 価格取れず ({msg})")
+                except Exception as ex:
+                    errors.append(f"{name}: 価格取得失敗 {ex}")
+                new_rows.append(new_r)
+                progress.progress((i + 1) / max(len(rows), 1),
+                                  text=f"取得中 {i+1}/{len(rows)} ({name[:20]})")
+                _t.sleep(0.3)
+            progress.empty()
+            st.session_state["tmpl_state"]["cards"] = new_rows
+
+            # ステップ3: リライトメタがあれば上乗せ倍率を等別配分
+            applied_markup_msg = ""
+            if rw_meta_state:
+                from collections import defaultdict as _defaultdict
+                _TIER_WEIGHT = {
+                    '1等': 1.6, '2等': 1.3, '3等': 1.0, '4等': 0.8, '5等': 0.7,
+                    '6等': 0.7, '7等': 0.7, 'キリ番': 1.0, 'ラストワン': 1.2,
+                }
+                _MAX_MARKUP_BY_TIER = {
+                    '1等': 3.5, '2等': 2.8, '3等': 2.2, '4等': 1.8, '5等': 1.5,
+                    '6等': 1.5, '7等': 1.5, 'キリ番': 2.2, 'ラストワン': 2.5,
+                }
+                _HAZURE = _re.compile(
+                    r'(coin交換専用|coin\s*$|coin相当|coin引換|ポイント相当|ボーナスpt|'
+                    r'ボーナス\s*$|交換専用|キャッシュバック|ガチャ券|チケット\s*$|ハズレ\s*$)'
+                )
+                try:
+                    _avg_markup = float(rw_meta_state.get("avg_markup") or 0)
+                except Exception:
+                    _avg_markup = 0.0
+                try:
+                    _expected_cost = float(rw_meta_state.get("expected_cost") or 0)
+                except Exception:
+                    _expected_cost = 0.0
+                _cost_by_tier = _defaultdict(float)
+                _zero_count = 0
+                for _c in new_rows:
+                    _nm = str(_c.get("カード名", "") or "")
+                    _val = float(_c.get("実価値/枚(円)", 0) or 0)
+                    _qty = float(_c.get("本数", 0) or 0)
+                    if _HAZURE.search(_nm):
+                        continue
+                    if _val <= 0 and _qty > 0:
+                        _zero_count += 1
+                    _cost_by_tier[_c.get("賞", "")] += _val * _qty
+                _total_cost = sum(_cost_by_tier.values())
+                if _avg_markup <= 0 or _total_cost <= 0:
+                    applied_markup_msg = "⚠️ 平均上乗せ率または実価値合計が0のため上乗せ倍率は未配分"
+                elif _expected_cost > 0 and (_total_cost < _expected_cost * 0.5 or _total_cost > _expected_cost * 2.0):
+                    applied_markup_msg = (
+                        f"⚠️ 価格データ乖離大: 想定¥{int(_expected_cost):,} vs 現在¥{int(_total_cost):,}。"
+                        f"上乗せ倍率は未配分（実価値0が{_zero_count}行）"
+                    )
+                else:
+                    _target_disp = _total_cost * _avg_markup
+                    _weighted = sum(_cost_by_tier[t] * _TIER_WEIGHT.get(t, 1.0) for t in _cost_by_tier)
+                    if _weighted > 0:
+                        _k = _target_disp / _weighted
+                        _tier_markup = {}
+                        for _t in _cost_by_tier:
+                            _m = _TIER_WEIGHT.get(_t, 1.0) * _k
+                            _m = max(_m, 1.0)
+                            _cap = _MAX_MARKUP_BY_TIER.get(_t, 2.0)
+                            _tier_markup[_t] = round(min(_m, _cap), 2)
+                        _final_cards = []
+                        for _c in new_rows:
+                            _nc = dict(_c)
+                            _nm = str(_nc.get("カード名", "") or "")
+                            if _HAZURE.search(_nm):
+                                _nc["上乗せ倍率"] = 0.0
+                            else:
+                                _nc["上乗せ倍率"] = _tier_markup.get(_nc.get("賞", ""), round(_avg_markup, 2))
+                            _final_cards.append(_nc)
+                        st.session_state["tmpl_state"]["cards"] = _final_cards
+                        applied_markup_msg = "📊 上乗せ倍率を等別配分: " + " / ".join(
+                            f"{t} {m}x" for t, m in _tier_markup.items()
+                        )
+
+            _summary = f"✅ URL検索 {search_count}件 / 価格取得 {fetch_count}件 完了"
+            if applied_markup_msg:
+                _summary += f"\n\n{applied_markup_msg}"
+            st.success(_summary)
+            if errors:
+                with st.expander(f"⚠️ 失敗 {len(errors)}件"):
+                    for e in errors[:30]:
+                        st.text(e)
+            st.rerun()
 
         # ---- 自動URL検索（空欄行に対して） ----
         if auto_search_btn:
@@ -1387,6 +1619,7 @@ with tab_rewrite:
                             "total_tickets": str(sel.get("総口数", "")),
                             "avg_markup": str(sel.get("上乗せ率", "")),
                             "profit_rate": str(sel.get("実利益率", "")),
+                            "expected_cost": str(sel.get("実仕入(円)", "")),
                         }
                         st.toast(f"📋 景品設計タブで「📥 読み込み」を押してください (ベース{sel.get('ベースNo','')} セット済)")
                 with sc:
