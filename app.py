@@ -762,7 +762,7 @@ with tab_template:
 
     # ---- 読み込み処理 ----
     if load_btn:
-        from research import find_card_in_master, snkrdunk_search_url
+        from research import find_card_in_master, find_card_for_product, snkrdunk_search_url
         from inventory import find_card_in_inventory, load_all_inventory
 
         # 在庫を1回ロードして使い回す
@@ -771,9 +771,9 @@ with tab_template:
         except Exception:
             _inv_pool = []
 
-        def _resolve_card(name, rarity):
-            """カードに対し: 在庫スプシ→カードマスタDBの順でsnkrdunk URL+価格を引く"""
-            # 1. 在庫からマッチ(スニダンURL+相場or仕入価格を取得)
+        def _resolve_card(name, rarity, base_no=None):
+            """カードに対し: 在庫スプシ→商品別カードマスタ(base_no優先)→通常カードマスタDB の順で取得"""
+            # 1. 在庫からマッチ
             inv_hit = find_card_in_inventory(name, rarity, inventory=_inv_pool)
             if inv_hit:
                 val = inv_hit.purchase_price if inv_hit.purchase_price > 0 else inv_hit.price
@@ -782,13 +782,14 @@ with tab_template:
                     "snkrdunk URL": inv_hit.snkrdunk_url,
                     "_src": f"在庫({inv_hit.tab})",
                 }
-            # 2. カードマスタDB
-            cm = find_card_in_master(name, rarity)
+            # 2. 商品別カードマスタ優先(base_noあり時) → 無ければ通常カードマスタ
+            cm = find_card_for_product(base_no, name, rarity) if base_no else find_card_in_master(name, rarity)
             if cm:
+                src_label = "商品別カードマスタ" if (base_no and cm.source and 'auto' in cm.source.lower() or 'manual' in cm.source.lower()) else "カードマスタ"
                 return {
                     "実価値/枚(円)": int(cm.buy_price),
                     "snkrdunk URL": cm.snkrdunk_url,
-                    "_src": "カードマスタ",
+                    "_src": src_label,
                 }
             return {"実価値/枚(円)": 0, "snkrdunk URL": "", "_src": ""}
 
@@ -799,8 +800,9 @@ with tab_template:
             if tpl:
                 cards_data = []
                 resolved_count = 0
+                _base_no_for_lookup = no_input.strip()
                 for c in tpl.cards:
-                    r = _resolve_card(c.card_name, c.rarity)
+                    r = _resolve_card(c.card_name, c.rarity, base_no=_base_no_for_lookup)
                     if r["_src"]:
                         resolved_count += 1
                     cards_data.append({
@@ -888,7 +890,7 @@ with tab_template:
                 tpl_n = load_design_template(g.no)
                 if tpl_n:
                     for c in tpl_n.cards:
-                        r = _resolve_card(c.card_name, c.rarity)
+                        r = _resolve_card(c.card_name, c.rarity, base_no=str(g.no))
                         cards_data.append({
                             "賞": c.tier, "カード名": c.card_name, "レアリティ": c.rarity,
                             "本数": int(c.qty),

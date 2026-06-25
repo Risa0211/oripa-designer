@@ -541,6 +541,54 @@ def find_card_in_master(name: str, rarity: str) -> Optional[CardMaster]:
     return load_card_master_index().get(key)
 
 
+# ============================================================
+# 商品別カードマスタ (商品No+カード名+レアリティで個別管理)
+# 同名カードが商品弾違いで別物のケース対応
+# ============================================================
+
+TAB_PER_PRODUCT_CARD = "商品別カードマスタ"
+
+
+@lru_cache(maxsize=1)
+def load_per_product_card_index() -> dict:
+    """商品別カードマスタを辞書化 (キー = base_no|name|rarity の小文字)"""
+    try:
+        ws = open_research().worksheet(TAB_PER_PRODUCT_CARD)
+        rows = ws.get_all_records()
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        base_no = str(r.get("商品No", "")).strip()
+        name = str(r.get("カード名", "")).strip()
+        if not base_no or not name:
+            continue
+        rarity = str(r.get("レアリティ", "")).strip()
+        key = f"{base_no}|{name}|{rarity}".lower()
+        out[key] = CardMaster(
+            name=name, rarity=rarity,
+            snkrdunk_url=str(r.get("snkrdunk URL", "")).strip(),
+            buy_price=parse_int(r.get("買取価格(円)")) or 0,
+            source=str(r.get("採用方法", "")),
+            updated_at=str(r.get("更新日時", "")),
+        )
+    return out
+
+
+def clear_per_product_card_cache():
+    load_per_product_card_index.cache_clear()
+
+
+def find_card_for_product(base_no: str, name: str, rarity: str) -> Optional[CardMaster]:
+    """商品No+カード名+レアで商品別カードマスタを優先検索→無ければ通常マスタにフォールバック"""
+    if base_no:
+        key = f"{base_no}|{name}|{rarity}".lower()
+        hit = load_per_product_card_index().get(key)
+        if hit:
+            return hit
+    return find_card_in_master(name, rarity)
+
+
 def snkrdunk_search_url(name: str, rarity: str = "") -> str:
     """スニダン検索ページURLを生成"""
     from urllib.parse import quote
