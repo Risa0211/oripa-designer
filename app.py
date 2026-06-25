@@ -1641,6 +1641,7 @@ with tab_rewrite:
 @st.cache_data(ttl=300)
 def _load_match_data():
     """商品別カード照合 + 商品別カードマスタ(clip_auto sim<0.85のもの) を統合読込"""
+    import re
     from research import open_research
     items = []
     try:
@@ -1736,10 +1737,11 @@ def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, sour
 
 def _fetch_price_for_url(snk_url, card_name, rarity):
     """指定URLから価格取得"""
+    import re as _re_fetch
     from snkrdunk_client import fetch_recent_price, fetch_apparel_meta
     meta = fetch_apparel_meta(snk_url.rsplit("/", 1)[-1]) if "/apparels/" in snk_url else None
     target_name = (meta.get("name") or "") if meta else ""
-    is_pack = bool(re.search(r'(パック|BOX|ボックス|箱)', target_name + card_name))
+    is_pack = bool(_re_fetch.search(r'(パック|BOX|ボックス|箱)', target_name + card_name))
     grade = "PSA10" if "PSA" in (target_name + rarity).upper() else ""
     try:
         price, msg = fetch_recent_price(snk_url, grade, is_pack=is_pack)
