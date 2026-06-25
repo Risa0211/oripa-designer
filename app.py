@@ -1646,7 +1646,8 @@ def _load_match_data():
     try:
         ss = open_research()
         ws_match = ss.worksheet('商品別カード照合')
-        rows = ws_match.get_all_values()
+        # 数式そのものを取得(=HYPERLINK/=IMAGE のURL抽出のため)
+        rows = ws_match.get_all_values(value_render_option='FORMULA')
         if rows and len(rows) >= 2:
             h = {col: i for i, col in enumerate(rows[0])}
             def _cell(r, name):
