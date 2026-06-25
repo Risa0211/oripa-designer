@@ -1707,31 +1707,20 @@ def _load_match_data():
 
 
 def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, source_note):
-    """商品別カードマスタに upsert"""
-    from research import open_research
+    """商品別カードマスタに高速append (重複は読込時に最新優先で解決)"""
+    from research import open_research, clear_per_product_card_cache
     from datetime import datetime
     ss = open_research()
     try:
         ws_per = ss.worksheet('商品別カードマスタ')
     except Exception:
-        from research import TAB_PER_PRODUCT_CARD
         ws_per = ss.add_worksheet(title='商品別カードマスタ', rows=10000, cols=15)
         ws_per.update([['商品No', 'リライトNo', 'カード名', 'レアリティ', '賞', '数量',
                        'snkrdunk URL', '買取価格(円)', '価格取得元', 'スニダン商品名',
                        '採用方法', '更新日時']], 'A1', value_input_option='USER_ENTERED')
-    all_vals = ws_per.get_all_values()
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    target = None
-    for i, v in enumerate(all_vals[1:], start=2):
-        if len(v) >= 4 and v[0].strip() == base_no and v[2].strip().lower() == card_name.lower() and v[3].strip().lower() == rarity.lower():
-            target = i
-            break
     row = [base_no, '', card_name, rarity, tier, qty, snk_url, price, source_note, '', 'manual_ui', now]
-    if target:
-        ws_per.update([row], f'A{target}:L{target}', value_input_option='USER_ENTERED')
-    else:
-        ws_per.append_row(row, value_input_option='USER_ENTERED')
-    from research import clear_per_product_card_cache
+    ws_per.append_row(row, value_input_option='USER_ENTERED')
     clear_per_product_card_cache()
 
 
@@ -1753,12 +1742,22 @@ def _fetch_price_for_url(snk_url, card_name, rarity):
 with tab_match:
     import re as _re_match
     st.subheader("🖼 商品別カード照合")
-    st.caption("同名異版のカード(=シャワーズ マスボミラー151版 vs SV4a版 など)を画像で見比べて正しいスニダンURLを選ぶ。採用後は商品別カードマスタDBに保存→ツール各所で自動反映。")
+    st.caption("同名異版のカード(=シャワーズ マスボミラー151版 vs SV4a版 など)の正しいスニダンURLを選ぶ。採用後は商品別カードマスタDBに保存→ツール各所で自動反映。")
 
-    if st.button("🔄 データ再読込", key="match_reload"):
-        _load_match_data.clear()
-        st.session_state.pop('_match_idx', None)
-        st.rerun()
+    # ローカル採用済みセット(スプシ反映を待たずに未対応リストから即座に除外)
+    if '_match_done_local' not in st.session_state:
+        st.session_state['_match_done_local'] = set()
+
+    btn_cols = st.columns([2, 2, 6])
+    with btn_cols[0]:
+        if st.button("🔄 データ完全再読込", key="match_reload",
+                      help="スプシから読み直し+ローカル採用記録もリセット"):
+            _load_match_data.clear()
+            st.session_state['_match_done_local'] = set()
+            st.session_state['_match_idx'] = 0
+            st.rerun()
+    with btn_cols[1]:
+        st.caption(f"今セッション採用済: {len(st.session_state['_match_done_local'])}件")
 
     all_items = _load_match_data()
     if not all_items:
@@ -1770,7 +1769,7 @@ with tab_match:
             f_search = st.text_input("🔍 商品No or カード名", key="match_search")
         with fc[1]:
             f_only_unset = st.checkbox("未対応のみ", value=True, key="match_unset_only",
-                                       help="採用列が空のものだけ表示")
+                                       help="採用列が空 & 今セッション未採用のもの")
         with fc[2]:
             f_min_sim = st.number_input("候補1類似度 ≥", value=0.0, step=0.05, key="match_min_sim")
         with fc[3]:
@@ -1778,12 +1777,16 @@ with tab_match:
         with fc[4]:
             f_sort = st.selectbox("並び", ["No順", "類似度低い順", "類似度高い順"], key="match_sort")
 
+        def _item_key(x):
+            return (str(x['base_no']), x['card_name'], x['rarity'])
+
         filtered = all_items
         if f_search:
             s = f_search.strip().lower()
-            filtered = [x for x in filtered if s in x['card_name'].lower() or s in x['base_no'].lower() or s in str(x['no']).lower()]
+            filtered = [x for x in filtered if s in x['card_name'].lower() or s in str(x['base_no']).lower() or s in str(x['no']).lower()]
         if f_only_unset:
-            filtered = [x for x in filtered if not x['adopt'].strip()]
+            local_done = st.session_state['_match_done_local']
+            filtered = [x for x in filtered if not x['adopt'].strip() and _item_key(x) not in local_done]
         def _top1_sim(x):
             return x['cands'][0]['sim'] if x['cands'] else 0
         filtered = [x for x in filtered if f_min_sim <= _top1_sim(x) < f_max_sim]
@@ -1867,22 +1870,12 @@ with tab_match:
                                 _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                                  item['tier'], item['qty'], c['url'], price,
                                                  f"manual_ui(候補{j+1} sim={c['sim']:.2f}) {msg[:20]}")
-                                # 照合タブの採用列も更新
-                                from research import open_research
-                                try:
-                                    ss = open_research()
-                                    ws_m = ss.worksheet('商品別カード照合')
-                                    row_idx = int(item['no']) + 1  # ヘッダ+1
-                                    headers_m = ws_m.row_values(1)
-                                    adopt_col = headers_m.index('採用(1/2/3/手動URL/除外)') + 1
-                                    from gspread.utils import rowcol_to_a1
-                                    cell = rowcol_to_a1(row_idx, adopt_col)
-                                    ws_m.update([[str(j + 1)]], f'{cell}:{cell}', value_input_option='USER_ENTERED')
-                                except Exception as ex:
-                                    st.warning(f'照合タブ更新失敗(無視可): {ex}')
+                            # ローカル採用済みに追加 → 次回renderで filter除外
+                            st.session_state['_match_done_local'].add(_item_key(item))
                             st.success(f"候補{j+1}を採用 (¥{price:,})")
-                            _load_match_data.clear()
-                            st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
+                            # idx は維持 → filter後に次の未対応がそこに来る(リスト短くなるため)
+                            # idx が範囲外になる可能性に備え 0 にクランプ
+                            st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2))
                             st.rerun()
                     with btn_cols[1]:
                         if c['url']:
@@ -1904,18 +1897,18 @@ with tab_match:
                         _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                          item['tier'], item['qty'], url, price,
                                          f"manual_url {msg[:30]}")
+                    st.session_state['_match_done_local'].add(_item_key(item))
                     st.success(f"手動URLを採用 (¥{price:,})")
-                    _load_match_data.clear()
-                    st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
+                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2))
                     st.rerun()
             with manual_cols[2]:
                 if st.button("❌ 除外", key=f"match_exclude_{item['no']}",
                               help="価格0で登録(ハズレ枠扱い)"):
                     _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                      item['tier'], item['qty'], '', 0, 'manual_exclude')
+                    st.session_state['_match_done_local'].add(_item_key(item))
                     st.success("除外として登録(価格0)")
-                    _load_match_data.clear()
-                    st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
+                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2))
                     st.rerun()
             with manual_cols[3]:
                 if st.button("⏭ スキップ", key=f"match_skip_{item['no']}"):

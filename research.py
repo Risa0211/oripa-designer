@@ -551,13 +551,17 @@ TAB_PER_PRODUCT_CARD = "商品別カードマスタ"
 
 @lru_cache(maxsize=1)
 def load_per_product_card_index() -> dict:
-    """商品別カードマスタを辞書化 (キー = base_no|name|rarity の小文字)"""
+    """商品別カードマスタを辞書化 (キー = base_no|name|rarity の小文字)
+    同じキーが複数行ある場合は更新日時が最新のものを優先(manual_ui等の手動採用優先)
+    """
     try:
         ws = open_research().worksheet(TAB_PER_PRODUCT_CARD)
         rows = ws.get_all_records()
     except Exception:
         return {}
     out = {}
+    # 重要: 手動採用(manual_ui/manual_url/manual_exclude)は CLIP自動より優先
+    MANUAL_KEYWORDS = ('manual_ui', 'manual_url', 'manual_exclude')
     for r in rows:
         base_no = str(r.get("商品No", "")).strip()
         name = str(r.get("カード名", "")).strip()
@@ -565,13 +569,27 @@ def load_per_product_card_index() -> dict:
             continue
         rarity = str(r.get("レアリティ", "")).strip()
         key = f"{base_no}|{name}|{rarity}".lower()
-        out[key] = CardMaster(
+        source = str(r.get("採用方法", ""))
+        updated_at = str(r.get("更新日時", ""))
+        cm = CardMaster(
             name=name, rarity=rarity,
             snkrdunk_url=str(r.get("snkrdunk URL", "")).strip(),
             buy_price=parse_int(r.get("買取価格(円)")) or 0,
-            source=str(r.get("採用方法", "")),
-            updated_at=str(r.get("更新日時", "")),
+            source=source,
+            updated_at=updated_at,
         )
+        if key not in out:
+            out[key] = cm
+            continue
+        # 既存と新規どちらを採用するか判定
+        existing = out[key]
+        new_is_manual = any(k in source.lower() for k in MANUAL_KEYWORDS)
+        existing_is_manual = any(k in existing.source.lower() for k in MANUAL_KEYWORDS)
+        # 手動優先 → 同じ種別なら更新日時が新しい方
+        if new_is_manual and not existing_is_manual:
+            out[key] = cm
+        elif (new_is_manual == existing_is_manual) and updated_at > existing.updated_at:
+            out[key] = cm
     return out
 
 
