@@ -904,6 +904,66 @@ with tab_template:
             }
             loaded_src = f"{g.site}｜{g.title}（新規ガチャ）"
 
+        # リライト商品案からの転送時: 設計単価/総口数/上乗せ率(tier別配分) を反映
+        rw_meta = st.session_state.pop("_jump_to_template_rewrite_meta", None)
+        if loaded and rw_meta:
+            import re as _re
+            from collections import defaultdict as _defaultdict
+            # 単価/口数を設計値で上書き(空でなければ)
+            try:
+                _dp = int(float(rw_meta.get("design_price") or 0))
+                if _dp > 0:
+                    loaded["price"] = _dp
+            except Exception:
+                pass
+            try:
+                _tt = int(float(rw_meta.get("total_tickets") or 0))
+                if _tt > 0:
+                    loaded["total_tickets"] = _tt
+            except Exception:
+                pass
+            # 上乗せ率(平均)を tier別配分(design_v12 と同じロジック)
+            try:
+                _avg_markup = float(rw_meta.get("avg_markup") or 0)
+            except Exception:
+                _avg_markup = 0.0
+            if _avg_markup > 0 and loaded.get("cards"):
+                _TIER_WEIGHT = {
+                    '1等': 1.6, '2等': 1.3, '3等': 1.0, '4等': 0.8, '5等': 0.7,
+                    '6等': 0.7, '7等': 0.7, 'キリ番': 1.0, 'ラストワン': 1.2,
+                }
+                _MAX_MARKUP_BY_TIER = {
+                    '1等': 3.5, '2等': 2.8, '3等': 2.2, '4等': 1.8, '5等': 1.5,
+                    '6等': 1.5, '7等': 1.5, 'キリ番': 2.2, 'ラストワン': 2.5,
+                }
+                _HAZURE = _re.compile(
+                    r'(coin交換専用|coin\s*$|coin相当|coin引換|ポイント相当|ボーナスpt|'
+                    r'ボーナス\s*$|交換専用|キャッシュバック|ガチャ券|チケット\s*$|ハズレ\s*$)'
+                )
+                _cost_by_tier = _defaultdict(float)
+                for _c in loaded["cards"]:
+                    if _HAZURE.search(_c.get("カード名", "") or ""):
+                        continue
+                    _cost_by_tier[_c.get("賞", "")] += float(_c.get("実価値/枚(円)", 0)) * float(_c.get("本数", 0))
+                _total_cost = sum(_cost_by_tier.values())
+                if _total_cost > 0:
+                    _target_disp = _total_cost * _avg_markup
+                    _weighted = sum(_cost_by_tier[t] * _TIER_WEIGHT.get(t, 1.0) for t in _cost_by_tier)
+                    if _weighted > 0:
+                        _k = _target_disp / _weighted
+                        _tier_markup = {}
+                        for _t in _cost_by_tier:
+                            _m = _TIER_WEIGHT.get(_t, 1.0) * _k
+                            _m = max(_m, 1.0)
+                            _cap = _MAX_MARKUP_BY_TIER.get(_t, 2.0)
+                            _tier_markup[_t] = round(min(_m, _cap), 2)
+                        for _c in loaded["cards"]:
+                            if _HAZURE.search(_c.get("カード名", "") or ""):
+                                _c["上乗せ倍率"] = 0.0
+                            else:
+                                _c["上乗せ倍率"] = _tier_markup.get(_c.get("賞", ""), round(_avg_markup, 2))
+            loaded_src = f"{loaded_src}｜リライト商品案転送(目標利益率{rw_meta.get('profit_rate','')}・平均上乗せ{_avg_markup:.2f}x)"
+
         if loaded:
             st.session_state["tmpl_state"] = loaded
             st.session_state["tmpl_loaded_src"] = loaded_src
@@ -1320,6 +1380,14 @@ with tab_rewrite:
                     if st.button("📋 景品設計に転送", type="primary", key="rw_to_template",
                                   use_container_width=True):
                         st.session_state["_jump_to_template_no"] = str(sel.get('ベースNo', ''))
+                        # 設計値(設計単価/上乗せ率)も引き渡し → 読み込み時にカード明細に反映
+                        st.session_state["_jump_to_template_rewrite_meta"] = {
+                            "title": str(sel.get("サムネタイトル", "")),
+                            "design_price": str(sel.get("設計単価(coin)", "") or sel.get("単価(coin)", "")),
+                            "total_tickets": str(sel.get("総口数", "")),
+                            "avg_markup": str(sel.get("上乗せ率", "")),
+                            "profit_rate": str(sel.get("実利益率", "")),
+                        }
                         st.toast(f"📋 景品設計タブで「📥 読み込み」を押してください (ベース{sel.get('ベースNo','')} セット済)")
                 with sc:
                     st.metric("利益率", str(sel.get("実利益率", "?")), help="目標45-50%")
