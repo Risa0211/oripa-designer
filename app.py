@@ -1080,32 +1080,21 @@ with tab_template:
                 _cost_by_tier[_c.get("賞", "")] += _val * _qty
             _total_cost = sum(_cost_by_tier.values())
 
-            # cost乖離チェック: 実仕入と現在のcost差が大きい場合は中断
+            # 強制配分: 平均上乗せ率があれば 必ず配分(乖離あっても警告のみ)
             if _avg_markup <= 0:
-                st.error("リライト設計の平均上乗せ率が0です。シート側のデータを確認してください")
-            elif _total_cost <= 0:
-                st.error("カードの実価値が全て0です。「🔎 URL空欄を自動検索」「🔄 全行の買取価格を取得」を実行してから再度押してください")
-            elif _expected_cost > 0 and (_total_cost < _expected_cost * 0.5 or _total_cost > _expected_cost * 2.0):
-                st.error(
-                    f"⚠️ 価格データが不完全です。\n\n"
-                    f"想定仕入(リライト時)= **¥{int(_expected_cost):,}** に対し、現在の実価値合計= **¥{int(_total_cost):,}**\n\n"
-                    f"乖離が大きすぎるため上乗せ倍率の自動配分を中断しました。\n"
-                    f"「🔎 URL空欄を自動検索」→「🔄 全行の買取価格を取得」を順に実行して実価値を埋めてから再度お試しください"
-                    + (f"（実価値0のカード: {_zero_count}行）" if _zero_count else "")
-                )
+                st.error("リライト設計の平均上乗せ率が0です。シート側『上乗せ率』列を確認してください")
             else:
-                # tier別配分
-                _target_disp = _total_cost * _avg_markup
-                _weighted = sum(_cost_by_tier[t] * _TIER_WEIGHT.get(t, 1.0) for t in _cost_by_tier)
                 _tier_markup = {}
-                if _weighted > 0:
-                    _k = _target_disp / _weighted
-                    for _t in _cost_by_tier:
-                        _m = _TIER_WEIGHT.get(_t, 1.0) * _k
-                        _m = max(_m, 1.0)
-                        _cap = _MAX_MARKUP_BY_TIER.get(_t, 2.0)
-                        _tier_markup[_t] = round(min(_m, _cap), 2)
-                # editor上の編集も保持しつつ反映
+                if _total_cost > 0:
+                    _target_disp = _total_cost * _avg_markup
+                    _weighted = sum(_cost_by_tier[t] * _TIER_WEIGHT.get(t, 1.0) for t in _cost_by_tier)
+                    if _weighted > 0:
+                        _k = _target_disp / _weighted
+                        for _t in _cost_by_tier:
+                            _m = _TIER_WEIGHT.get(_t, 1.0) * _k
+                            _m = max(_m, 1.0)
+                            _cap = _MAX_MARKUP_BY_TIER.get(_t, 2.0)
+                            _tier_markup[_t] = round(min(_m, _cap), 2)
                 _new_cards = []
                 for _i, _c in enumerate(state["cards"]):
                     _nc = dict(_c)
@@ -1116,9 +1105,14 @@ with tab_template:
                         _nc["上乗せ倍率"] = _tier_markup.get(_nc.get("賞", ""), round(_avg_markup, 2))
                     _new_cards.append(_nc)
                 st.session_state["tmpl_state"]["cards"] = _new_cards
-                _msg = "✅ 上乗せ倍率を等別配分しました: " + " / ".join(f"{t} {m}x" for t, m in _tier_markup.items())
+                if _tier_markup:
+                    _msg = "✅ 上乗せ倍率を等別配分: " + " / ".join(f"{t} {m}x" for t, m in _tier_markup.items())
+                else:
+                    _msg = f"✅ 上乗せ倍率を一律 {_avg_markup:.2f}x で配分(実価値が全0のためtier別計算不可)"
                 if _zero_count:
-                    _msg += f"\n\n⚠️ 実価値0のカードが {_zero_count}行あります（これらは表示PTに寄与しません）"
+                    _msg += f"\n\n⚠️ 実価値0のカードが {_zero_count}行あります(これらは表示PTに寄与せず還元率が想定と異なる場合あり)"
+                if _expected_cost > 0 and _total_cost > 0 and (_total_cost < _expected_cost * 0.5 or _total_cost > _expected_cost * 2.0):
+                    _msg += f"\n⚠️ 想定仕入¥{int(_expected_cost):,} vs 現在¥{int(_total_cost):,} で乖離大"
                 st.success(_msg)
                 st.rerun()
 
@@ -1279,36 +1273,48 @@ with tab_template:
                         _zero_count += 1
                     _cost_by_tier[_c.get("賞", "")] += _val * _qty
                 _total_cost = sum(_cost_by_tier.values())
-                if _avg_markup <= 0 or _total_cost <= 0:
-                    applied_markup_msg = "⚠️ 平均上乗せ率または実価値合計が0のため上乗せ倍率は未配分"
-                elif _expected_cost > 0 and (_total_cost < _expected_cost * 0.5 or _total_cost > _expected_cost * 2.0):
-                    applied_markup_msg = (
-                        f"⚠️ 価格データ乖離大: 想定¥{int(_expected_cost):,} vs 現在¥{int(_total_cost):,}。"
-                        f"上乗せ倍率は未配分（実価値0が{_zero_count}行）"
-                    )
+                # 強制配分: 平均上乗せ率があれば 必ず配分(乖離あっても警告のみ)
+                if _avg_markup <= 0:
+                    applied_markup_msg = "⚠️ 平均上乗せ率が0のため上乗せ倍率は未配分(リライト商品案シートの『上乗せ率』列を確認)"
                 else:
-                    _target_disp = _total_cost * _avg_markup
-                    _weighted = sum(_cost_by_tier[t] * _TIER_WEIGHT.get(t, 1.0) for t in _cost_by_tier)
-                    if _weighted > 0:
-                        _k = _target_disp / _weighted
-                        _tier_markup = {}
-                        for _t in _cost_by_tier:
-                            _m = _TIER_WEIGHT.get(_t, 1.0) * _k
-                            _m = max(_m, 1.0)
-                            _cap = _MAX_MARKUP_BY_TIER.get(_t, 2.0)
-                            _tier_markup[_t] = round(min(_m, _cap), 2)
-                        _final_cards = []
-                        for _c in new_rows:
-                            _nc = dict(_c)
-                            _nm = str(_nc.get("カード名", "") or "")
-                            if _HAZURE.search(_nm):
-                                _nc["上乗せ倍率"] = 0.0
-                            else:
-                                _nc["上乗せ倍率"] = _tier_markup.get(_nc.get("賞", ""), round(_avg_markup, 2))
-                            _final_cards.append(_nc)
-                        st.session_state["tmpl_state"]["cards"] = _final_cards
+                    # tier別配分(実価値0カードはハズレ枠扱い=0、実価値ありは平均上乗せ率を一律)
+                    _final_cards = []
+                    _tier_markup_used = {}
+                    if _total_cost > 0:
+                        _target_disp = _total_cost * _avg_markup
+                        _weighted = sum(_cost_by_tier[t] * _TIER_WEIGHT.get(t, 1.0) for t in _cost_by_tier)
+                        if _weighted > 0:
+                            _k = _target_disp / _weighted
+                            for _t in _cost_by_tier:
+                                _m = _TIER_WEIGHT.get(_t, 1.0) * _k
+                                _m = max(_m, 1.0)
+                                _cap = _MAX_MARKUP_BY_TIER.get(_t, 2.0)
+                                _tier_markup_used[_t] = round(min(_m, _cap), 2)
+                    for _c in new_rows:
+                        _nc = dict(_c)
+                        _nm = str(_nc.get("カード名", "") or "")
+                        if _HAZURE.search(_nm):
+                            _nc["上乗せ倍率"] = 0.0
+                        else:
+                            # 配分結果があれば tier別、なければ一律平均
+                            _nc["上乗せ倍率"] = _tier_markup_used.get(
+                                _nc.get("賞", ""), round(_avg_markup, 2)
+                            )
+                        _final_cards.append(_nc)
+                    st.session_state["tmpl_state"]["cards"] = _final_cards
+                    if _tier_markup_used:
                         applied_markup_msg = "📊 上乗せ倍率を等別配分: " + " / ".join(
-                            f"{t} {m}x" for t, m in _tier_markup.items()
+                            f"{_t} {_m}x" for _t, _m in _tier_markup_used.items()
+                        )
+                    else:
+                        applied_markup_msg = f"📊 上乗せ倍率を一律 {_avg_markup:.2f}x で配分(実価値が全0のためtier別計算不可)"
+                    # 乖離があれば警告を追加表示
+                    if _zero_count > 0:
+                        applied_markup_msg += f"\n⚠️ 実価値0のカードが {_zero_count}行あります(これらは表示PTに寄与せず、還元率が想定と異なる場合があります)"
+                    if _expected_cost > 0 and _total_cost > 0 and (_total_cost < _expected_cost * 0.5 or _total_cost > _expected_cost * 2.0):
+                        applied_markup_msg += (
+                            f"\n⚠️ 想定仕入¥{int(_expected_cost):,} vs 現在¥{int(_total_cost):,} で乖離大。"
+                            f"還元率を画面下で確認し、必要なら上乗せ倍率を手動調整してください"
                         )
 
             _summary = f"✅ URL検索 {search_count}件 / 価格取得 {fetch_count}件 完了"
