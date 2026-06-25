@@ -1638,11 +1638,18 @@ with tab_rewrite:
 
 
 # ---------- 🖼 カード照合タブ ----------
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def _load_match_data():
-    """商品別カード照合 + 商品別カードマスタ(clip_auto sim<0.85のもの) を統合読込"""
+    """商品別カード照合 + 商品別カードマスタ(手動採用済みかチェック) を統合読込"""
     import re
-    from research import open_research
+    from research import open_research, load_per_product_card_index, clear_per_product_card_cache
+    # 採用済みチェック用に商品別カードマスタDB読込
+    clear_per_product_card_cache()
+    per_db = load_per_product_card_index()
+    # 手動採用済みキー(base_no|name|rarity の小文字)
+    MANUAL_KW = ('manual_ui', 'manual_url', 'manual_exclude')
+    manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in MANUAL_KW)}
+
     items = []
     try:
         ss = open_research()
@@ -1687,19 +1694,29 @@ def _load_match_data():
                 if 'HYPERLINK(' in base_link_raw:
                     m = re.search(r'HYPERLINK\("([^"]+)"', base_link_raw)
                     if m: base_url = m.group(1)
+                base_no_v = _cell(r, '商品No')
+                card_name_v = _cell(r, 'カード名')
+                rarity_v = _cell(r, 'レアリティ')
+                # 商品別カードマスタDBで採用済みかチェック (=スプシ「採用」列が空でも DB に手動採用があれば対応済み扱い)
+                db_key = f'{base_no_v}|{card_name_v}|{rarity_v}'.lower()
+                db_done = db_key in manual_done
+                adopt_cell = _cell(r, '採用(1/2/3/手動URL/除外)')
+                # 既存の採用列 OR DB済み → adoptに値を入れて未対応フィルタから除外
+                adopt_final = adopt_cell if adopt_cell else ('✅DB済' if db_done else '')
                 items.append({
                     'no': _cell(r, 'No'),
-                    'base_no': _cell(r, '商品No'),
+                    'base_no': base_no_v,
                     'base_url': base_url,
-                    'card_name': _cell(r, 'カード名'),
-                    'rarity': _cell(r, 'レアリティ'),
+                    'card_name': card_name_v,
+                    'rarity': rarity_v,
                     'tier': _cell(r, '賞'),
                     'qty': _cell(r, '数量'),
                     'tc_image_url': tc_img,
                     'cands': cands,
-                    'adopt': _cell(r, '採用(1/2/3/手動URL/除外)'),
+                    'adopt': adopt_final,
                     'reason': _cell(r, '判定理由'),
                     'source_tab': '照合',
+                    'db_done': db_done,
                 })
     except Exception as e:
         st.warning(f'照合タブ読込失敗: {e}')
@@ -1837,7 +1854,9 @@ with tab_match:
                 if item['reason']:
                     st.caption(f"判定理由: {item['reason']}")
             with head_cols[1]:
-                if item['adopt']:
+                if item.get('db_done'):
+                    st.success("✅ 商品別カードマスタDBに保存済(手動採用)")
+                elif item['adopt']:
                     st.success(f"✅ 採用済: {item['adopt']}")
                 else:
                     st.warning("⚠️ 未対応")
