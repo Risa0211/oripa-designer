@@ -1870,12 +1870,13 @@ with tab_match:
         st.info("照合タブが空です。Step Bを先に実行してください。")
     else:
         # フィルタ
-        fc = st.columns([2, 1, 1, 1, 1])
+        fc = st.columns([2, 1.4, 1, 1, 1])
         with fc[0]:
             f_search = st.text_input("🔍 商品No or カード名", key="match_search")
         with fc[1]:
-            f_only_unset = st.checkbox("未対応のみ", value=True, key="match_unset_only",
-                                       help="採用列が空 & 今セッション未採用のもの")
+            f_mode = st.radio("表示", ["未対応のみ", "採用済のみ(修正用)", "全件"],
+                              key="match_mode", horizontal=True,
+                              help="採用済のみ=過去採用したカードを再確認/修正可能(再採用で上書き)")
         with fc[2]:
             f_min_sim = st.number_input("候補1類似度 ≥", value=0.0, step=0.05, key="match_min_sim")
         with fc[3]:
@@ -1890,9 +1891,11 @@ with tab_match:
         if f_search:
             s = f_search.strip().lower()
             filtered = [x for x in filtered if s in x['card_name'].lower() or s in str(x['base_no']).lower() or s in str(x['no']).lower()]
-        if f_only_unset:
-            local_done = st.session_state['_match_done_local']
+        local_done = st.session_state['_match_done_local']
+        if f_mode == "未対応のみ":
             filtered = [x for x in filtered if not x['adopt'].strip() and _item_key(x) not in local_done]
+        elif f_mode == "採用済のみ(修正用)":
+            filtered = [x for x in filtered if x['adopt'].strip() or _item_key(x) in local_done]
         def _top1_sim(x):
             return x['cands'][0]['sim'] if x['cands'] else 0
         filtered = [x for x in filtered if f_min_sim <= _top1_sim(x) < f_max_sim]
@@ -2012,7 +2015,9 @@ with tab_match:
                                     st.session_state['_match_done_local'].add(_item_key(g))
                             extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
                             st.success(f"候補{j+1}を採用 (パック単価¥{price:,}{extra})")
-                            st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2 - len(same_base_group)))
+                            # 採用後 filteredが縮むので idx は維持 → 同じ位置に次の未対応が来る
+                            # 安全に min(idx, max_possible) でクランプ
+                            st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
                             st.rerun()
                     with btn_cols[1]:
                         if c['url']:
@@ -2043,7 +2048,9 @@ with tab_match:
                             st.session_state['_match_done_local'].add(_item_key(g))
                     extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
                     st.success(f"手動URLを採用 (パック単価¥{price:,}{extra})")
-                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2 - len(same_base_group)))
+                    # 入力欄クリア
+                    st.session_state.pop(f"match_manual_{item['no']}", None)
+                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
                     st.rerun()
             with manual_cols[2]:
                 if st.button("❌ 除外", key=f"match_exclude_{item['no']}",
