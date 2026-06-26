@@ -1903,9 +1903,13 @@ with tab_match:
             s = f_search.strip().lower()
             filtered = [x for x in filtered if s in x['card_name'].lower() or s in str(x['base_no']).lower() or s in str(x['no']).lower()]
         local_done = st.session_state['_match_done_local']
-        if f_mode == "未対応のみ":
+        # 「📝 修正」ボタンから来た場合は1回だけ全件モードで強制表示
+        mode_effective = f_mode
+        if st.session_state.pop('_match_force_all', False):
+            mode_effective = "全件"
+        if mode_effective == "未対応のみ":
             filtered = [x for x in filtered if not x['adopt'].strip() and _item_key(x) not in local_done]
-        elif f_mode == "採用済のみ(修正用)":
+        elif mode_effective == "採用済のみ(修正用)":
             filtered = [x for x in filtered if x['adopt'].strip() or _item_key(x) in local_done]
         def _top1_sim(x):
             return x['cands'][0]['sim'] if x['cands'] else 0
@@ -1950,9 +1954,16 @@ with tab_match:
                     st.success(f"選択中: 商品{target['base_no']} {target['card_name']} ({target['rarity']})")
                 with cc[1]:
                     if st.button("📝 このカードを修正", type="primary", use_container_width=True, key="match_edit_btn"):
-                        # 詳細モード(画像比較)へ遷移するため、フィルタを「全件」に切替してidxを合わせる
-                        st.session_state["match_mode"] = "全件"
-                        st.session_state["_match_idx"] = sel_rows[0]
+                        # 全件モードでこのカードに飛ぶ(widget keyは触らず force_all フラグ使用)
+                        st.session_state["_match_force_all"] = True
+                        # 全件モード時の対象itemのインデックスを正しく特定
+                        all_idx = None
+                        target_key = _item_key(target)
+                        for i, x in enumerate(all_items):
+                            if _item_key(x) == target_key:
+                                all_idx = i
+                                break
+                        st.session_state["_match_idx"] = all_idx if all_idx is not None else 0
                         st.rerun()
             st.stop()  # ← 採用済リスト表示時は詳細画面を出さない
 
