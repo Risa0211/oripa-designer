@@ -1916,6 +1916,46 @@ with tab_match:
             filtered.sort(key=lambda x: -_top1_sim(x))
 
         st.markdown(f"**{len(filtered):,}件 / 全{len(all_items):,}件**")
+
+        # 採用済モードはリスト表示優先
+        if f_mode == "採用済のみ(修正用)" and filtered:
+            import pandas as _pd_match
+            df_match = _pd_match.DataFrame([{
+                "商品No": x['base_no'],
+                "賞": x['tier'],
+                "カード名": x['card_name'],
+                "レア": x['rarity'],
+                "数量": x['qty'],
+                "登録価格(円)": int(x.get('db_price') or 0),
+                "登録URL": x.get('db_url') or '',
+                "採用方法": x.get('db_src') or '',
+                "競合商品ページ": x.get('base_url') or '',
+            } for x in filtered])
+            st.caption("⬇️ 行をクリックして選択 → 下に「📝 このカードを修正」ボタンが出ます")
+            ev_match = st.dataframe(
+                df_match, use_container_width=True, hide_index=True,
+                on_select="rerun", selection_mode="single-row",
+                column_config={
+                    "登録URL": st.column_config.LinkColumn("登録URL"),
+                    "競合商品ページ": st.column_config.LinkColumn("競合商品ページ"),
+                    "登録価格(円)": st.column_config.NumberColumn("登録価格(円)", format="¥%d"),
+                },
+                key="match_done_list_table",
+            )
+            sel_rows = (ev_match.selection or {}).get("rows", [])
+            if sel_rows:
+                target = filtered[sel_rows[0]]
+                cc = st.columns([3, 1])
+                with cc[0]:
+                    st.success(f"選択中: 商品{target['base_no']} {target['card_name']} ({target['rarity']})")
+                with cc[1]:
+                    if st.button("📝 このカードを修正", type="primary", use_container_width=True, key="match_edit_btn"):
+                        # 詳細モード(画像比較)へ遷移するため、フィルタを「全件」に切替してidxを合わせる
+                        st.session_state["match_mode"] = "全件"
+                        st.session_state["_match_idx"] = sel_rows[0]
+                        st.rerun()
+            st.stop()  # ← 採用済リスト表示時は詳細画面を出さない
+
         if not filtered:
             st.info("該当なし")
         else:
