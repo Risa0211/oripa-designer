@@ -1700,6 +1700,14 @@ def _load_match_data():
                 # 商品別カードマスタDBで採用済みかチェック
                 db_key = f'{base_no_v}|{card_name_v}|{rarity_v}'.lower()
                 db_done = db_key in manual_done
+                # 登録済みURL/価格/採用方法
+                db_url = ''
+                db_price = 0
+                db_src = ''
+                if db_key in per_db:
+                    db_url = per_db[db_key].snkrdunk_url
+                    db_price = per_db[db_key].buy_price
+                    db_src = per_db[db_key].source
                 adopt_cell = _cell(r, '採用(1/2/3/手動URL/除外)') if '採用(1/2/3/手動URL/除外)' in h else _cell(r, '採用方法')
                 adopt_final = adopt_cell if adopt_cell else ('✅DB済' if db_done else '')
                 # 候補URL列(シンプル版照合タブ用)
@@ -1734,6 +1742,9 @@ def _load_match_data():
                     'reason': _cell(r, '判定理由') if '判定理由' in h else _cell(r, '備考'),
                     'source_tab': '照合',
                     'db_done': db_done,
+                    'db_url': db_url,
+                    'db_price': db_price,
+                    'db_src': db_src,
                 })
     except Exception as e:
         st.warning(f'照合タブ読込失敗: {e}')
@@ -1958,6 +1969,22 @@ with tab_match:
                     st.success(f"✅ 採用済: {item['adopt']}")
                 else:
                     st.warning("⚠️ 未対応")
+
+            # 登録済みURL情報 (DB保存済みの場合)
+            if item.get('db_url') or item.get('db_price', 0) > 0:
+                with st.container(border=True):
+                    db_cols = st.columns([4, 1.5, 1.5, 2])
+                    with db_cols[0]:
+                        st.markdown(f"**📌 登録済みスニダンURL:** [{item['db_url'] or '(空=除外扱い)'}]({item['db_url']})" if item['db_url'] else "**📌 登録済み:** (URLなし=除外扱い)")
+                    with db_cols[1]:
+                        st.metric("登録価格", f"¥{int(item['db_price']):,}")
+                    with db_cols[2]:
+                        st.caption(f"採用方法")
+                        st.caption(f"{item['db_src'][:30]}")
+                    with db_cols[3]:
+                        if item['db_url']:
+                            st.link_button("🔗 登録済URLを開く", item['db_url'], use_container_width=True)
+                    st.caption("💡 修正するには下の候補から選び直し or 手動URL入力で上書きできます")
 
             # 同類グループ検出 (同じ商品No + 同じベース名)
             same_base_group = [
