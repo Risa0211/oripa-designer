@@ -1638,7 +1638,7 @@ with tab_rewrite:
 
 
 # ---------- 🖼 カード照合タブ ----------
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def _load_match_data():
     """商品別カード照合 + 商品別カードマスタ(手動採用済みかチェック) を統合読込"""
     import re
