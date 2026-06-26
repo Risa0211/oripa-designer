@@ -1723,10 +1723,41 @@ def _load_match_data():
     return items
 
 
+# パック数/枚数/個数 multiplier 検出
+import re as _re_mult
+MULTIPLIER_PATTERN = _re_mult.compile(
+    r'[(（]\s*(\d+)\s*(PACK|パック|枚|個|セット|SET|set)\s*[)）]',
+    _re_mult.IGNORECASE,
+)
+
+
+def extract_multiplier_and_base(card_name):
+    """カード名から (3PACK) などを検出して multiplier とベース名を返す
+    例: 'ブラックボルト(3PACK)' → (3, 'ブラックボルト(PACK)')
+        'シャワーズ(5枚)'      → (5, 'シャワーズ(枚)')
+        '通常カード'           → (1, '通常カード')
+    """
+    if not card_name:
+        return 1, card_name
+    m = MULTIPLIER_PATTERN.search(card_name)
+    if m:
+        mult = int(m.group(1))
+        unit = m.group(2)
+        # 数字部分を除去して単位だけ残す
+        base = MULTIPLIER_PATTERN.sub(f'({unit})', card_name)
+        return mult, base
+    return 1, card_name
+
+
 def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, source_note):
-    """商品別カードマスタに高速append (重複は読込時に最新優先で解決)"""
+    """商品別カードマスタに高速append (重複は読込時に最新優先で解決)
+    カード名に (NPACK) があれば multiplier 倍した価格で保存
+    """
     from research import open_research, clear_per_product_card_cache
     from datetime import datetime
+    multiplier, _ = extract_multiplier_and_base(card_name)
+    final_price = int(price) * multiplier if price else 0
+    note_suffix = f' ×{multiplier}={final_price}' if multiplier > 1 else ''
     ss = open_research()
     try:
         ws_per = ss.worksheet('商品別カードマスタ')
@@ -1736,7 +1767,8 @@ def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, sour
                        'snkrdunk URL', '買取価格(円)', '価格取得元', 'スニダン商品名',
                        '採用方法', '更新日時']], 'A1', value_input_option='USER_ENTERED')
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    row = [base_no, '', card_name, rarity, tier, qty, snk_url, price, source_note, '', 'manual_ui', now]
+    row = [base_no, '', card_name, rarity, tier, qty, snk_url, final_price,
+           source_note + note_suffix, '', 'manual_ui', now]
     ws_per.append_row(row, value_input_option='USER_ENTERED')
     clear_per_product_card_cache()
 
@@ -1843,7 +1875,11 @@ with tab_match:
 
             st.markdown("---")
             # ヘッダ情報
-            st.markdown(f"### {item['card_name']} ({item['rarity']})")
+            cur_mult, cur_base = extract_multiplier_and_base(item['card_name'])
+            display_name = item['card_name']
+            if cur_mult > 1:
+                display_name += f"  🔢 ×{cur_mult}"
+            st.markdown(f"### {display_name} ({item['rarity']})")
             head_cols = st.columns([3, 2])
             with head_cols[0]:
                 if item['base_url']:
@@ -1851,6 +1887,8 @@ with tab_match:
                 else:
                     st.markdown(f"📦 商品No.{item['base_no']}")
                 st.caption(f"賞: {item['tier']} / 数量: {item['qty']} / 照合行No: {item['no']}")
+                if cur_mult > 1:
+                    st.caption(f"🔢 multiplier={cur_mult} (スニダン単価×{cur_mult}で実価値計算)")
                 if item['reason']:
                     st.caption(f"判定理由: {item['reason']}")
             with head_cols[1]:
@@ -1860,6 +1898,23 @@ with tab_match:
                     st.success(f"✅ 採用済: {item['adopt']}")
                 else:
                     st.warning("⚠️ 未対応")
+
+            # 同類グループ検出 (同じ商品No + 同じベース名)
+            same_base_group = [
+                x for x in all_items
+                if str(x['base_no']) == str(item['base_no']) and
+                   extract_multiplier_and_base(x['card_name'])[1] == cur_base and
+                   x['rarity'] == item['rarity'] and
+                   _item_key(x) != _item_key(item) and
+                   not x.get('db_done') and
+                   _item_key(x) not in st.session_state['_match_done_local']
+            ]
+            if same_base_group:
+                with st.expander(f"📚 同類グループ {len(same_base_group)}件: 数違いの同じカード(同じスニダンURLで一括採用可)", expanded=True):
+                    for g in same_base_group:
+                        gm, _ = extract_multiplier_and_base(g['card_name'])
+                        st.caption(f"  ↳ {g['card_name']} (×{gm}) / 賞:{g['tier']} / 数量:{g['qty']}")
+                    st.caption("→ 下の「候補N採用」or「手動URL採用」を押すと **この商品の同類カード全て** に同じURLが登録されます")
 
             # 画像並列表示
             st.markdown("---")
@@ -1889,12 +1944,16 @@ with tab_match:
                                 _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                                  item['tier'], item['qty'], c['url'], price,
                                                  f"manual_ui(候補{j+1} sim={c['sim']:.2f}) {msg[:20]}")
-                            # ローカル採用済みに追加 → 次回renderで filter除外
-                            st.session_state['_match_done_local'].add(_item_key(item))
-                            st.success(f"候補{j+1}を採用 (¥{price:,})")
-                            # idx は維持 → filter後に次の未対応がそこに来る(リスト短くなるため)
-                            # idx が範囲外になる可能性に備え 0 にクランプ
-                            st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2))
+                                st.session_state['_match_done_local'].add(_item_key(item))
+                                # 同類グループに同じURLで一括採用 (×multiplier 自動計算)
+                                for g in same_base_group:
+                                    _save_card_match(g['base_no'], g['card_name'], g['rarity'],
+                                                     g['tier'], g['qty'], c['url'], price,
+                                                     f"manual_ui(同類グループ一括 sim={c['sim']:.2f})")
+                                    st.session_state['_match_done_local'].add(_item_key(g))
+                            extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
+                            st.success(f"候補{j+1}を採用 (パック単価¥{price:,}{extra})")
+                            st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2 - len(same_base_group)))
                             st.rerun()
                     with btn_cols[1]:
                         if c['url']:
@@ -1916,9 +1975,16 @@ with tab_match:
                         _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                          item['tier'], item['qty'], url, price,
                                          f"manual_url {msg[:30]}")
-                    st.session_state['_match_done_local'].add(_item_key(item))
-                    st.success(f"手動URLを採用 (¥{price:,})")
-                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2))
+                        st.session_state['_match_done_local'].add(_item_key(item))
+                        # 同類グループに一括採用
+                        for g in same_base_group:
+                            _save_card_match(g['base_no'], g['card_name'], g['rarity'],
+                                             g['tier'], g['qty'], url, price,
+                                             f"manual_url(同類グループ一括)")
+                            st.session_state['_match_done_local'].add(_item_key(g))
+                    extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
+                    st.success(f"手動URLを採用 (パック単価¥{price:,}{extra})")
+                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2 - len(same_base_group)))
                     st.rerun()
             with manual_cols[2]:
                 if st.button("❌ 除外", key=f"match_exclude_{item['no']}",
