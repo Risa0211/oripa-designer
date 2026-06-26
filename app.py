@@ -1978,11 +1978,11 @@ with tab_match:
 
             nav = st.columns([1, 1, 6, 1, 1])
             with nav[0]:
-                if st.button("◀ 前", key="match_prev", disabled=(idx == 0)):
+                if st.button("◀ 前", key=f"match_prev_{idx}", disabled=(idx == 0)):
                     st.session_state['_match_idx'] = idx - 1
                     st.rerun()
             with nav[1]:
-                if st.button("次 ▶", key="match_next", disabled=(idx >= len(filtered) - 1)):
+                if st.button("次 ▶", key=f"match_next_{idx}", disabled=(idx >= len(filtered) - 1)):
                     st.session_state['_match_idx'] = idx + 1
                     st.rerun()
             with nav[2]:
@@ -2082,7 +2082,7 @@ with tab_match:
                     st.caption(c['name'][:50])
                     btn_cols = st.columns([3, 1])
                     with btn_cols[0]:
-                        if st.button(f"✅ 候補{j+1}を採用", key=f"match_adopt_{j}_{item['no']}", type="primary", use_container_width=True):
+                        if st.button(f"✅ 候補{j+1}を採用", key=f"match_adopt_{j}_{item['no']}_{idx}", type="primary", use_container_width=True):
                             with st.spinner("価格取得+DB保存中..."):
                                 price, msg = _fetch_price_for_url(c['url'], item['card_name'], item['rarity'])
                                 _save_card_match(item['base_no'], item['card_name'], item['rarity'],
@@ -2138,16 +2138,16 @@ with tab_match:
                     st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
                     st.rerun()
             with manual_cols[2]:
-                if st.button("❌ 除外", key=f"match_exclude_{item['no']}",
+                if st.button("❌ 除外", key=f"match_exclude_{item['no']}_{idx}",
                               help="価格0で登録(ハズレ枠扱い)"):
                     _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                      item['tier'], item['qty'], '', 0, 'manual_exclude')
                     st.session_state['_match_done_local'].add(_item_key(item))
                     st.success("除外として登録(価格0)")
-                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 2))
+                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
                     st.rerun()
             with manual_cols[3]:
-                if st.button("⏭ スキップ", key=f"match_skip_{item['no']}"):
+                if st.button("⏭ スキップ", key=f"match_skip_{item['no']}_{idx}", use_container_width=True):
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
                     st.rerun()
 
