@@ -1697,12 +1697,29 @@ def _load_match_data():
                 base_no_v = _cell(r, '商品No')
                 card_name_v = _cell(r, 'カード名')
                 rarity_v = _cell(r, 'レアリティ')
-                # 商品別カードマスタDBで採用済みかチェック (=スプシ「採用」列が空でも DB に手動採用があれば対応済み扱い)
+                # 商品別カードマスタDBで採用済みかチェック
                 db_key = f'{base_no_v}|{card_name_v}|{rarity_v}'.lower()
                 db_done = db_key in manual_done
-                adopt_cell = _cell(r, '採用(1/2/3/手動URL/除外)')
-                # 既存の採用列 OR DB済み → adoptに値を入れて未対応フィルタから除外
+                adopt_cell = _cell(r, '採用(1/2/3/手動URL/除外)') if '採用(1/2/3/手動URL/除外)' in h else _cell(r, '採用方法')
                 adopt_final = adopt_cell if adopt_cell else ('✅DB済' if db_done else '')
+                # 候補URL列(シンプル版照合タブ用)
+                if not cands:
+                    for j in range(1, 4):
+                        if f'候補{j}URL' in h:
+                            cand_url_raw = _cell(r, f'候補{j}URL')
+                            # 純粋なURL or HYPERLINK 数式
+                            url_v = ''
+                            if cand_url_raw.startswith('http'):
+                                url_v = cand_url_raw
+                            elif 'HYPERLINK(' in cand_url_raw:
+                                m = re.search(r'HYPERLINK\("([^"]+)"', cand_url_raw)
+                                if m: url_v = m.group(1)
+                            name_v = _cell(r, f'候補{j}名')
+                            sim_v = _cell(r, f'候補{j}類似度')
+                            try: sim_v = float(sim_v) if sim_v else 0
+                            except: sim_v = 0
+                            if url_v or name_v:
+                                cands.append({'name': name_v, 'url': url_v, 'img_url': '', 'sim': sim_v})
                 items.append({
                     'no': _cell(r, 'No'),
                     'base_no': base_no_v,
@@ -1714,7 +1731,7 @@ def _load_match_data():
                     'tc_image_url': tc_img,
                     'cands': cands,
                     'adopt': adopt_final,
-                    'reason': _cell(r, '判定理由'),
+                    'reason': _cell(r, '判定理由') if '判定理由' in h else _cell(r, '備考'),
                     'source_tab': '照合',
                     'db_done': db_done,
                 })
@@ -1771,6 +1788,46 @@ def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, sour
            source_note + note_suffix, '', 'manual_ui', now]
     ws_per.append_row(row, value_input_option='USER_ENTERED')
     clear_per_product_card_cache()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_snk_image(snk_url):
+    """スニダンページから og:image URL を取得 (.webp→.jpg化)"""
+    import requests, re as _re_img
+    if not snk_url or not snk_url.startswith('http'):
+        return ''
+    try:
+        r = requests.get(snk_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+        m = _re_img.search(r'<meta property="og:image" content="([^"]+)"', r.text)
+        if m:
+            return m.group(1).replace('.webp', '.jpg')
+    except Exception:
+        pass
+    return ''
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_tc_image(base_url, card_name, rarity):
+    """トレカセンター商品ページから該当カードの画像URLを取得"""
+    if not base_url or not base_url.startswith('http'):
+        return ''
+    try:
+        from torecacenter_scraper import fetch_by_url
+        detail = fetch_by_url(base_url)
+        nm = (card_name or '').strip()
+        rar = (rarity or '').strip()
+        for c in (detail.get('cards') or []):
+            cn = (c.get('name') or '').strip()
+            cr = (c.get('rarity') or '').strip()
+            if cn == nm and cr == rar:
+                return c.get('image_url') or ''
+        # rarity一致しなくても name一致で fallback
+        for c in (detail.get('cards') or []):
+            if (c.get('name') or '').strip() == nm:
+                return c.get('image_url') or ''
+    except Exception:
+        pass
+    return ''
 
 
 def _fetch_price_for_url(snk_url, card_name, rarity):
@@ -1916,13 +1973,14 @@ with tab_match:
                         st.caption(f"  ↳ {g['card_name']} (×{gm}) / 賞:{g['tier']} / 数量:{g['qty']}")
                     st.caption("→ 下の「候補N採用」or「手動URL採用」を押すと **この商品の同類カード全て** に同じURLが登録されます")
 
-            # 画像並列表示
+            # 画像並列表示 (画像URLは都度取得・キャッシュ済み)
             st.markdown("---")
             img_cols = st.columns(4)
             with img_cols[0]:
                 st.markdown("##### 🎴 トレカ画像")
-                if item['tc_image_url']:
-                    st.image(item['tc_image_url'], use_column_width=True)
+                tc_img_url = item.get('tc_image_url') or _get_tc_image(item['base_url'], item['card_name'], item['rarity'])
+                if tc_img_url:
+                    st.image(tc_img_url, use_column_width=True)
                     st.caption("これが正解")
                 else:
                     st.warning("画像なし")
@@ -1931,8 +1989,9 @@ with tab_match:
                 with img_cols[j + 1]:
                     sim_label = f"類似度 {c['sim']:.3f}" if c['sim'] > 0 else "類似度不明"
                     st.markdown(f"##### 候補{j+1} ({sim_label})")
-                    if c['img_url']:
-                        st.image(c['img_url'], use_column_width=True)
+                    snk_img = c.get('img_url') or _get_snk_image(c.get('url', ''))
+                    if snk_img:
+                        st.image(snk_img, use_column_width=True)
                     else:
                         st.warning("画像なし")
                     st.caption(c['name'][:50])
