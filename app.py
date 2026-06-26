@@ -1638,7 +1638,7 @@ with tab_rewrite:
 
 
 # ---------- 🖼 カード照合タブ ----------
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=900)
 def _load_match_data():
     """商品別カード照合 + 商品別カードマスタ(手動採用済みかチェック) を統合読込"""
     import re
@@ -1988,7 +1988,11 @@ with tab_match:
             with nav[2]:
                 st.progress((idx + 1) / len(filtered), text=f"{idx + 1} / {len(filtered)}")
             with nav[3]:
-                jump = st.number_input("⮕", min_value=1, max_value=len(filtered), value=idx + 1, label_visibility="collapsed", key="match_jump")
+                # key を idx ごとに変えて widget 状態を毎回新規にする(古いidx記憶バグ回避)
+                jump = st.number_input(
+                    "⮕", min_value=1, max_value=len(filtered), value=idx + 1,
+                    label_visibility="collapsed", key=f"match_jump_{idx}",
+                )
                 if jump - 1 != idx:
                     st.session_state['_match_idx'] = int(jump) - 1
                     st.rerun()
@@ -2103,14 +2107,17 @@ with tab_match:
 
             # 下段: 手動URL入力 / 除外 / スキップ
             st.markdown("---")
+            st.caption("💡 URLを貼り付けた後、「📝 手動採用」ボタンを押して登録してください(Enterは押さなくてOK)")
             manual_cols = st.columns([4, 1, 1, 1])
             with manual_cols[0]:
+                # keyを item['no'] + idx ベースにして widget 状態リセットしやすく
                 manual_url = st.text_input(
                     "📝 手動URL入力 (上記候補に正解がない場合、スニダンURLを貼り付け)",
-                    key=f"match_manual_{item['no']}", placeholder="https://snkrdunk.com/apparels/..."
+                    key=f"match_manual_{item['no']}_{idx}",
+                    placeholder="https://snkrdunk.com/apparels/..."
                 )
             with manual_cols[1]:
-                if st.button("📝 手動採用", key=f"match_manual_btn_{item['no']}", disabled=not manual_url.strip()):
+                if st.button("📝 手動採用", key=f"match_manual_btn_{item['no']}_{idx}", disabled=not manual_url.strip()):
                     with st.spinner("価格取得+DB保存中..."):
                         url = manual_url.strip()
                         price, msg = _fetch_price_for_url(url, item['card_name'], item['rarity'])
@@ -2126,8 +2133,8 @@ with tab_match:
                             st.session_state['_match_done_local'].add(_item_key(g))
                     extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
                     st.success(f"手動URLを採用 (パック単価¥{price:,}{extra})")
-                    # 入力欄クリア
-                    st.session_state.pop(f"match_manual_{item['no']}", None)
+                    # 入力欄クリア (新keyに対応)
+                    st.session_state.pop(f"match_manual_{item['no']}_{idx}", None)
                     st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
                     st.rerun()
             with manual_cols[2]:
