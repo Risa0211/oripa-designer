@@ -1646,9 +1646,12 @@ def _load_match_data():
     # 採用済みチェック用に商品別カードマスタDB読込
     clear_per_product_card_cache()
     per_db = load_per_product_card_index()
-    # 手動採用済みキー(base_no|name|rarity の小文字)
-    MANUAL_KW = ('manual_ui', 'manual_url', 'manual_exclude')
-    manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in MANUAL_KW)}
+    # 手動「完了」と判定するキー(=未対応リストから除外する)
+    DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude')
+    manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in DONE_KW)}
+    # 要確認(=保留)キー: 別途リストで確認できる
+    REVIEW_KW = ('manual_review',)
+    review_keys = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in REVIEW_KW)}
 
     items = []
     try:
@@ -1728,6 +1731,7 @@ def _load_match_data():
                             except: sim_v = 0
                             if url_v or name_v:
                                 cands.append({'name': name_v, 'url': url_v, 'img_url': '', 'sim': sim_v})
+                review_flag = db_key in review_keys
                 items.append({
                     'no': _cell(r, 'No'),
                     'base_no': base_no_v,
@@ -1745,6 +1749,7 @@ def _load_match_data():
                     'db_url': db_url,
                     'db_price': db_price,
                     'db_src': db_src,
+                    'review_flag': review_flag,
                 })
     except Exception as e:
         st.warning(f'照合タブ読込失敗: {e}')
@@ -1885,9 +1890,9 @@ with tab_match:
         with fc[0]:
             f_search = st.text_input("🔍 商品No or カード名", key="match_search")
         with fc[1]:
-            f_mode = st.radio("表示", ["未対応のみ", "採用済のみ(修正用)", "全件"],
+            f_mode = st.radio("表示", ["未対応のみ", "⏸ 要確認のみ", "採用済のみ(修正用)", "全件"],
                               key="match_mode", horizontal=True,
-                              help="採用済のみ=過去採用したカードを再確認/修正可能(再採用で上書き)")
+                              help="未対応=まだ採用も要確認もしてない / 要確認=後で見直したいフラグ / 採用済=完了したもの")
         with fc[2]:
             f_min_sim = st.number_input("候補1類似度 ≥", value=0.0, step=0.05, key="match_min_sim")
         with fc[3]:
@@ -1908,9 +1913,15 @@ with tab_match:
         if st.session_state.pop('_match_force_all', False):
             mode_effective = "全件"
         if mode_effective == "未対応のみ":
-            filtered = [x for x in filtered if not x['adopt'].strip() and _item_key(x) not in local_done]
+            # 未対応 = 採用列もなく、ローカル採用済もなく、要確認フラグもない
+            filtered = [x for x in filtered if not x['adopt'].strip()
+                        and _item_key(x) not in local_done
+                        and not x.get('review_flag')]
+        elif mode_effective == "⏸ 要確認のみ":
+            filtered = [x for x in filtered if x.get('review_flag')]
         elif mode_effective == "採用済のみ(修正用)":
-            filtered = [x for x in filtered if x['adopt'].strip() or _item_key(x) in local_done]
+            filtered = [x for x in filtered if (x['adopt'].strip() or _item_key(x) in local_done)
+                        and not x.get('review_flag')]
         def _top1_sim(x):
             return x['cands'][0]['sim'] if x['cands'] else 0
         filtered = [x for x in filtered if f_min_sim <= _top1_sim(x) < f_max_sim]
@@ -1921,8 +1932,8 @@ with tab_match:
 
         st.markdown(f"**{len(filtered):,}件 / 全{len(all_items):,}件**")
 
-        # 採用済モードはリスト表示優先
-        if f_mode == "採用済のみ(修正用)" and filtered:
+        # 採用済/要確認モードはリスト表示優先
+        if f_mode in ("採用済のみ(修正用)", "⏸ 要確認のみ") and filtered:
             import pandas as _pd_match
             df_match = _pd_match.DataFrame([{
                 "商品No": x['base_no'],
@@ -2018,7 +2029,9 @@ with tab_match:
                 if item['reason']:
                     st.caption(f"判定理由: {item['reason']}")
             with head_cols[1]:
-                if item.get('db_done'):
+                if item.get('review_flag'):
+                    st.info("⏸ 要確認(保留中)")
+                elif item.get('db_done'):
                     st.success("✅ 商品別カードマスタDBに保存済(手動採用)")
                 elif item['adopt']:
                     st.success(f"✅ 採用済: {item['adopt']}")
@@ -2105,10 +2118,10 @@ with tab_match:
                         if c['url']:
                             st.link_button("🔗", c['url'], help="スニダンページを開く")
 
-            # 下段: 手動URL入力 / 除外 / スキップ
+            # 下段: 手動URL入力 / 除外 / 要確認 / スキップ
             st.markdown("---")
-            st.caption("💡 URLを貼り付けて「📝 手動採用」を押してください (Enter不要)")
-            manual_cols = st.columns([4, 1, 1, 1])
+            st.caption("💡 URLを貼り付けて「📝 手動採用」を押してください (Enter不要) ／ わからない場合は「⏸ 要確認」で保留→後で一覧確認可能")
+            manual_cols = st.columns([4, 1, 1, 1, 1])
             manual_key = f"match_manual_{item['no']}_{idx}"
             with manual_cols[0]:
                 st.text_input(
@@ -2158,15 +2171,24 @@ with tab_match:
                             st.rerun()
             with manual_cols[2]:
                 if st.button("❌ 除外", key=f"match_exclude_{item['no']}_{idx}",
-                              help="価格0で登録(ハズレ枠扱い)"):
+                              help="価格0で確定登録(ハズレ枠相当)。本当に値段つかないカードのみ使用"):
                     _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                      item['tier'], item['qty'], '', 0, 'manual_exclude')
                     st.session_state['_match_done_local'].add(_item_key(item))
-                    st.success("除外として登録(価格0)")
+                    st.success("除外として登録(価格0扱い)")
                     st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
                     st.rerun()
             with manual_cols[3]:
-                if st.button("⏭ スキップ", key=f"match_skip_{item['no']}_{idx}", use_container_width=True):
+                if st.button("⏸ 要確認", key=f"match_review_{item['no']}_{idx}",
+                              help="保留フラグ。後で「⏸要確認のみ」モードで一覧確認・対応"):
+                    _save_card_match(item['base_no'], item['card_name'], item['rarity'],
+                                     item['tier'], item['qty'], '', 0, 'manual_review_later')
+                    st.success("⏸ 要確認として保留(後で一覧確認可能)")
+                    st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
+                    st.rerun()
+            with manual_cols[4]:
+                if st.button("⏭ スキップ", key=f"match_skip_{item['no']}_{idx}", use_container_width=True,
+                              help="今は飛ばす。次回起動時にまた未対応として表示される"):
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
                     st.rerun()
 
