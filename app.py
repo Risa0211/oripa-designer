@@ -1496,6 +1496,19 @@ with tab_template:
         if total_tickets != total_card_qty and total_card_qty > 0:
             st.warning(f"⚠️ 総口数 {total_tickets:,} と カード本数 {total_card_qty:,} が一致しません")
 
+        # 実価値0のカードチェック (販売前に必ず潰すべき=価格未取得 or 除外扱い)
+        import re as _re_zero
+        _HZ = _re_zero.compile(r'(coin交換専用|coin\s*$|coin相当|ボーナス\s*$|交換専用|キャッシュバック|ガチャ券)')
+        zero_value_rows = active[(active["実価値/枚(円)"] == 0) & ~active["カード名"].fillna('').str.contains(_HZ, regex=True, na=False) & (active["本数"] > 0)]
+        if not zero_value_rows.empty:
+            st.error(
+                f"🚫 **実価値¥0のカードが {len(zero_value_rows)}行あります - 販売不可状態です**\n\n"
+                f"全件「🖼 カード照合」タブで正しいスニダンURLを登録するか、本当にハズレ枠なら明示してください。"
+                f"このまま販売すると利益率計算が不正確で原価割れリスク"
+            )
+            with st.expander(f"⚠️ 実価値0のカード一覧 ({len(zero_value_rows)}行)", expanded=True):
+                st.dataframe(zero_value_rows[["賞", "カード名", "レアリティ", "本数"]], use_container_width=True, hide_index=True)
+
         if coin_return > 1.0:
             st.error(f"❌ 顧客還元率が100%超え（{coin_return:.1%}）。上乗せ倍率を見直してください")
         elif gross_rate < 0:
@@ -2118,10 +2131,10 @@ with tab_match:
                         if c['url']:
                             st.link_button("🔗", c['url'], help="スニダンページを開く")
 
-            # 下段: 手動URL入力 / 除外 / 要確認 / スキップ
+            # 下段: 手動URL入力 / 要確認 / スキップ
             st.markdown("---")
-            st.caption("💡 URLを貼り付けて「📝 手動採用」を押してください (Enter不要) ／ わからない場合は「⏸ 要確認」で保留→後で一覧確認可能")
-            manual_cols = st.columns([4, 1, 1, 1, 1])
+            st.caption("💡 URLを貼り付けて「📝 手動採用」を押してください (Enter不要) ／ わからない場合は「⏸ 要確認」で保留→後で一覧確認")
+            manual_cols = st.columns([4, 1, 1, 1])
             manual_key = f"match_manual_{item['no']}_{idx}"
             with manual_cols[0]:
                 st.text_input(
@@ -2170,23 +2183,14 @@ with tab_match:
                             st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
                             st.rerun()
             with manual_cols[2]:
-                if st.button("❌ 除外", key=f"match_exclude_{item['no']}_{idx}",
-                              help="価格0で確定登録(ハズレ枠相当)。本当に値段つかないカードのみ使用"):
-                    _save_card_match(item['base_no'], item['card_name'], item['rarity'],
-                                     item['tier'], item['qty'], '', 0, 'manual_exclude')
-                    st.session_state['_match_done_local'].add(_item_key(item))
-                    st.success("除外として登録(価格0扱い)")
-                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
-                    st.rerun()
-            with manual_cols[3]:
-                if st.button("⏸ 要確認", key=f"match_review_{item['no']}_{idx}",
+                if st.button("⏸ 要確認", key=f"match_review_{item['no']}_{idx}", use_container_width=True,
                               help="保留フラグ。後で「⏸要確認のみ」モードで一覧確認・対応"):
                     _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                      item['tier'], item['qty'], '', 0, 'manual_review_later')
                     st.success("⏸ 要確認として保留(後で一覧確認可能)")
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
                     st.rerun()
-            with manual_cols[4]:
+            with manual_cols[3]:
                 if st.button("⏭ スキップ", key=f"match_skip_{item['no']}_{idx}", use_container_width=True,
                               help="今は飛ばす。次回起動時にまた未対応として表示される"):
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
