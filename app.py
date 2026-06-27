@@ -2107,36 +2107,44 @@ with tab_match:
 
             # 下段: 手動URL入力 / 除外 / スキップ
             st.markdown("---")
-            st.caption("💡 URLを貼り付けた後、「📝 手動採用」ボタンを押して登録してください(Enterは押さなくてOK)")
+            st.caption("💡 URLを貼り付けて「📝 手動採用」を押してください (Enter不要)")
             manual_cols = st.columns([4, 1, 1, 1])
+            manual_key = f"match_manual_{item['no']}_{idx}"
             with manual_cols[0]:
-                # keyを item['no'] + idx ベースにして widget 状態リセットしやすく
-                manual_url = st.text_input(
+                st.text_input(
                     "📝 手動URL入力 (上記候補に正解がない場合、スニダンURLを貼り付け)",
-                    key=f"match_manual_{item['no']}_{idx}",
+                    key=manual_key,
                     placeholder="https://snkrdunk.com/apparels/..."
                 )
             with manual_cols[1]:
-                if st.button("📝 手動採用", key=f"match_manual_btn_{item['no']}_{idx}", disabled=not manual_url.strip()):
-                    with st.spinner("価格取得+DB保存中..."):
-                        url = manual_url.strip()
-                        price, msg = _fetch_price_for_url(url, item['card_name'], item['rarity'])
-                        _save_card_match(item['base_no'], item['card_name'], item['rarity'],
-                                         item['tier'], item['qty'], url, price,
-                                         f"manual_url {msg[:30]}")
-                        st.session_state['_match_done_local'].add(_item_key(item))
-                        # 同類グループに一括採用
-                        for g in same_base_group:
-                            _save_card_match(g['base_no'], g['card_name'], g['rarity'],
-                                             g['tier'], g['qty'], url, price,
-                                             f"manual_url(同類グループ一括)")
-                            st.session_state['_match_done_local'].add(_item_key(g))
-                    extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
-                    st.success(f"手動URLを採用 (パック単価¥{price:,}{extra})")
-                    # 入力欄クリア (新keyに対応)
-                    st.session_state.pop(f"match_manual_{item['no']}_{idx}", None)
-                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
-                    st.rerun()
+                # disabled判定を外してEnter押下なしで使えるように
+                if st.button("📝 手動採用", key=f"match_manual_btn_{item['no']}_{idx}"):
+                    # 押下時に session_state から最新値を取得
+                    url = (st.session_state.get(manual_key, '') or '').strip()
+                    if not url:
+                        st.warning("URLが空です。スニダンURLを貼り付けてください")
+                    elif not url.startswith('http'):
+                        st.warning("URLが不正です(https://snkrdunk.com/apparels/... の形式で入力)")
+                    else:
+                        with st.spinner("価格取得+DB保存中..."):
+                            price, msg = _fetch_price_for_url(url, item['card_name'], item['rarity'])
+                            _save_card_match(item['base_no'], item['card_name'], item['rarity'],
+                                             item['tier'], item['qty'], url, price,
+                                             f"manual_url {msg[:30]}")
+                            st.session_state['_match_done_local'].add(_item_key(item))
+                            for g in same_base_group:
+                                _save_card_match(g['base_no'], g['card_name'], g['rarity'],
+                                                 g['tier'], g['qty'], url, price,
+                                                 f"manual_url(同類グループ一括)")
+                                st.session_state['_match_done_local'].add(_item_key(g))
+                        extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
+                        if price > 0:
+                            st.success(f"✅ 手動URLを採用 (パック単価¥{price:,}{extra})")
+                        else:
+                            st.warning(f"⚠️ 価格取得失敗で¥0登録 (理由: {msg[:60]})。手動修正したい場合は『採用済のみ』モードから再採用してください")
+                        st.session_state.pop(manual_key, None)
+                        st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
+                        st.rerun()
             with manual_cols[2]:
                 if st.button("❌ 除外", key=f"match_exclude_{item['no']}_{idx}",
                               help="価格0で登録(ハズレ枠扱い)"):
