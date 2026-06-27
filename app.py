@@ -2126,25 +2126,36 @@ with tab_match:
                     elif not url.startswith('http'):
                         st.warning("URLが不正です(https://snkrdunk.com/apparels/... の形式で入力)")
                     else:
-                        with st.spinner("価格取得+DB保存中..."):
+                        with st.spinner("価格取得中..."):
                             price, msg = _fetch_price_for_url(url, item['card_name'], item['rarity'])
-                            _save_card_match(item['base_no'], item['card_name'], item['rarity'],
-                                             item['tier'], item['qty'], url, price,
-                                             f"manual_url {msg[:30]}")
-                            st.session_state['_match_done_local'].add(_item_key(item))
-                            for g in same_base_group:
-                                _save_card_match(g['base_no'], g['card_name'], g['rarity'],
-                                                 g['tier'], g['qty'], url, price,
-                                                 f"manual_url(同類グループ一括)")
-                                st.session_state['_match_done_local'].add(_item_key(g))
-                        extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
-                        if price > 0:
-                            st.success(f"✅ 手動URLを採用 (パック単価¥{price:,}{extra})")
+                        if price <= 0:
+                            # 価格0は保存せずエラー → ユーザーにURL再確認を促す
+                            st.error(
+                                f"❌ 価格取得に失敗しました (¥0)。**保存していません**。\n\n"
+                                f"理由: {msg[:80]}\n\n"
+                                f"考えられる原因:\n"
+                                f"・URLが間違っている (別カードのページ)\n"
+                                f"・スニダンに販売履歴がない (極めて稀)\n"
+                                f"・スニダン側のAPIエラー(時間を置いて再試行)\n\n"
+                                f"対処: URLを再確認して貼り直してください。"
+                                f"もし本当に値段がつかないカード(ハズレ枠相当)なら「❌除外」を押してください"
+                            )
                         else:
-                            st.warning(f"⚠️ 価格取得失敗で¥0登録 (理由: {msg[:60]})。手動修正したい場合は『採用済のみ』モードから再採用してください")
-                        st.session_state.pop(manual_key, None)
-                        st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
-                        st.rerun()
+                            with st.spinner("DB保存中..."):
+                                _save_card_match(item['base_no'], item['card_name'], item['rarity'],
+                                                 item['tier'], item['qty'], url, price,
+                                                 f"manual_url {msg[:30]}")
+                                st.session_state['_match_done_local'].add(_item_key(item))
+                                for g in same_base_group:
+                                    _save_card_match(g['base_no'], g['card_name'], g['rarity'],
+                                                     g['tier'], g['qty'], url, price,
+                                                     f"manual_url(同類グループ一括)")
+                                    st.session_state['_match_done_local'].add(_item_key(g))
+                            extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
+                            st.success(f"✅ 手動URLを採用 (パック単価¥{price:,}{extra})")
+                            st.session_state.pop(manual_key, None)
+                            st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
+                            st.rerun()
             with manual_cols[2]:
                 if st.button("❌ 除外", key=f"match_exclude_{item['no']}_{idx}",
                               help="価格0で登録(ハズレ枠扱い)"):
