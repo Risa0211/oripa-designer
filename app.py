@@ -1654,6 +1654,7 @@ with tab_template:
             )
             if check_items:
                 st.markdown(f"#### 🟡 確認待ち {len(check_items)}件")
+                _tmpl_url = state.get('url', '')
                 for e in check_items:
                     cm = e['cm']
                     src_low = (cm.source or '').lower()
@@ -1665,27 +1666,42 @@ with tab_template:
                         label = "🟢 画像選定済"
                     else:
                         label = f"❓ {cm.source[:20]}"
-                    ck_cols = st.columns([3, 2, 1.2, 1.3])
+                    # トレカセンター画像取得
+                    tc_img = _get_tc_image(_tmpl_url, e['cn'], e['rar']) if _tmpl_url else ''
+                    ck_cols = st.columns([0.8, 2.2, 1.8, 2, 1, 1.2])
                     with ck_cols[0]:
-                        st.markdown(f"**{e['row']['賞']} {e['cn']}** ({e['rar']})")
-                        st.caption(label)
+                        if tc_img:
+                            st.image(tc_img, width=80)
+                        else:
+                            st.caption("画像なし")
                     with ck_cols[1]:
+                        st.markdown(f"**{e['row']['賞']} {e['cn']}**")
+                        st.caption(f"{e['rar']} ｜ {label}")
+                    with ck_cols[2]:
+                        if _tmpl_url:
+                            st.link_button("🎴 競合商品ページ", _tmpl_url, use_container_width=True)
+                        else:
+                            st.caption("商品URLなし")
+                    with ck_cols[3]:
                         if cm.snkrdunk_url:
-                            st.link_button("🔗 スニダンURL確認", cm.snkrdunk_url, use_container_width=True)
+                            st.link_button("🔗 スニダンURL", cm.snkrdunk_url, use_container_width=True)
                         else:
                             st.caption("URLなし")
-                    with ck_cols[2]:
-                        st.caption(f"¥{int(cm.buy_price):,}")
-                    with ck_cols[3]:
+                    with ck_cols[4]:
+                        st.markdown(f"**¥{int(cm.buy_price):,}**")
+                    with ck_cols[5]:
+                        # 作業者名なくても押せるように(未入力なら「設計者」記録)
                         if st.button("✅確認OK", key=f"confirm_{cur_base_no}_{e['cn']}_{e['rar']}_{e['ri']}",
-                                      disabled=not st.session_state.get('_worker_name'),
-                                      use_container_width=True):
+                                      use_container_width=True, type="primary"):
+                            if not st.session_state.get('_worker_name'):
+                                st.session_state['_worker_name'] = '設計者'
                             _save_card_match(cur_base_no, e['cn'], e['rar'], str(e['row']['賞']), int(e['row']['本数']),
                                              cm.snkrdunk_url, cm.buy_price,
                                              f"設計時確認OK(元={label})",
                                              status='confirmed_by_designer')
                             st.success(f"✅ {e['cn']} を確定登録")
                             st.rerun()
+                    st.divider()
             if confirmed_items:
                 st.markdown(f"#### ✅ 設計者確定済 {len(confirmed_items)}件")
                 for e in confirmed_items:
