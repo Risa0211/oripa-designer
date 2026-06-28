@@ -1871,9 +1871,11 @@ def _load_match_data():
     # 採用済みチェック用に商品別カードマスタDB読込
     clear_per_product_card_cache()
     per_db = load_per_product_card_index()
-    # カードマスタDB由来の仮採用判定はしない(=全部ワーカー作業対象に戻す)
-    master_with_url = set()
-    # 「ワーカー対応不要」扱いするキー = 確定済のみ。仮採用は除外して未対応扱い
+    # カードマスタDB(name+rarity)でURLあり → 依頼者入力済として「確定扱い」
+    from research import load_card_master_index
+    master_db = load_card_master_index()
+    master_with_url = {k for k, cm in master_db.items() if cm.snkrdunk_url.strip().startswith('http')}
+    # 確定済(ワーカー対応不要)。CLIP仮採用は含めない=ワーカー対応必要
     DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude', 'confirmed_by_worker', 'confirmed_by_designer')
     manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in DONE_KW)}
     REVIEW_KW = ('manual_review', 'provisional_review')
@@ -1961,6 +1963,17 @@ def _load_match_data():
                                 cands.append({'name': name_v, 'url': url_v, 'img_url': '', 'sim': sim_v})
                 review_flag = db_key in review_keys
                 prov_flag = db_key in provisional_keys
+                # カードマスタDB(name+rarity)にURLあれば「確定扱い」(依頼者入力済)
+                _master_key = f'{card_name_v}|{rarity_v}'.lower()
+                if _master_key in master_with_url and not (db_done or review_flag):
+                    db_done = True
+                    adopt_final = adopt_final or '✅カードマスタDB由来'
+                    # 表示用 URL/価格をマスタから引く
+                    if not db_url and _master_key in master_db:
+                        _cm_m = master_db[_master_key]
+                        db_url = _cm_m.snkrdunk_url
+                        db_price = _cm_m.buy_price
+                        db_src = f'カードマスタDB(name|rarity) {_cm_m.source}'
                 items.append({
                     'no': _cell(r, 'No'),
                     'base_no': base_no_v,
