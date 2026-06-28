@@ -124,6 +124,46 @@ else:
         st.info("🔴 **本番モード中** - 操作は本番の在庫スプシに反映されます")
 
 
+# ---------- 共通画像取得関数 (tab_template/tab_match 両方で使用) ----------
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_snk_image(snk_url):
+    """スニダンページから og:image URL を取得 (.webp→.jpg化)"""
+    import requests, re as _re_img
+    if not snk_url or not snk_url.startswith('http'):
+        return ''
+    try:
+        r = requests.get(snk_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+        m = _re_img.search(r'<meta property="og:image" content="([^"]+)"', r.text)
+        if m:
+            return m.group(1).replace('.webp', '.jpg')
+    except Exception:
+        pass
+    return ''
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_tc_image(base_url, card_name, rarity):
+    """トレカセンター商品ページから該当カードの画像URLを取得"""
+    if not base_url or not base_url.startswith('http'):
+        return ''
+    try:
+        from torecacenter_scraper import fetch_by_url
+        detail = fetch_by_url(base_url)
+        nm = (card_name or '').strip()
+        rar = (rarity or '').strip()
+        for c in (detail.get('cards') or []):
+            cn = (c.get('name') or '').strip()
+            cr = (c.get('rarity') or '').strip()
+            if cn == nm and cr == rar:
+                return c.get('image_url') or ''
+        for c in (detail.get('cards') or []):
+            if (c.get('name') or '').strip() == nm:
+                return c.get('image_url') or ''
+    except Exception:
+        pass
+    return ''
+
+
 # ---------- サイドバー: 作業者名 + 参考競合 ----------
 with st.sidebar:
     st.header("👤 作業者")
@@ -2072,46 +2112,6 @@ def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, sour
            source_note + note_suffix, '', full_status, now]
     ws_per.append_row(row, value_input_option='USER_ENTERED')
     clear_per_product_card_cache()
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _get_snk_image(snk_url):
-    """スニダンページから og:image URL を取得 (.webp→.jpg化)"""
-    import requests, re as _re_img
-    if not snk_url or not snk_url.startswith('http'):
-        return ''
-    try:
-        r = requests.get(snk_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
-        m = _re_img.search(r'<meta property="og:image" content="([^"]+)"', r.text)
-        if m:
-            return m.group(1).replace('.webp', '.jpg')
-    except Exception:
-        pass
-    return ''
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _get_tc_image(base_url, card_name, rarity):
-    """トレカセンター商品ページから該当カードの画像URLを取得"""
-    if not base_url or not base_url.startswith('http'):
-        return ''
-    try:
-        from torecacenter_scraper import fetch_by_url
-        detail = fetch_by_url(base_url)
-        nm = (card_name or '').strip()
-        rar = (rarity or '').strip()
-        for c in (detail.get('cards') or []):
-            cn = (c.get('name') or '').strip()
-            cr = (c.get('rarity') or '').strip()
-            if cn == nm and cr == rar:
-                return c.get('image_url') or ''
-        # rarity一致しなくても name一致で fallback
-        for c in (detail.get('cards') or []):
-            if (c.get('name') or '').strip() == nm:
-                return c.get('image_url') or ''
-    except Exception:
-        pass
-    return ''
 
 
 def _fetch_price_for_url(snk_url, card_name, rarity):
