@@ -1897,8 +1897,8 @@ def _load_match_data():
                             inv_url_by_name[_nm] = {'url': _u, 'price': _p}
             except Exception: pass
     except Exception: pass
-    # 確定済(ワーカー対応不要)。CLIP仮採用は含めない=ワーカー対応必要
-    DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude', 'confirmed_by_worker', 'confirmed_by_designer')
+    # 確定済(ワーカー対応不要) + CLIP仮採用も「設計時チェック予定」でワーカー対応不要扱い
+    DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude', 'confirmed_by_worker', 'confirmed_by_designer', 'provisional_clip')
     manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in DONE_KW)}
     REVIEW_KW = ('manual_review', 'provisional_review')
     review_keys = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in REVIEW_KW)}
