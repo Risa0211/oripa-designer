@@ -128,7 +128,7 @@ else:
 with st.sidebar:
     st.header("👤 作業者")
     worker_name = st.text_input(
-        "あなたの名前(報酬計算用)", value=st.session_state.get('_worker_name', ''),
+        "あなたの名前", value=st.session_state.get('_worker_name', ''),
         key='_worker_name_input',
         placeholder="例: 山田、ワーカーA",
         help="カード照合や商品設計時の登録に作業者名が記録されます",
@@ -2084,7 +2084,7 @@ with tab_match:
     st.caption("同名異版のカード(=シャワーズ マスボミラー151版 vs SV4a版 など)の正しいスニダンURLを選ぶ。採用後は商品別カードマスタDBに保存→ツール各所で自動反映。")
 
     # 作業者別集計
-    with st.expander("📊 作業者別集計(報酬計算用)", expanded=False):
+    with st.expander("📊 作業者別 作業件数", expanded=False):
         if st.button("🔄 集計を再計算", key="match_stats_reload"):
             st.rerun()
         try:
@@ -2092,34 +2092,31 @@ with tab_match:
             ws_stats = _or_stats().worksheet('商品別カードマスタ')
             stats_rows = ws_stats.get_all_records()
             from collections import Counter
-            worker_confirmed = Counter()  # 1件1円対象
-            worker_review = Counter()      # 報酬対象外
+            worker_confirmed = Counter()
+            worker_review = Counter()
             for r in stats_rows:
                 src = str(r.get('採用方法', ''))
-                # by:XXX 抽出
                 m = _re_match.search(r'by:([^|]+?)(?:\||$)', src)
                 worker = m.group(1).strip() if m else '不明'
                 src_low = src.lower()
-                # 報酬対象 = confirmed_by_worker (要確認や provisional は対象外)
                 if 'confirmed_by_worker' in src_low:
                     worker_confirmed[worker] += 1
                 elif 'provisional_review' in src_low or 'manual_review' in src_low:
                     worker_review[worker] += 1
-                # 旧タグ manual_ui / manual_url(画像選定で確定したもの) も対象に含める
                 elif 'manual_ui' in src_low or 'manual_url' in src_low:
                     worker_confirmed[worker] += 1
-            st.markdown("**✅ 確定登録(画像選定/手動URL) = 1件¥1報酬対象**")
+            st.markdown("**✅ 確定登録**")
             if worker_confirmed:
                 import pandas as _pd_stats
                 df_stats = _pd_stats.DataFrame([
-                    {'作業者': w, '確定件数': n, '報酬(¥)': n}
+                    {'作業者': w, '確定件数': n}
                     for w, n in worker_confirmed.most_common()
                 ])
                 st.dataframe(df_stats, use_container_width=True, hide_index=True)
-                st.metric("合計", f"{sum(worker_confirmed.values())}件 = ¥{sum(worker_confirmed.values()):,}")
+                st.metric("合計", f"{sum(worker_confirmed.values())}件")
             else:
                 st.info("確定登録なし")
-            st.markdown("**⏸ 要確認(保留) = 報酬対象外**")
+            st.markdown("**⏸ 要確認(保留)**")
             if worker_review:
                 st.dataframe(
                     _pd_stats.DataFrame([{'作業者': w, '要確認件数': n} for w, n in worker_review.most_common()]),
