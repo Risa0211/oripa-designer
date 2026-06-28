@@ -1038,21 +1038,52 @@ with tab_template:
                 _est_label += f" ｜📌 リライト設計: 平均上乗せ **{_am:.2f}x** / 目標利益率 **{rw_meta_state.get('profit_rate','?')}**"
             st.markdown(_est_label)
 
-        # 上乗せ率手動指定→自動配分(リライトメタなしでも使えるバージョン)
-        markup_row = st.columns([2, 1, 4])
+        # 上乗せ率手動指定→自動配分。リライトメタ or リライト商品案シートから自動取得
+        _auto_markup = 0.0
+        _markup_src = ""
+        if rw_meta_state:
+            try:
+                _auto_markup = float(rw_meta_state.get('avg_markup') or 0)
+                if _auto_markup > 0:
+                    _markup_src = "リライト商品案転送(リライト時計算済)"
+            except Exception: pass
+        if _auto_markup <= 0 and state.get('no'):
+            try:
+                from sheets_client import get_client as _gc_m
+                _ss_inv = _gc_m().open_by_key(config.get_active_inventory_sheet_id())
+                _ws_re = _ss_inv.worksheet(config.TAB_REWRITE_CANDIDATES)
+                _rrows = _ws_re.get_all_values()
+                if _rrows:
+                    _rh = _rrows[0]
+                    if 'ベースNo' in _rh and '上乗せ率' in _rh:
+                        _c_base = _rh.index('ベースNo')
+                        _c_mk = _rh.index('上乗せ率')
+                        for _r in _rrows[1:]:
+                            if len(_r) > max(_c_base, _c_mk) and str(_r[_c_base]).strip() == str(state['no']).strip():
+                                try:
+                                    _v = float(_r[_c_mk])
+                                    if _v > 0:
+                                        _auto_markup = _v
+                                        _markup_src = f"リライト商品案シート自動参照(ベースNo={state['no']})"
+                                        break
+                                except: pass
+            except Exception: pass
+        if _auto_markup <= 0:
+            _auto_markup = 1.81
+            _markup_src = "業界平均デフォルト(リライト商品案にエントリなし)"
+        markup_row = st.columns([2, 1.5, 4])
         with markup_row[0]:
             manual_avg_markup = st.number_input(
-                "🎯 平均上乗せ倍率(例: 1.81)", min_value=1.0, max_value=5.0,
-                value=float(rw_meta_state.get('avg_markup') if rw_meta_state else 1.81),
-                step=0.05, key="tmpl_manual_markup",
-                help="この値をベースに各カードのtier別上乗せを自動配分(1等2.0/2等1.7/3等1.5 等の重み付け)"
+                "🎯 平均上乗せ倍率", min_value=1.0, max_value=5.0,
+                value=_auto_markup, step=0.05, key="tmpl_manual_markup",
+                help="この値をベースに各カードのtier別上乗せを自動配分(1等2.0/2等1.7/3等1.5 等)"
             )
         with markup_row[1]:
             apply_markup_btn = st.button("📊 上乗せ自動配分", key="tmpl_apply_markup",
                                           type="primary", use_container_width=True,
                                           help="現在の実価値とtier別重みで上乗せ倍率を自動計算→各カード行に反映")
         with markup_row[2]:
-            st.caption("💡 全カードの実価値が入ったら → 平均上乗せ倍率を指定 → 「📊 上乗せ自動配分」で全カードの上乗せ倍率がtier別に自動入力されます")
+            st.caption(f"📌 推奨値出典: **{_markup_src}** ／ 必要なら手動調整可")
 
         st.markdown("###### 細かい操作")
         action_row = st.columns([1, 1.2, 1, 1.4])
@@ -1805,13 +1836,17 @@ def _load_match_data():
     # 採用済みチェック用に商品別カードマスタDB読込
     clear_per_product_card_cache()
     per_db = load_per_product_card_index()
-    # 手動「完了」と判定するキー(=未対応リストから除外する)
-    # 旧タグ(manual_ui/manual_url/manual_exclude) + 新タグ(confirmed_by_worker/designer)
-    DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude', 'confirmed_by_worker', 'confirmed_by_designer')
+    # 「ワーカー対応不要」扱いするキー:
+    # 1. 手動完了(旧 manual_ui/url, 新 confirmed_by_worker/designer)
+    # 2. 仮採用(provisional_clip) ← 設計時に最終確認されるためワーカー作業不要
+    DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude', 'confirmed_by_worker', 'confirmed_by_designer', 'provisional_clip')
     manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in DONE_KW)}
-    # 要確認(=保留)キー: 別途リストで確認できる
+    # 要確認(=保留)キー
     REVIEW_KW = ('manual_review', 'provisional_review')
     review_keys = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in REVIEW_KW)}
+    # 仮採用キー(設計時確認予定) - 表示用に別フラグ
+    PROV_KW = ('provisional_clip',)
+    provisional_keys = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in PROV_KW)}
 
     items = []
     try:
@@ -1892,6 +1927,7 @@ def _load_match_data():
                             if url_v or name_v:
                                 cands.append({'name': name_v, 'url': url_v, 'img_url': '', 'sim': sim_v})
                 review_flag = db_key in review_keys
+                prov_flag = db_key in provisional_keys
                 items.append({
                     'no': _cell(r, 'No'),
                     'base_no': base_no_v,
@@ -1910,6 +1946,7 @@ def _load_match_data():
                     'db_price': db_price,
                     'db_src': db_src,
                     'review_flag': review_flag,
+                    'prov_flag': prov_flag,
                 })
     except Exception as e:
         st.warning(f'照合タブ読込失敗: {e}')
@@ -2099,9 +2136,9 @@ with tab_match:
         with fc[0]:
             f_search = st.text_input("🔍 商品No or カード名", key="match_search")
         with fc[1]:
-            f_mode = st.radio("表示", ["未対応のみ", "⏸ 要確認のみ", "採用済のみ(修正用)", "全件"],
+            f_mode = st.radio("表示", ["未対応のみ", "⏸ 要確認のみ", "🟡 仮採用のみ", "採用済のみ(修正用)", "全件"],
                               key="match_mode", horizontal=True,
-                              help="未対応=まだ採用も要確認もしてない / 要確認=後で見直したいフラグ / 採用済=完了したもの")
+                              help="未対応=ワーカー作業対象 / 要確認=後で対応 / 仮採用=設計時確認予定 / 採用済=確定済")
         with fc[2]:
             f_min_sim = st.number_input("候補1類似度 ≥", value=0.0, step=0.05, key="match_min_sim")
         with fc[3]:
@@ -2122,15 +2159,19 @@ with tab_match:
         if st.session_state.pop('_match_force_all', False):
             mode_effective = "全件"
         if mode_effective == "未対応のみ":
-            # 未対応 = 採用列もなく、ローカル採用済もなく、要確認フラグもない
+            # 未対応 = 採用列なし & ローカル未採用 & 要確認なし & 仮採用なし
             filtered = [x for x in filtered if not x['adopt'].strip()
                         and _item_key(x) not in local_done
-                        and not x.get('review_flag')]
+                        and not x.get('review_flag')
+                        and not x.get('prov_flag')]
         elif mode_effective == "⏸ 要確認のみ":
             filtered = [x for x in filtered if x.get('review_flag')]
+        elif mode_effective == "🟡 仮採用のみ":
+            filtered = [x for x in filtered if x.get('prov_flag')]
         elif mode_effective == "採用済のみ(修正用)":
             filtered = [x for x in filtered if (x['adopt'].strip() or _item_key(x) in local_done)
-                        and not x.get('review_flag')]
+                        and not x.get('review_flag')
+                        and not x.get('prov_flag')]
         def _top1_sim(x):
             return x['cands'][0]['sim'] if x['cands'] else 0
         filtered = [x for x in filtered if f_min_sim <= _top1_sim(x) < f_max_sim]
@@ -2141,8 +2182,8 @@ with tab_match:
 
         st.markdown(f"**{len(filtered):,}件 / 全{len(all_items):,}件**")
 
-        # 採用済/要確認モードはリスト表示優先
-        if f_mode in ("採用済のみ(修正用)", "⏸ 要確認のみ") and filtered:
+        # 採用済/要確認/仮採用モードはリスト表示優先
+        if f_mode in ("採用済のみ(修正用)", "⏸ 要確認のみ", "🟡 仮採用のみ") and filtered:
             import pandas as _pd_match
             df_match = _pd_match.DataFrame([{
                 "商品No": x['base_no'],
