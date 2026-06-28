@@ -1871,10 +1871,32 @@ def _load_match_data():
     # 採用済みチェック用に商品別カードマスタDB読込
     clear_per_product_card_cache()
     per_db = load_per_product_card_index()
-    # カードマスタDB(name+rarity)でURLあり → 依頼者入力済として「確定扱い」
-    from research import load_card_master_index
-    master_db = load_card_master_index()
-    master_with_url = {k for k, cm in master_db.items() if cm.snkrdunk_url.strip().startswith('http')}
+    # 在庫スプシ(ポケモン在庫管理)の「スニダン used URL」列を 依頼者入力済として「確定扱い」
+    from sheets_client import get_client as _gc_inv
+    inv_url_by_name = {}  # カード名小文字 → {url, price}
+    try:
+        _ss_inv = _gc_inv().open_by_key(config.get_active_inventory_sheet_id())
+        for _tab in ['PSA10在庫登録', 'PSA10在庫登録 のコピー']:
+            try:
+                _wsi = _ss_inv.worksheet(_tab)
+                _rs = _wsi.get_all_values()
+                if not _rs: continue
+                _h = _rs[0]
+                _ci_name = _h.index('カード名') if 'カード名' in _h else -1
+                _ci_url = _h.index('スニダン used URL') if 'スニダン used URL' in _h else -1
+                _ci_pri = _h.index('相場(1枚)') if '相場(1枚)' in _h else (_h.index('相場(1枚)') if '相場(1枚)' in _h else -1)
+                if _ci_name < 0 or _ci_url < 0: continue
+                for _r in _rs[1:]:
+                    if len(_r) <= max(_ci_name, _ci_url): continue
+                    _nm = (_r[_ci_name] or '').strip().lower()
+                    _u = (_r[_ci_url] or '').strip()
+                    if _nm and _u.startswith('http'):
+                        if _nm not in inv_url_by_name:
+                            try: _p = int((_r[_ci_pri] or '0').replace(',', '').replace('¥', '')) if _ci_pri >= 0 and len(_r) > _ci_pri else 0
+                            except: _p = 0
+                            inv_url_by_name[_nm] = {'url': _u, 'price': _p}
+            except Exception: pass
+    except Exception: pass
     # 確定済(ワーカー対応不要)。CLIP仮採用は含めない=ワーカー対応必要
     DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude', 'confirmed_by_worker', 'confirmed_by_designer')
     manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in DONE_KW)}
@@ -1963,17 +1985,16 @@ def _load_match_data():
                                 cands.append({'name': name_v, 'url': url_v, 'img_url': '', 'sim': sim_v})
                 review_flag = db_key in review_keys
                 prov_flag = db_key in provisional_keys
-                # カードマスタDB(name+rarity)にURLあれば「確定扱い」(依頼者入力済)
-                _master_key = f'{card_name_v}|{rarity_v}'.lower()
-                if _master_key in master_with_url and not (db_done or review_flag):
+                # 在庫スプシ(依頼者入力)にURLあれば「確定扱い」
+                _name_key = card_name_v.lower()
+                if _name_key in inv_url_by_name and not (db_done or review_flag):
+                    _iv = inv_url_by_name[_name_key]
                     db_done = True
-                    adopt_final = adopt_final or '✅カードマスタDB由来'
-                    # 表示用 URL/価格をマスタから引く
-                    if not db_url and _master_key in master_db:
-                        _cm_m = master_db[_master_key]
-                        db_url = _cm_m.snkrdunk_url
-                        db_price = _cm_m.buy_price
-                        db_src = f'カードマスタDB(name|rarity) {_cm_m.source}'
+                    adopt_final = adopt_final or '✅在庫スプシ由来(依頼者入力)'
+                    if not db_url:
+                        db_url = _iv['url']
+                        db_price = _iv['price']
+                        db_src = '在庫スプシ(依頼者入力)'
                 items.append({
                     'no': _cell(r, 'No'),
                     'base_no': base_no_v,
