@@ -1620,28 +1620,45 @@ with tab_template:
 
         # ---- カード確認(設計者がスニダンURLを最終チェック) ----
         from research import load_per_product_card_index as _lppci, clear_per_product_card_cache as _cppc
+        from research import load_card_master_index as _lcmi
         _cppc()
         _per = _lppci()
+        _master = _lcmi()  # カードマスタDB(name|rarity) - 依頼者入力など
         cur_base_no = str(state.get('no', '')).strip()
-        # この商品のカードを per_db で分類
-        check_items = []  # 確認待ち(仮採用 or worker確定)
+        # この商品のカードを分類
+        check_items = []      # 確認待ち(仮採用 or worker確定 or カードマスタ由来)
         confirmed_items = []  # 設計者確定済
-        not_in_db_items = []  # DB登録なし
+        not_in_db_items = []  # 一切DBに登録なし
         for ri, row in df_calc.iterrows():
             cn = str(row.get('カード名', '')).strip()
             rar = str(row.get('レアリティ', '')).strip()
             if not cn: continue
             key = f'{cur_base_no}|{cn}|{rar}'.lower()
             cm = _per.get(key)
-            entry = {'ri': ri, 'row': row, 'cn': cn, 'rar': rar, 'cm': cm}
+            entry = {'ri': ri, 'row': row, 'cn': cn, 'rar': rar, 'cm': cm, 'src_type': ''}
             if cm:
                 src_low = (cm.source or '').lower()
                 if 'confirmed_by_designer' in src_low:
                     confirmed_items.append(entry)
                 else:
+                    entry['src_type'] = 'per'
                     check_items.append(entry)
             else:
-                not_in_db_items.append(entry)
+                # カードマスタDB(name|rarity)で代替検索 → 仮採用扱い
+                master_key = f'{cn}|{rar}'.lower()
+                mcm = _master.get(master_key)
+                if mcm and mcm.snkrdunk_url.strip().startswith('http'):
+                    # CardMaster型を per と同じ形で扱う
+                    from types import SimpleNamespace
+                    entry['cm'] = SimpleNamespace(
+                        snkrdunk_url=mcm.snkrdunk_url,
+                        buy_price=mcm.buy_price,
+                        source=f'master_db | {mcm.source}',
+                    )
+                    entry['src_type'] = 'master'
+                    check_items.append(entry)
+                else:
+                    not_in_db_items.append(entry)
 
         with st.expander(
             f"✅ カード単位でチェック → 確定  (確認待ち {len(check_items)} / 確定済 {len(confirmed_items)} / DB登録なし {len(not_in_db_items)})",
@@ -1658,7 +1675,9 @@ with tab_template:
                 for e in check_items:
                     cm = e['cm']
                     src_low = (cm.source or '').lower()
-                    if 'clip' in src_low:
+                    if e.get('src_type') == 'master':
+                        label = "🟠 仮採用(カードマスタDB由来=同名同レアで自動マッチ)"
+                    elif 'clip' in src_low:
                         label = "🟡 仮採用(CLIP)"
                     elif 'review' in src_low:
                         label = "⏸ ワーカー要確認"
@@ -1852,15 +1871,15 @@ def _load_match_data():
     # 採用済みチェック用に商品別カードマスタDB読込
     clear_per_product_card_cache()
     per_db = load_per_product_card_index()
-    # 「ワーカー対応不要」扱いするキー:
-    # 1. 手動完了(旧 manual_ui/url, 新 confirmed_by_worker/designer)
-    # 2. 仮採用(provisional_clip) ← 設計時に最終確認されるためワーカー作業不要
+    # カードマスタDB(name+rarity)でURLあり→仮採用扱いにする(依頼者入力 or 過去取得)
+    from research import load_card_master_index
+    master_db = load_card_master_index()
+    master_with_url = {k for k, cm in master_db.items() if cm.snkrdunk_url.strip().startswith('http')}
+    # 「ワーカー対応不要」扱いするキー
     DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude', 'confirmed_by_worker', 'confirmed_by_designer', 'provisional_clip')
     manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in DONE_KW)}
-    # 要確認(=保留)キー
     REVIEW_KW = ('manual_review', 'provisional_review')
     review_keys = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in REVIEW_KW)}
-    # 仮採用キー(設計時確認予定) - 表示用に別フラグ
     PROV_KW = ('provisional_clip',)
     provisional_keys = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in PROV_KW)}
 
@@ -1944,6 +1963,17 @@ def _load_match_data():
                                 cands.append({'name': name_v, 'url': url_v, 'img_url': '', 'sim': sim_v})
                 review_flag = db_key in review_keys
                 prov_flag = db_key in provisional_keys
+                # カードマスタDB(name+rarity)にURLあれば「仮採用(マスタ由来)」扱い
+                _master_key = f'{card_name_v}|{rarity_v}'.lower()
+                master_url_flag = _master_key in master_with_url
+                if master_url_flag and not (db_done or review_flag or prov_flag):
+                    prov_flag = True
+                    # 採用方法表示用にカードマスタ情報をdb_url/db_priceに反映
+                    if not db_url and _master_key in master_db:
+                        _cm_m = master_db[_master_key]
+                        db_url = _cm_m.snkrdunk_url
+                        db_price = _cm_m.buy_price
+                        db_src = f'カードマスタDB由来(name|rarity) {_cm_m.source}'
                 items.append({
                     'no': _cell(r, 'No'),
                     'base_no': base_no_v,
