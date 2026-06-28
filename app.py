@@ -124,8 +124,21 @@ else:
         st.info("🔴 **本番モード中** - 操作は本番の在庫スプシに反映されます")
 
 
-# ---------- サイドバー: 参考競合 ----------
+# ---------- サイドバー: 作業者名 + 参考競合 ----------
 with st.sidebar:
+    st.header("👤 作業者")
+    worker_name = st.text_input(
+        "あなたの名前(報酬計算用)", value=st.session_state.get('_worker_name', ''),
+        key='_worker_name_input',
+        placeholder="例: 山田、ワーカーA",
+        help="カード照合や商品設計時の登録に作業者名が記録されます",
+    )
+    if worker_name.strip():
+        st.session_state['_worker_name'] = worker_name.strip()
+    if not st.session_state.get('_worker_name'):
+        st.warning("⚠️ 名前を入力してください")
+
+    st.markdown("---")
     st.header("① 参考競合を選ぶ")
     refs = cached_references()
     dopa_for_sidebar = []
@@ -1522,6 +1535,49 @@ with tab_template:
                              "実価値/枚(円)", "適用倍率", "表示PT/枚", "表示PT合計", "実価値合計", "除外"]
                 st.dataframe(df_calc[show_cols], use_container_width=True, hide_index=True)
 
+        # ---- カード確認(設計者がスニダンURLを最終チェック) ----
+        with st.expander("✅ カード単位で URL/価格をチェック → 確定 (販売前の最終確認)", expanded=False):
+            from research import load_per_product_card_index as _lppci, clear_per_product_card_cache as _cppc
+            from snkrdunk_client import fetch_recent_price as _frp
+            _cppc()
+            _per = _lppci()
+            cur_base_no = str(state.get('no', '')).strip()
+            st.caption("仮採用(provisional_clip)のカードは設計時に必ず確認して『✅確認OK』を押してください")
+            for ri, row in df_calc.iterrows():
+                cn = str(row.get('カード名', '')).strip()
+                rar = str(row.get('レアリティ', '')).strip()
+                if not cn: continue
+                key = f'{cur_base_no}|{cn}|{rar}'.lower()
+                cm = _per.get(key)
+                if not cm: continue
+                src_low = (cm.source or '').lower()
+                # 既に confirmed_by_designer ならスキップ表示
+                if 'confirmed_by_designer' in src_low:
+                    st.caption(f'✅ {row["賞"]} {cn} ({rar}) - 確定済')
+                    continue
+                # provisional または confirmed_by_worker → 確認ボタン表示
+                is_prov = 'provisional' in src_low
+                label = "仮採用(CLIP)" if 'clip' in src_low else ('要確認' if 'review' in src_low else '画像選定済')
+                ck_cols = st.columns([3, 2, 1, 1])
+                with ck_cols[0]:
+                    st.markdown(f"**{row['賞']} {cn}** ({rar}) - {label}")
+                with ck_cols[1]:
+                    if cm.snkrdunk_url:
+                        st.link_button("🔗 スニダンURL", cm.snkrdunk_url, use_container_width=True)
+                    else:
+                        st.caption("URLなし")
+                with ck_cols[2]:
+                    st.caption(f"¥{int(cm.buy_price):,}")
+                with ck_cols[3]:
+                    if st.button("✅確認OK", key=f"confirm_{cur_base_no}_{cn}_{rar}_{ri}",
+                                  disabled=not st.session_state.get('_worker_name')):
+                        _save_card_match(cur_base_no, cn, rar, str(row['賞']), int(row['本数']),
+                                         cm.snkrdunk_url, cm.buy_price,
+                                         f"設計時確認OK(元={label})",
+                                         status='confirmed_by_designer')
+                        st.success(f"✅ {cn} を確定登録しました")
+                        st.rerun()
+
         # ---- アクション ----
         st.markdown("---")
         act_cols = st.columns([1, 1, 1, 3])
@@ -1660,10 +1716,11 @@ def _load_match_data():
     clear_per_product_card_cache()
     per_db = load_per_product_card_index()
     # 手動「完了」と判定するキー(=未対応リストから除外する)
-    DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude')
+    # 旧タグ(manual_ui/manual_url/manual_exclude) + 新タグ(confirmed_by_worker/designer)
+    DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude', 'confirmed_by_worker', 'confirmed_by_designer')
     manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in DONE_KW)}
     # 要確認(=保留)キー: 別途リストで確認できる
-    REVIEW_KW = ('manual_review',)
+    REVIEW_KW = ('manual_review', 'provisional_review')
     review_keys = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in REVIEW_KW)}
 
     items = []
@@ -1795,15 +1852,17 @@ def extract_multiplier_and_base(card_name):
     return 1, card_name
 
 
-def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, source_note):
-    """商品別カードマスタに高速append (重複は読込時に最新優先で解決)
-    カード名に (NPACK) があれば multiplier 倍した価格で保存
+def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, source_note, status='confirmed_by_worker'):
+    """商品別カードマスタに高速append
+    status: confirmed_by_worker / confirmed_by_designer / provisional_review / provisional_clip
     """
     from research import open_research, clear_per_product_card_cache
     from datetime import datetime
+    import streamlit as _st
     multiplier, _ = extract_multiplier_and_base(card_name)
     final_price = int(price) * multiplier if price else 0
     note_suffix = f' ×{multiplier}={final_price}' if multiplier > 1 else ''
+    worker = _st.session_state.get('_worker_name', '不明')
     ss = open_research()
     try:
         ws_per = ss.worksheet('商品別カードマスタ')
@@ -1813,8 +1872,10 @@ def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, sour
                        'snkrdunk URL', '買取価格(円)', '価格取得元', 'スニダン商品名',
                        '採用方法', '更新日時']], 'A1', value_input_option='USER_ENTERED')
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # 採用方法に作業者名 + 状態タグを含める
+    full_status = f'{status} | {source_note}{note_suffix} | by:{worker}'
     row = [base_no, '', card_name, rarity, tier, qty, snk_url, final_price,
-           source_note + note_suffix, '', 'manual_ui', now]
+           source_note + note_suffix, '', full_status, now]
     ws_per.append_row(row, value_input_option='USER_ENTERED')
     clear_per_product_card_cache()
 
@@ -1878,6 +1939,51 @@ with tab_match:
     import re as _re_match
     st.subheader("🖼 商品別カード照合")
     st.caption("同名異版のカード(=シャワーズ マスボミラー151版 vs SV4a版 など)の正しいスニダンURLを選ぶ。採用後は商品別カードマスタDBに保存→ツール各所で自動反映。")
+
+    # 作業者別集計
+    with st.expander("📊 作業者別集計(報酬計算用)", expanded=False):
+        if st.button("🔄 集計を再計算", key="match_stats_reload"):
+            st.rerun()
+        try:
+            from research import open_research as _or_stats
+            ws_stats = _or_stats().worksheet('商品別カードマスタ')
+            stats_rows = ws_stats.get_all_records()
+            from collections import Counter
+            worker_confirmed = Counter()  # 1件1円対象
+            worker_review = Counter()      # 報酬対象外
+            for r in stats_rows:
+                src = str(r.get('採用方法', ''))
+                # by:XXX 抽出
+                m = _re_match.search(r'by:([^|]+?)(?:\||$)', src)
+                worker = m.group(1).strip() if m else '不明'
+                src_low = src.lower()
+                # 報酬対象 = confirmed_by_worker (要確認や provisional は対象外)
+                if 'confirmed_by_worker' in src_low:
+                    worker_confirmed[worker] += 1
+                elif 'provisional_review' in src_low or 'manual_review' in src_low:
+                    worker_review[worker] += 1
+                # 旧タグ manual_ui / manual_url(画像選定で確定したもの) も対象に含める
+                elif 'manual_ui' in src_low or 'manual_url' in src_low:
+                    worker_confirmed[worker] += 1
+            st.markdown("**✅ 確定登録(画像選定/手動URL) = 1件¥1報酬対象**")
+            if worker_confirmed:
+                import pandas as _pd_stats
+                df_stats = _pd_stats.DataFrame([
+                    {'作業者': w, '確定件数': n, '報酬(¥)': n}
+                    for w, n in worker_confirmed.most_common()
+                ])
+                st.dataframe(df_stats, use_container_width=True, hide_index=True)
+                st.metric("合計", f"{sum(worker_confirmed.values())}件 = ¥{sum(worker_confirmed.values()):,}")
+            else:
+                st.info("確定登録なし")
+            st.markdown("**⏸ 要確認(保留) = 報酬対象外**")
+            if worker_review:
+                st.dataframe(
+                    _pd_stats.DataFrame([{'作業者': w, '要確認件数': n} for w, n in worker_review.most_common()]),
+                    use_container_width=True, hide_index=True,
+                )
+        except Exception as e:
+            st.warning(f"集計取得失敗: {e}")
 
     # ローカル採用済みセット(スプシ反映を待たずに未対応リストから即座に除外)
     if '_match_done_local' not in st.session_state:
@@ -2108,18 +2214,20 @@ with tab_match:
                     st.caption(c['name'][:50])
                     btn_cols = st.columns([3, 1])
                     with btn_cols[0]:
-                        if st.button(f"✅ 候補{j+1}を採用", key=f"match_adopt_{j}_{item['no']}_{idx}", type="primary", use_container_width=True):
+                        if st.button(f"✅ 候補{j+1}を採用", key=f"match_adopt_{j}_{item['no']}_{idx}", type="primary", use_container_width=True,
+                                       disabled=not st.session_state.get('_worker_name')):
                             with st.spinner("価格取得+DB保存中..."):
                                 price, msg = _fetch_price_for_url(c['url'], item['card_name'], item['rarity'])
                                 _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                                  item['tier'], item['qty'], c['url'], price,
-                                                 f"manual_ui(候補{j+1} sim={c['sim']:.2f}) {msg[:20]}")
+                                                 f"候補{j+1} sim={c['sim']:.2f} {msg[:20]}",
+                                                 status='confirmed_by_worker')
                                 st.session_state['_match_done_local'].add(_item_key(item))
-                                # 同類グループに同じURLで一括採用 (×multiplier 自動計算)
                                 for g in same_base_group:
                                     _save_card_match(g['base_no'], g['card_name'], g['rarity'],
                                                      g['tier'], g['qty'], c['url'], price,
-                                                     f"manual_ui(同類グループ一括 sim={c['sim']:.2f})")
+                                                     f"同類一括 sim={c['sim']:.2f}",
+                                                     status='confirmed_by_worker')
                                     st.session_state['_match_done_local'].add(_item_key(g))
                             extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
                             st.success(f"候補{j+1}を採用 (パック単価¥{price:,}{extra})")
@@ -2143,8 +2251,8 @@ with tab_match:
                     placeholder="https://snkrdunk.com/apparels/..."
                 )
             with manual_cols[1]:
-                # disabled判定を外してEnter押下なしで使えるように
-                if st.button("📝 手動採用", key=f"match_manual_btn_{item['no']}_{idx}"):
+                if st.button("📝 手動採用", key=f"match_manual_btn_{item['no']}_{idx}",
+                              disabled=not st.session_state.get('_worker_name')):
                     # 押下時に session_state から最新値を取得
                     url = (st.session_state.get(manual_key, '') or '').strip()
                     if not url:
@@ -2170,12 +2278,14 @@ with tab_match:
                             with st.spinner("DB保存中..."):
                                 _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                                  item['tier'], item['qty'], url, price,
-                                                 f"manual_url {msg[:30]}")
+                                                 f"手動URL {msg[:30]}",
+                                                 status='confirmed_by_worker')
                                 st.session_state['_match_done_local'].add(_item_key(item))
                                 for g in same_base_group:
                                     _save_card_match(g['base_no'], g['card_name'], g['rarity'],
                                                      g['tier'], g['qty'], url, price,
-                                                     f"manual_url(同類グループ一括)")
+                                                     f"手動URL(同類一括)",
+                                                     status='confirmed_by_worker')
                                     st.session_state['_match_done_local'].add(_item_key(g))
                             extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
                             st.success(f"✅ 手動URLを採用 (パック単価¥{price:,}{extra})")
@@ -2184,9 +2294,12 @@ with tab_match:
                             st.rerun()
             with manual_cols[2]:
                 if st.button("⏸ 要確認", key=f"match_review_{item['no']}_{idx}", use_container_width=True,
-                              help="保留フラグ。後で「⏸要確認のみ」モードで一覧確認・対応"):
+                              help="保留フラグ。後で「⏸要確認のみ」モードで一覧確認・対応",
+                              disabled=not st.session_state.get('_worker_name')):
                     _save_card_match(item['base_no'], item['card_name'], item['rarity'],
-                                     item['tier'], item['qty'], '', 0, 'manual_review_later')
+                                     item['tier'], item['qty'], '', 0,
+                                     '要確認(後で対応)',
+                                     status='provisional_review')
                     st.success("⏸ 要確認として保留(後で一覧確認可能)")
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
                     st.rerun()
