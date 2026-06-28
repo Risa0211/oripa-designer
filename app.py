@@ -1038,6 +1038,22 @@ with tab_template:
                 _est_label += f" ｜📌 リライト設計: 平均上乗せ **{_am:.2f}x** / 目標利益率 **{rw_meta_state.get('profit_rate','?')}**"
             st.markdown(_est_label)
 
+        # 上乗せ率手動指定→自動配分(リライトメタなしでも使えるバージョン)
+        markup_row = st.columns([2, 1, 4])
+        with markup_row[0]:
+            manual_avg_markup = st.number_input(
+                "🎯 平均上乗せ倍率(例: 1.81)", min_value=1.0, max_value=5.0,
+                value=float(rw_meta_state.get('avg_markup') if rw_meta_state else 1.81),
+                step=0.05, key="tmpl_manual_markup",
+                help="この値をベースに各カードのtier別上乗せを自動配分(1等2.0/2等1.7/3等1.5 等の重み付け)"
+            )
+        with markup_row[1]:
+            apply_markup_btn = st.button("📊 上乗せ自動配分", key="tmpl_apply_markup",
+                                          type="primary", use_container_width=True,
+                                          help="現在の実価値とtier別重みで上乗せ倍率を自動計算→各カード行に反映")
+        with markup_row[2]:
+            st.caption("💡 全カードの実価値が入ったら → 平均上乗せ倍率を指定 → 「📊 上乗せ自動配分」で全カードの上乗せ倍率がtier別に自動入力されます")
+
         st.markdown("###### 細かい操作")
         action_row = st.columns([1, 1.2, 1, 1.4])
         with action_row[0]:
@@ -1057,6 +1073,42 @@ with tab_template:
                     key="tmpl_reapply_markup",
                     help="価格は触らず、現在の実価値ベースで上乗せ倍率だけ等別配分し直す",
                 )
+
+        # 上乗せ自動配分処理
+        if apply_markup_btn:
+            import re as _re_apm
+            from collections import defaultdict as _dd_apm
+            _TIER_WEIGHT = {'1等':1.6,'2等':1.3,'3等':1.0,'4等':0.8,'5等':0.7,'6等':0.7,'7等':0.7,'キリ番':1.0,'ラストワン':1.2}
+            _MAX_MARKUP = {'1等':3.5,'2等':2.8,'3等':2.2,'4等':1.8,'5等':1.5,'6等':1.5,'7等':1.5,'キリ番':2.2,'ラストワン':2.5}
+            _HAZURE = _re_apm.compile(r'(coin交換専用|coin\s*$|coin相当|ボーナス\s*$|交換専用|キャッシュバック|ガチャ券)')
+            _cost_by_tier = _dd_apm(float)
+            for _c in state["cards"]:
+                _nm = str(_c.get("カード名", "") or "")
+                if _HAZURE.search(_nm): continue
+                _cost_by_tier[_c.get("賞", "")] += float(_c.get("実価値/枚(円)", 0) or 0) * float(_c.get("本数", 0) or 0)
+            _total = sum(_cost_by_tier.values())
+            if _total <= 0:
+                st.error("実価値合計が0です。先にスニダン価格を取得してください")
+            else:
+                _target = _total * manual_avg_markup
+                _weighted = sum(_cost_by_tier[t] * _TIER_WEIGHT.get(t, 1.0) for t in _cost_by_tier)
+                _k = _target / _weighted if _weighted else 1
+                _tm = {}
+                for _t in _cost_by_tier:
+                    _m = max(_TIER_WEIGHT.get(_t, 1.0) * _k, 1.0)
+                    _tm[_t] = round(min(_m, _MAX_MARKUP.get(_t, 2.0)), 2)
+                _new_cards = []
+                for _c in state["cards"]:
+                    _nc = dict(_c)
+                    _nm = str(_nc.get("カード名", "") or "")
+                    if _HAZURE.search(_nm):
+                        _nc["上乗せ倍率"] = 0.0
+                    else:
+                        _nc["上乗せ倍率"] = _tm.get(_nc.get("賞", ""), round(manual_avg_markup, 2))
+                    _new_cards.append(_nc)
+                st.session_state["tmpl_state"]["cards"] = _new_cards
+                st.success("📊 上乗せ配分: " + " / ".join(f"{t} {m}x" for t, m in _tm.items()))
+                st.rerun()
 
         if reapply_markup_btn:
             import re as _re
@@ -1536,47 +1588,85 @@ with tab_template:
                 st.dataframe(df_calc[show_cols], use_container_width=True, hide_index=True)
 
         # ---- カード確認(設計者がスニダンURLを最終チェック) ----
-        with st.expander("✅ カード単位で URL/価格をチェック → 確定 (販売前の最終確認)", expanded=False):
-            from research import load_per_product_card_index as _lppci, clear_per_product_card_cache as _cppc
-            from snkrdunk_client import fetch_recent_price as _frp
-            _cppc()
-            _per = _lppci()
-            cur_base_no = str(state.get('no', '')).strip()
-            st.caption("仮採用(provisional_clip)のカードは設計時に必ず確認して『✅確認OK』を押してください")
-            for ri, row in df_calc.iterrows():
-                cn = str(row.get('カード名', '')).strip()
-                rar = str(row.get('レアリティ', '')).strip()
-                if not cn: continue
-                key = f'{cur_base_no}|{cn}|{rar}'.lower()
-                cm = _per.get(key)
-                if not cm: continue
+        from research import load_per_product_card_index as _lppci, clear_per_product_card_cache as _cppc
+        _cppc()
+        _per = _lppci()
+        cur_base_no = str(state.get('no', '')).strip()
+        # この商品のカードを per_db で分類
+        check_items = []  # 確認待ち(仮採用 or worker確定)
+        confirmed_items = []  # 設計者確定済
+        not_in_db_items = []  # DB登録なし
+        for ri, row in df_calc.iterrows():
+            cn = str(row.get('カード名', '')).strip()
+            rar = str(row.get('レアリティ', '')).strip()
+            if not cn: continue
+            key = f'{cur_base_no}|{cn}|{rar}'.lower()
+            cm = _per.get(key)
+            entry = {'ri': ri, 'row': row, 'cn': cn, 'rar': rar, 'cm': cm}
+            if cm:
                 src_low = (cm.source or '').lower()
-                # 既に confirmed_by_designer ならスキップ表示
                 if 'confirmed_by_designer' in src_low:
-                    st.caption(f'✅ {row["賞"]} {cn} ({rar}) - 確定済')
-                    continue
-                # provisional または confirmed_by_worker → 確認ボタン表示
-                is_prov = 'provisional' in src_low
-                label = "仮採用(CLIP)" if 'clip' in src_low else ('要確認' if 'review' in src_low else '画像選定済')
-                ck_cols = st.columns([3, 2, 1, 1])
-                with ck_cols[0]:
-                    st.markdown(f"**{row['賞']} {cn}** ({rar}) - {label}")
-                with ck_cols[1]:
-                    if cm.snkrdunk_url:
-                        st.link_button("🔗 スニダンURL", cm.snkrdunk_url, use_container_width=True)
+                    confirmed_items.append(entry)
+                else:
+                    check_items.append(entry)
+            else:
+                not_in_db_items.append(entry)
+
+        with st.expander(
+            f"✅ カード単位でチェック → 確定  (確認待ち {len(check_items)} / 確定済 {len(confirmed_items)} / DB登録なし {len(not_in_db_items)})",
+            expanded=(len(check_items) > 0),
+        ):
+            st.caption(
+                "🟡仮採用(CLIP)/画像選定済 = 設計時に必ず最終確認して「✅確認OK」を押して確定 / "
+                "✅確定済 = 設計者承認済 / "
+                "🔴DB登録なし = カード照合タブで未登録"
+            )
+            if check_items:
+                st.markdown(f"#### 🟡 確認待ち {len(check_items)}件")
+                for e in check_items:
+                    cm = e['cm']
+                    src_low = (cm.source or '').lower()
+                    if 'clip' in src_low:
+                        label = "🟡 仮採用(CLIP)"
+                    elif 'review' in src_low:
+                        label = "⏸ ワーカー要確認"
+                    elif 'confirmed_by_worker' in src_low or 'manual_ui' in src_low or 'manual_url' in src_low:
+                        label = "🟢 画像選定済"
                     else:
-                        st.caption("URLなし")
-                with ck_cols[2]:
-                    st.caption(f"¥{int(cm.buy_price):,}")
-                with ck_cols[3]:
-                    if st.button("✅確認OK", key=f"confirm_{cur_base_no}_{cn}_{rar}_{ri}",
-                                  disabled=not st.session_state.get('_worker_name')):
-                        _save_card_match(cur_base_no, cn, rar, str(row['賞']), int(row['本数']),
-                                         cm.snkrdunk_url, cm.buy_price,
-                                         f"設計時確認OK(元={label})",
-                                         status='confirmed_by_designer')
-                        st.success(f"✅ {cn} を確定登録しました")
-                        st.rerun()
+                        label = f"❓ {cm.source[:20]}"
+                    ck_cols = st.columns([3, 2, 1.2, 1.3])
+                    with ck_cols[0]:
+                        st.markdown(f"**{e['row']['賞']} {e['cn']}** ({e['rar']})")
+                        st.caption(label)
+                    with ck_cols[1]:
+                        if cm.snkrdunk_url:
+                            st.link_button("🔗 スニダンURL確認", cm.snkrdunk_url, use_container_width=True)
+                        else:
+                            st.caption("URLなし")
+                    with ck_cols[2]:
+                        st.caption(f"¥{int(cm.buy_price):,}")
+                    with ck_cols[3]:
+                        if st.button("✅確認OK", key=f"confirm_{cur_base_no}_{e['cn']}_{e['rar']}_{e['ri']}",
+                                      disabled=not st.session_state.get('_worker_name'),
+                                      use_container_width=True):
+                            _save_card_match(cur_base_no, e['cn'], e['rar'], str(e['row']['賞']), int(e['row']['本数']),
+                                             cm.snkrdunk_url, cm.buy_price,
+                                             f"設計時確認OK(元={label})",
+                                             status='confirmed_by_designer')
+                            st.success(f"✅ {e['cn']} を確定登録")
+                            st.rerun()
+            if confirmed_items:
+                st.markdown(f"#### ✅ 設計者確定済 {len(confirmed_items)}件")
+                for e in confirmed_items:
+                    cm = e['cm']
+                    st.caption(f"✅ {e['row']['賞']} {e['cn']} ({e['rar']}) - ¥{int(cm.buy_price):,}")
+            if not_in_db_items:
+                st.markdown(f"#### 🔴 商品別カードマスタDB未登録 {len(not_in_db_items)}件")
+                st.warning("以下のカードは商品別カードマスタDBに未登録です。カード照合タブで登録してください")
+                for e in not_in_db_items[:20]:
+                    st.caption(f"🔴 {e['row']['賞']} {e['cn']} ({e['rar']})")
+                if len(not_in_db_items) > 20:
+                    st.caption(f"... 他{len(not_in_db_items) - 20}件")
 
         # ---- アクション ----
         st.markdown("---")
