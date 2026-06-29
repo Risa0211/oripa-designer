@@ -104,18 +104,36 @@ _preset_cache = {"presets": None, "ts": None}
 
 
 def load_presets(force: bool = False) -> List[MarkupPreset]:
+    # キャッシュTTL 5分(クォータ対策)
     if not force and _preset_cache["presets"] is not None and _preset_cache["ts"]:
-        if (datetime.now() - _preset_cache["ts"]).total_seconds() < 30:
+        if (datetime.now() - _preset_cache["ts"]).total_seconds() < 300:
             return _preset_cache["presets"]
 
     import config
+    import time
     inv = open_inventory()
     try:
         ws = inv.worksheet(config.TAB_MARKUP_PRESETS)
     except Exception:
-        return []
+        # キャッシュがあれば返す、なければ空
+        return _preset_cache.get("presets") or []
 
-    values = ws.get_all_values()
+    # APIError(429クォータ等) リトライ
+    values = None
+    for attempt in range(3):
+        try:
+            values = ws.get_all_values()
+            break
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            # 3回失敗→キャッシュ返す
+            if _preset_cache.get("presets") is not None:
+                return _preset_cache["presets"]
+            return []
+    if values is None:
+        return _preset_cache.get("presets") or []
     if len(values) < 2:
         return []
     headers = values[0]
