@@ -2195,7 +2195,7 @@ with tab_match:
     st.subheader("🖼 商品別カード照合")
     st.caption("同名異版のカード(=シャワーズ マスボミラー151版 vs SV4a版 など)の正しいスニダンURLを選ぶ。採用後は商品別カードマスタDBに保存→ツール各所で自動反映。")
 
-    # 作業者別集計
+    # 作業者別集計 (同類グループ一括採用分は除外=ワーカーが実際に1枚ずつ選定した分のみカウント)
     with st.expander("📊 作業者別 作業件数", expanded=False):
         if st.button("🔄 集計を再計算", key="match_stats_reload"):
             st.rerun()
@@ -2204,30 +2204,48 @@ with tab_match:
             ws_stats = _or_stats().worksheet('商品別カードマスタ')
             stats_rows = ws_stats.get_all_records()
             from collections import Counter
-            worker_confirmed = Counter()
+            worker_confirmed = Counter()       # 実選定分(報酬対象)
+            worker_bulk = Counter()             # 同類一括分(参考表示・対象外)
             worker_review = Counter()
+            # 同類一括採用を示すキーワード(_save_card_match 呼出時の source_note)
+            BULK_KW = ('同類一括', '同類グループ一括')
             for r in stats_rows:
                 src = str(r.get('採用方法', ''))
                 m = _re_match.search(r'by:([^|]+?)(?:\||$)', src)
                 worker = m.group(1).strip() if m else '不明'
                 src_low = src.lower()
+                is_bulk = any(kw in src for kw in BULK_KW)
                 if 'confirmed_by_worker' in src_low:
-                    worker_confirmed[worker] += 1
+                    if is_bulk:
+                        worker_bulk[worker] += 1
+                    else:
+                        worker_confirmed[worker] += 1
                 elif 'provisional_review' in src_low or 'manual_review' in src_low:
                     worker_review[worker] += 1
                 elif 'manual_ui' in src_low or 'manual_url' in src_low:
-                    worker_confirmed[worker] += 1
-            st.markdown("**✅ 確定登録**")
+                    # 旧タグ(manual_ui/manual_url)の同類一括もチェック
+                    if is_bulk:
+                        worker_bulk[worker] += 1
+                    else:
+                        worker_confirmed[worker] += 1
+            st.markdown("**✅ 実選定分 (ワーカーが画像見て1枚ずつURL登録した件数)**")
             if worker_confirmed:
                 import pandas as _pd_stats
                 df_stats = _pd_stats.DataFrame([
-                    {'作業者': w, '確定件数': n}
+                    {'作業者': w, '実選定件数': n}
                     for w, n in worker_confirmed.most_common()
                 ])
                 st.dataframe(df_stats, use_container_width=True, hide_index=True)
                 st.metric("合計", f"{sum(worker_confirmed.values())}件")
             else:
-                st.info("確定登録なし")
+                st.info("実選定登録なし")
+            st.markdown("**📚 同類グループ一括採用分 (参考・カウント対象外)**")
+            if worker_bulk:
+                st.dataframe(
+                    _pd_stats.DataFrame([{'作業者': w, '一括採用件数': n} for w, n in worker_bulk.most_common()]),
+                    use_container_width=True, hide_index=True,
+                )
+                st.caption(f"※同類グループ機能で連動採用された分。実選定1件で N件処理されるため、上の『実選定分』のみカウント対象")
             st.markdown("**⏸ 要確認(保留)**")
             if worker_review:
                 st.dataframe(
