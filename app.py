@@ -2412,22 +2412,28 @@ with tab_match:
                             st.link_button("🔗 登録済URLを開く", item['db_url'], use_container_width=True)
                     st.caption("💡 修正するには下の候補から選び直し or 手動URL入力で上書きできます")
 
-            # 同類グループ検出 (同じ商品No + 同じベース名)
+            # 同類グループ検出: 同じベース名+レアリティ (商品横断)
+            # パック/BOX系は商品違いでも同じURLになるため横断検索
+            # シングルカードも同名同レアは多くの場合同じカード(シャワーズ問題は手動で除外)
+            _is_pack_or_box = bool(_re_match.search(r'(パック|PACK|BOX|ボックス|箱)', item['card_name']))
             same_base_group = [
                 x for x in all_items
-                if str(x['base_no']) == str(item['base_no']) and
-                   extract_multiplier_and_base(x['card_name'])[1] == cur_base and
+                if extract_multiplier_and_base(x['card_name'])[1] == cur_base and
                    x['rarity'] == item['rarity'] and
                    _item_key(x) != _item_key(item) and
                    not x.get('db_done') and
                    _item_key(x) not in st.session_state['_match_done_local']
             ]
             if same_base_group:
-                with st.expander(f"📚 同類グループ {len(same_base_group)}件: 数違いの同じカード(同じスニダンURLで一括採用可)", expanded=True):
-                    for g in same_base_group:
+                _group_label = "📚 同類グループ(商品横断)" if _is_pack_or_box else "📚 同類グループ"
+                _help_txt = "**全商品の同名カード**に同じURLが登録されます" if _is_pack_or_box else "**同類カード全て**に同じURLが登録されます"
+                with st.expander(f"{_group_label} {len(same_base_group)}件: 数違いの同じカード(同じスニダンURLで一括採用可)", expanded=True):
+                    for g in same_base_group[:30]:
                         gm, _ = extract_multiplier_and_base(g['card_name'])
-                        st.caption(f"  ↳ {g['card_name']} (×{gm}) / 賞:{g['tier']} / 数量:{g['qty']}")
-                    st.caption("→ 下の「候補N採用」or「手動URL採用」を押すと **この商品の同類カード全て** に同じURLが登録されます")
+                        st.caption(f"  ↳ 商品{g['base_no']} | {g['card_name']} (×{gm}) / 賞:{g['tier']}")
+                    if len(same_base_group) > 30:
+                        st.caption(f"  ... 他{len(same_base_group) - 30}件")
+                    st.caption(f"→ 下の「候補N採用」or「手動URL採用」を押すと {_help_txt}")
 
             # 画像並列表示 (画像URLは都度取得・キャッシュ済み)
             st.markdown("---")
