@@ -286,7 +286,13 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
     orig = card_name or ""
     wants_pack = bool(re.search(r'パック', orig)) and not _detect_box(orig)
     wants_box = _detect_box(orig)
-    wants_psa = "PSA" in (rarity or "").upper() or "PSA" in orig.upper()
+    # カード商品(=パック/BOX以外)は必ずPSA10鑑定品を選ぶ
+    # 明示的に "PSA" がカード名/レアにあるか、もしくはシングルカード(=パック/BOX以外)
+    wants_psa = (
+        "PSA" in (rarity or "").upper()
+        or "PSA" in orig.upper()
+        or not (wants_pack or wants_box)  # シングルカードは強制PSA10
+    )
     # 要求レア
     wanted_rarity = (rarity or "").strip().upper()
     # SR を含むレア(SR/SAR/CSR/CHR/SSR)の上位識別: SAR/CSR/CHR/SSR は単純な"SR"一致では区別不可
@@ -346,9 +352,14 @@ def search_apparel_id_by_keyword(card_name: str, rarity: str = "", max_candidate
             if nm_is_pack: score -= 30
             if nm_is_box: score -= 40
 
-        # PSA一致
-        if wants_psa and nm_is_psa: score += 30
-        if wants_psa and not nm_is_psa: score -= 10
+        # PSA一致 (シングルカードはPSA10強制 → 非PSA10は大幅減点)
+        if wants_psa and nm_is_psa: score += 100
+        if wants_psa and not nm_is_psa:
+            # シングル想定で非PSAは事実上選ばれないようにする
+            if not (wants_pack or wants_box):
+                score -= 200
+            else:
+                score -= 10
 
         # レア完全一致を最重要視
         rarity_ok = _rarity_match(nm_upper, wanted_rarity)
