@@ -38,7 +38,28 @@ def get_client() -> gspread.Client:
             "認証情報が見つかりません。credentials.json を配置するか、"
             "Streamlit Secretsに gcp_service_account を設定してください。"
         )
-    return gspread.authorize(creds)
+    client = gspread.authorize(creds)
+    # 全HTTPリクエストに自動リトライを仕込む(429クォータ/500/502/503/504 対応)
+    try:
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        retry = Retry(
+            total=5,
+            backoff_factor=2,  # 2,4,8,16,32秒
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=frozenset(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']),
+            respect_retry_after_header=True,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        # gspread の内部session(=AuthorizedSession)に適用
+        sess = getattr(client, 'http_client', None) or getattr(client, 'session', None)
+        if sess and hasattr(sess, 'session'):
+            sess.session.mount('https://', adapter)
+        elif hasattr(client, 'session'):
+            client.session.mount('https://', adapter)
+    except Exception:
+        pass
+    return client
 
 
 def open_inventory() -> gspread.Spreadsheet:
