@@ -2476,8 +2476,10 @@ with tab_match:
                     st.caption(c['name'][:50])
                     btn_cols = st.columns([3, 1])
                     with btn_cols[0]:
-                        if st.button(f"✅ 候補{j+1}を採用", key=f"match_adopt_{j}_{item['no']}_{idx}", type="primary", use_container_width=True,
-                                       disabled=not st.session_state.get('_worker_name')):
+                        if st.button(f"✅ 候補{j+1}を採用", key=f"match_adopt_{j}_{item['no']}_{idx}", type="primary", use_container_width=True):
+                            if not st.session_state.get('_worker_name'):
+                                st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
+                                st.stop()
                             with st.spinner("価格取得+DB保存中..."):
                                 price, msg = _fetch_price_for_url(c['url'], item['card_name'], item['rarity'])
                                 _save_card_match(item['base_no'], item['card_name'], item['rarity'],
@@ -2513,8 +2515,10 @@ with tab_match:
                     placeholder="https://snkrdunk.com/apparels/..."
                 )
             with manual_cols[1]:
-                if st.button("📝 手動採用", key=f"match_manual_btn_{item['no']}_{idx}",
-                              disabled=not st.session_state.get('_worker_name')):
+                if st.button("📝 手動採用", key=f"match_manual_btn_{item['no']}_{idx}"):
+                    if not st.session_state.get('_worker_name'):
+                        st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
+                        st.stop()
                     # 押下時に session_state から最新値を取得
                     url = (st.session_state.get(manual_key, '') or '').strip()
                     if not url:
@@ -2556,8 +2560,10 @@ with tab_match:
                             st.rerun()
             with manual_cols[2]:
                 if st.button("⏸ 要確認", key=f"match_review_{item['no']}_{idx}", use_container_width=True,
-                              help="保留フラグ。後で「⏸要確認のみ」モードで一覧確認・対応",
-                              disabled=not st.session_state.get('_worker_name')):
+                              help="保留フラグ。後で「⏸要確認のみ」モードで一覧確認・対応"):
+                    if not st.session_state.get('_worker_name'):
+                        st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
+                        st.stop()
                     _save_card_match(item['base_no'], item['card_name'], item['rarity'],
                                      item['tier'], item['qty'], '', 0,
                                      '要確認(後で対応)',
