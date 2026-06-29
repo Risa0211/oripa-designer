@@ -165,24 +165,41 @@ def _get_tc_image(base_url, card_name, rarity):
 
 
 # パック数/枚数/個数 multiplier 検出
+# 括弧の有無問わず「N PACK」「NPACK」「N枚」「N個」「Nセット」「NBOX」を検出
 import re as _re_mult
 MULTIPLIER_PATTERN = _re_mult.compile(
-    r'[(（]\s*(\d+)\s*(PACK|パック|枚|個|セット|SET|set)\s*[)）]',
+    r'[(（]?\s*(\d+)\s*(PACK|パック|枚|個|セット|SET|set|BOX|ボックス|箱)\s*[)）]?',
     _re_mult.IGNORECASE,
 )
 
 
+_UNIT_NORM = {
+    'パック': 'pack', 'pack': 'pack',
+    'ボックス': 'box', 'box': 'box', '箱': 'box',
+    'セット': 'set', 'set': 'set',
+    '枚': 'mai', '個': 'ko',
+}
+
+
 def extract_multiplier_and_base(card_name):
-    """カード名から (3PACK) などを検出して multiplier とベース名を返す"""
+    """カード名から数量を抽出。ベース名は正規化済(空白/括弧/日英差を吸収)
+    例:
+      'ブラックボルト(2PACK)'   → (2, 'ブラックボルトpack')
+      'ブラックボルト 3パック'    → (3, 'ブラックボルトpack')
+      'ブラックボルト2PACK'     → (2, 'ブラックボルトpack')
+      '通常カード'             → (1, '通常カード')
+    """
     if not card_name:
         return 1, card_name
     m = MULTIPLIER_PATTERN.search(card_name)
     if m:
         mult = int(m.group(1))
-        unit = m.group(2)
-        base = MULTIPLIER_PATTERN.sub(f'({unit})', card_name)
-        return mult, base
-    return 1, card_name
+        unit = m.group(2).lower()
+        unit_norm = _UNIT_NORM.get(unit, unit)
+        base = card_name[:m.start()] + unit_norm + card_name[m.end():]
+        base_norm = _re_mult.sub(r'[\s()()（）\[\]【】]+', '', base).lower()
+        return mult, base_norm
+    return 1, _re_mult.sub(r'[\s]+', '', card_name).lower()
 
 
 def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, source_note, status='confirmed_by_worker'):
