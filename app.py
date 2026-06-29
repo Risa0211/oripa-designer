@@ -164,6 +164,68 @@ def _get_tc_image(base_url, card_name, rarity):
     return ''
 
 
+# パック数/枚数/個数 multiplier 検出
+import re as _re_mult
+MULTIPLIER_PATTERN = _re_mult.compile(
+    r'[(（]\s*(\d+)\s*(PACK|パック|枚|個|セット|SET|set)\s*[)）]',
+    _re_mult.IGNORECASE,
+)
+
+
+def extract_multiplier_and_base(card_name):
+    """カード名から (3PACK) などを検出して multiplier とベース名を返す"""
+    if not card_name:
+        return 1, card_name
+    m = MULTIPLIER_PATTERN.search(card_name)
+    if m:
+        mult = int(m.group(1))
+        unit = m.group(2)
+        base = MULTIPLIER_PATTERN.sub(f'({unit})', card_name)
+        return mult, base
+    return 1, card_name
+
+
+def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, source_note, status='confirmed_by_worker'):
+    """商品別カードマスタに高速append
+    status: confirmed_by_worker / confirmed_by_designer / provisional_review / provisional_clip
+    """
+    from research import open_research, clear_per_product_card_cache
+    from datetime import datetime
+    multiplier, _ = extract_multiplier_and_base(card_name)
+    final_price = int(price) * multiplier if price else 0
+    note_suffix = f' ×{multiplier}={final_price}' if multiplier > 1 else ''
+    worker = st.session_state.get('_worker_name', '不明')
+    ss = open_research()
+    try:
+        ws_per = ss.worksheet('商品別カードマスタ')
+    except Exception:
+        ws_per = ss.add_worksheet(title='商品別カードマスタ', rows=10000, cols=15)
+        ws_per.update([['商品No', 'リライトNo', 'カード名', 'レアリティ', '賞', '数量',
+                       'snkrdunk URL', '買取価格(円)', '価格取得元', 'スニダン商品名',
+                       '採用方法', '更新日時']], 'A1', value_input_option='USER_ENTERED')
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    full_status = f'{status} | {source_note}{note_suffix} | by:{worker}'
+    row = [base_no, '', card_name, rarity, tier, qty, snk_url, final_price,
+           source_note + note_suffix, '', full_status, now]
+    ws_per.append_row(row, value_input_option='USER_ENTERED')
+    clear_per_product_card_cache()
+
+
+def _fetch_price_for_url(snk_url, card_name, rarity):
+    """指定URLから価格取得"""
+    import re as _re_fetch
+    from snkrdunk_client import fetch_recent_price, fetch_apparel_meta
+    meta = fetch_apparel_meta(snk_url.rsplit("/", 1)[-1]) if "/apparels/" in snk_url else None
+    target_name = (meta.get("name") or "") if meta else ""
+    is_pack = bool(_re_fetch.search(r'(パック|BOX|ボックス|箱)', target_name + card_name))
+    grade = "PSA10" if "PSA" in (target_name + rarity).upper() else ""
+    try:
+        price, msg = fetch_recent_price(snk_url, grade, is_pack=is_pack)
+        return price or 0, msg
+    except Exception as ex:
+        return 0, f'ERR:{str(ex)[:50]}'
+
+
 # ---------- サイドバー: 作業者名 + 参考競合 ----------
 with st.sidebar:
     st.header("👤 作業者")
@@ -2109,75 +2171,6 @@ def _load_match_data():
     except Exception as e:
         st.warning(f'照合タブ読込失敗: {e}')
     return items
-
-
-# パック数/枚数/個数 multiplier 検出
-import re as _re_mult
-MULTIPLIER_PATTERN = _re_mult.compile(
-    r'[(（]\s*(\d+)\s*(PACK|パック|枚|個|セット|SET|set)\s*[)）]',
-    _re_mult.IGNORECASE,
-)
-
-
-def extract_multiplier_and_base(card_name):
-    """カード名から (3PACK) などを検出して multiplier とベース名を返す
-    例: 'ブラックボルト(3PACK)' → (3, 'ブラックボルト(PACK)')
-        'シャワーズ(5枚)'      → (5, 'シャワーズ(枚)')
-        '通常カード'           → (1, '通常カード')
-    """
-    if not card_name:
-        return 1, card_name
-    m = MULTIPLIER_PATTERN.search(card_name)
-    if m:
-        mult = int(m.group(1))
-        unit = m.group(2)
-        # 数字部分を除去して単位だけ残す
-        base = MULTIPLIER_PATTERN.sub(f'({unit})', card_name)
-        return mult, base
-    return 1, card_name
-
-
-def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, source_note, status='confirmed_by_worker'):
-    """商品別カードマスタに高速append
-    status: confirmed_by_worker / confirmed_by_designer / provisional_review / provisional_clip
-    """
-    from research import open_research, clear_per_product_card_cache
-    from datetime import datetime
-    import streamlit as _st
-    multiplier, _ = extract_multiplier_and_base(card_name)
-    final_price = int(price) * multiplier if price else 0
-    note_suffix = f' ×{multiplier}={final_price}' if multiplier > 1 else ''
-    worker = _st.session_state.get('_worker_name', '不明')
-    ss = open_research()
-    try:
-        ws_per = ss.worksheet('商品別カードマスタ')
-    except Exception:
-        ws_per = ss.add_worksheet(title='商品別カードマスタ', rows=10000, cols=15)
-        ws_per.update([['商品No', 'リライトNo', 'カード名', 'レアリティ', '賞', '数量',
-                       'snkrdunk URL', '買取価格(円)', '価格取得元', 'スニダン商品名',
-                       '採用方法', '更新日時']], 'A1', value_input_option='USER_ENTERED')
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    # 採用方法に作業者名 + 状態タグを含める
-    full_status = f'{status} | {source_note}{note_suffix} | by:{worker}'
-    row = [base_no, '', card_name, rarity, tier, qty, snk_url, final_price,
-           source_note + note_suffix, '', full_status, now]
-    ws_per.append_row(row, value_input_option='USER_ENTERED')
-    clear_per_product_card_cache()
-
-
-def _fetch_price_for_url(snk_url, card_name, rarity):
-    """指定URLから価格取得"""
-    import re as _re_fetch
-    from snkrdunk_client import fetch_recent_price, fetch_apparel_meta
-    meta = fetch_apparel_meta(snk_url.rsplit("/", 1)[-1]) if "/apparels/" in snk_url else None
-    target_name = (meta.get("name") or "") if meta else ""
-    is_pack = bool(_re_fetch.search(r'(パック|BOX|ボックス|箱)', target_name + card_name))
-    grade = "PSA10" if "PSA" in (target_name + rarity).upper() else ""
-    try:
-        price, msg = fetch_recent_price(snk_url, grade, is_pack=is_pack)
-        return price or 0, msg
-    except Exception as ex:
-        return 0, f'ERR:{str(ex)[:50]}'
 
 
 with tab_match:
