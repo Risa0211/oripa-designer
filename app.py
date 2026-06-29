@@ -1712,11 +1712,40 @@ with tab_template:
             if check_items:
                 st.markdown(f"#### 🟡 確認待ち {len(check_items)}件")
                 _tmpl_url = state.get('url', '')
+                # 確認済みローカルキャッシュ (rerun削減用)
+                if '_design_confirmed_local' not in st.session_state:
+                    st.session_state['_design_confirmed_local'] = set()
+                _done_local = st.session_state['_design_confirmed_local']
+                # 一括採用ボタン: ローカル確認待ちを全部一気に確定
+                if st.button(f"⚡ 全{len(check_items)}件を一括で✅確定", key=f"bulk_confirm_{cur_base_no}",
+                              help="表示中のカードすべてを設計時確定として登録(=スニダンURL確認済の前提)"):
+                    if not st.session_state.get('_worker_name'):
+                        st.session_state['_worker_name'] = '設計者'
+                    _ok_cnt = 0
+                    _err_cnt = 0
+                    with st.spinner(f"{len(check_items)}件を一括登録中..."):
+                        for e in check_items:
+                            try:
+                                cm = e['cm']
+                                _save_card_match(cur_base_no, e['cn'], e['rar'], str(e['row']['賞']),
+                                                 int(e['row']['本数']), cm.snkrdunk_url, cm.buy_price,
+                                                 '一括確定', status='confirmed_by_designer')
+                                _done_local.add(f"{cur_base_no}|{e['cn']}|{e['rar']}".lower())
+                                _ok_cnt += 1
+                            except Exception as ex:
+                                _err_cnt += 1
+                    st.success(f"✅ {_ok_cnt}件確定 / エラー{_err_cnt}件")
+                    st.rerun()
+
                 for e in check_items:
+                    e_local_key = f"{cur_base_no}|{e['cn']}|{e['rar']}".lower()
+                    if e_local_key in _done_local:
+                        st.caption(f"✅ {e['row']['賞']} {e['cn']} ({e['rar']}) - 確定済(今セッション)")
+                        continue
                     cm = e['cm']
                     src_low = (cm.source or '').lower()
                     if e.get('src_type') == 'master':
-                        label = "🟠 仮採用(カードマスタDB由来=同名同レアで自動マッチ)"
+                        label = "🟠 仮採用(在庫スプシ/マスタDB由来)"
                     elif 'clip' in src_low:
                         label = "🟡 仮採用(CLIP)"
                     elif 'review' in src_low:
@@ -1725,42 +1754,64 @@ with tab_template:
                         label = "🟢 画像選定済"
                     else:
                         label = f"❓ {cm.source[:20]}"
-                    # トレカセンター画像取得
+                    # トレカセンター画像取得 (キャッシュ済)
                     tc_img = _get_tc_image(_tmpl_url, e['cn'], e['rar']) if _tmpl_url else ''
-                    ck_cols = st.columns([0.8, 2.2, 1.8, 2, 1, 1.2])
+                    ck_cols = st.columns([0.8, 2.2, 1.6, 1.6, 0.8, 1, 1])
                     with ck_cols[0]:
                         if tc_img:
                             st.image(tc_img, width=80)
-                        else:
-                            st.caption("画像なし")
                     with ck_cols[1]:
                         st.markdown(f"**{e['row']['賞']} {e['cn']}**")
                         st.caption(f"{e['rar']} ｜ {label}")
                     with ck_cols[2]:
                         if _tmpl_url:
-                            st.link_button("🎴 競合商品ページ", _tmpl_url, use_container_width=True)
-                        else:
-                            st.caption("商品URLなし")
+                            st.link_button("🎴 競合", _tmpl_url, use_container_width=True)
                     with ck_cols[3]:
                         if cm.snkrdunk_url:
-                            st.link_button("🔗 スニダンURL", cm.snkrdunk_url, use_container_width=True)
+                            st.link_button("🔗 スニダン", cm.snkrdunk_url, use_container_width=True)
                         else:
                             st.caption("URLなし")
                     with ck_cols[4]:
-                        st.markdown(f"**¥{int(cm.buy_price):,}**")
+                        st.caption(f"¥{int(cm.buy_price):,}")
                     with ck_cols[5]:
-                        # 作業者名なくても押せるように(未入力なら「設計者」記録)
                         if st.button("✅確認OK", key=f"confirm_{cur_base_no}_{e['cn']}_{e['rar']}_{e['ri']}",
                                       use_container_width=True, type="primary"):
                             if not st.session_state.get('_worker_name'):
                                 st.session_state['_worker_name'] = '設計者'
-                            _save_card_match(cur_base_no, e['cn'], e['rar'], str(e['row']['賞']), int(e['row']['本数']),
-                                             cm.snkrdunk_url, cm.buy_price,
-                                             f"設計時確認OK(元={label})",
-                                             status='confirmed_by_designer')
-                            st.success(f"✅ {e['cn']} を確定登録")
-                            st.rerun()
-                    st.divider()
+                            try:
+                                _save_card_match(cur_base_no, e['cn'], e['rar'], str(e['row']['賞']),
+                                                 int(e['row']['本数']), cm.snkrdunk_url, cm.buy_price,
+                                                 f"設計時確認OK", status='confirmed_by_designer')
+                                _done_local.add(e_local_key)
+                                st.toast(f"✅ {e['cn']} 確定", icon="✅")
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"保存失敗: {str(ex)[:80]}")
+                    with ck_cols[6]:
+                        # 修正用URLポップオーバー
+                        with st.popover("✏️ URL修正", use_container_width=True):
+                            new_url = st.text_input("新スニダンURL", key=f"fix_url_{cur_base_no}_{e['ri']}",
+                                                     placeholder="https://snkrdunk.com/apparels/...")
+                            if st.button("💾 修正して確定", key=f"fix_btn_{cur_base_no}_{e['ri']}", type="primary"):
+                                url = new_url.strip()
+                                if not url.startswith('http'):
+                                    st.warning("URLを正しく入力してください")
+                                else:
+                                    if not st.session_state.get('_worker_name'):
+                                        st.session_state['_worker_name'] = '設計者'
+                                    try:
+                                        price, msg = _fetch_price_for_url(url, e['cn'], e['rar'])
+                                        if price <= 0:
+                                            st.error(f"価格0で取得失敗 ({msg[:50]})。URL再確認してください")
+                                        else:
+                                            _save_card_match(cur_base_no, e['cn'], e['rar'], str(e['row']['賞']),
+                                                             int(e['row']['本数']), url, price,
+                                                             f"設計時修正", status='confirmed_by_designer')
+                                            _done_local.add(e_local_key)
+                                            st.success(f"修正確定 ¥{price:,}")
+                                            st.rerun()
+                                    except Exception as ex:
+                                        st.error(f"エラー: {str(ex)[:80]}")
             if confirmed_items:
                 st.markdown(f"#### ✅ 設計者確定済 {len(confirmed_items)}件")
                 for e in confirmed_items:
