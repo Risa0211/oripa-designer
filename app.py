@@ -2618,50 +2618,51 @@ with tab_match:
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
                     st.rerun()
 
-            # カード名/レアリティ修正 (st.form で rerun を抑制してフォーム入力を保持)
+            # カード名/レアリティ修正 (モーダルで安定表示)
             st.markdown("---")
-            with st.expander("✏️ カード名/レアリティ修正 (例: SAR→CSR / カード名誤り)", expanded=False):
-                with st.form(key=f"fix_match_form_{item['no']}_{idx}", clear_on_submit=False):
-                    st.caption(f"現在: {item['card_name']} ({item['rarity']})")
-                    fix_cols = st.columns([2, 1.5, 3])
-                    with fix_cols[0]:
-                        fix_name = st.text_input("カード名", value=item['card_name'])
-                    with fix_cols[1]:
-                        fix_rar = st.text_input("レアリティ", value=item['rarity'],
-                                                 help="例: SAR/CSR/CHR/SR/SSR/HR/UR/PROMO")
-                    with fix_cols[2]:
-                        fix_url = st.text_input("スニダンURL",
-                                                 placeholder="https://snkrdunk.com/apparels/...")
-                    submitted = st.form_submit_button("💾 修正して確定", type="primary",
-                                                       use_container_width=True)
-                    if submitted:
-                        if not st.session_state.get('_worker_name'):
-                            st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
-                            st.stop()
-                        url = (fix_url or '').strip()
-                        if not url.startswith('http'):
-                            st.warning("URLを正しく入力してください (https://snkrdunk.com/apparels/...)")
-                        else:
-                            f_name = (fix_name or item['card_name']).strip()
-                            f_rar = (fix_rar or item['rarity']).strip()
-                            try:
-                                price, msg = _fetch_price_for_url(url, f_name, f_rar)
-                                if price <= 0:
-                                    st.error(f"価格0で取得失敗 ({msg[:50]})。URL再確認してください")
-                                else:
-                                    _save_card_match(item['base_no'], f_name, f_rar,
-                                                     item['tier'], item['qty'], url, price,
-                                                     f"カード名/レア修正",
-                                                     status='confirmed_by_worker')
-                                    st.session_state['_match_done_local'].add(_item_key(item))
-                                    note = ""
-                                    if f_name != item['card_name']: note += f" / 名:{item['card_name']}→{f_name}"
-                                    if f_rar != item['rarity']: note += f" / レア:{item['rarity']}→{f_rar}"
-                                    st.success(f"✅ 修正確定 ¥{price:,}{note}")
-                                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
-                                    st.rerun()
-                            except Exception as ex:
-                                st.error(f"エラー: {str(ex)[:80]}")
+
+            @st.dialog("✏️ カード名/レアリティ/URL 修正")
+            def _edit_card_modal():
+                st.caption(f"現在: **{item['card_name']}** ({item['rarity']})")
+                with st.form(key=f"fix_modal_form_{item['no']}_{idx}", clear_on_submit=False):
+                    fix_name = st.text_input("カード名", value=item['card_name'])
+                    fix_rar = st.text_input("レアリティ", value=item['rarity'],
+                                             help="例: SAR/CSR/CHR/SR/SSR/HR/UR/PROMO")
+                    fix_url = st.text_input("スニダンURL",
+                                             placeholder="https://snkrdunk.com/apparels/...")
+                    submitted = st.form_submit_button("💾 修正して確定", type="primary", use_container_width=True)
+                if submitted:
+                    if not st.session_state.get('_worker_name'):
+                        st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
+                        return
+                    url = (fix_url or '').strip()
+                    if not url.startswith('http'):
+                        st.warning("URLを正しく入力してください")
+                        return
+                    f_name = (fix_name or item['card_name']).strip()
+                    f_rar = (fix_rar or item['rarity']).strip()
+                    try:
+                        price, msg = _fetch_price_for_url(url, f_name, f_rar)
+                        if price <= 0:
+                            st.error(f"価格0で取得失敗 ({msg[:50]})。URL再確認してください")
+                            return
+                        _save_card_match(item['base_no'], f_name, f_rar,
+                                         item['tier'], item['qty'], url, price,
+                                         f"カード名/レア修正",
+                                         status='confirmed_by_worker')
+                        st.session_state['_match_done_local'].add(_item_key(item))
+                        note = ""
+                        if f_name != item['card_name']: note += f" / 名:{item['card_name']}→{f_name}"
+                        if f_rar != item['rarity']: note += f" / レア:{item['rarity']}→{f_rar}"
+                        st.success(f"✅ 修正確定 ¥{price:,}{note}")
+                        st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"エラー: {str(ex)[:80]}")
+
+            if st.button("✏️ カード名/レアリティ/URL 修正", key=f"fix_open_{item['no']}_{idx}",
+                          help="カード名やレアリティの誤り、別URLで再採用するときに使う", use_container_width=True):
+                _edit_card_modal()
 
 
 # ---------- トレカセンター商品一覧タブ ----------
