@@ -2536,8 +2536,8 @@ with tab_match:
                                     st.session_state['_match_done_local'].add(_item_key(g))
                             extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
                             st.success(f"候補{j+1}を採用 (パック単価¥{price:,}{extra})")
-                            # 採用後 filteredが縮むので idx は維持 → 同じ位置に次の未対応が来る
-                            # 安全に min(idx, max_possible) でクランプ
+                            # キャッシュクリア(要確認等の状態を即反映)
+                            _load_match_data.clear()
                             st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
                             st.rerun()
                     with btn_cols[1]:
@@ -2597,6 +2597,7 @@ with tab_match:
                             extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
                             st.success(f"✅ 手動URLを採用 (パック単価¥{price:,}{extra})")
                             st.session_state.pop(manual_key, None)
+                            _load_match_data.clear()  # キャッシュクリアで状態即反映
                             st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
                             st.rerun()
             with manual_cols[2]:
@@ -2610,6 +2611,7 @@ with tab_match:
                                      '要確認(後で対応)',
                                      status='provisional_review')
                     st.success("⏸ 要確認として保留(後で一覧確認可能)")
+                    _load_match_data.clear()  # 即反映
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
                     st.rerun()
             with manual_cols[3]:
