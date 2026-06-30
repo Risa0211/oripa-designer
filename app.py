@@ -234,7 +234,7 @@ def _fetch_price_for_url(snk_url, card_name, rarity):
     from snkrdunk_client import fetch_recent_price, fetch_apparel_meta
     meta = fetch_apparel_meta(snk_url.rsplit("/", 1)[-1]) if "/apparels/" in snk_url else None
     target_name = (meta.get("name") or "") if meta else ""
-    is_pack = bool(_re_fetch.search(r'(パック|BOX|ボックス|箱)', target_name + card_name))
+    is_pack = bool(_re_fetch.search(r'(パック|PACK|BOX|ボックス|箱)', target_name + card_name))
     grade = "PSA10" if "PSA" in (target_name + rarity).upper() else ""
     try:
         price, msg = fetch_recent_price(snk_url, grade, is_pack=is_pack)
@@ -1430,7 +1430,7 @@ with tab_template:
                 # ステップ2: URL確定→最新価格取得
                 meta = fetch_apparel_meta(cur_url.rsplit("/", 1)[-1]) if "/apparels/" in cur_url else None
                 target_name = (meta.get("name") or "") if meta else ""
-                is_pack_target = bool(_re.search(r'(パック|BOX|ボックス|箱)', target_name + name))
+                is_pack_target = bool(_re.search(r'(パック|PACK|BOX|ボックス|箱)', target_name + name))
                 if "PSA" in (target_name + rarity).upper():
                     grade_hint = "PSA10"
                 else:
@@ -1577,7 +1577,7 @@ with tab_template:
                     # 商品名からPSA10/パック判別
                     target_name = (best.get("name") or "")
                     import re as _re
-                    is_pack_target = bool(_re.search(r'(パック|BOX|ボックス|箱)', target_name))
+                    is_pack_target = bool(_re.search(r'(パック|PACK|BOX|ボックス|箱)', target_name))
                     if "PSA" in target_name.upper() or "PSA" in rarity.upper():
                         grade_hint = "PSA10"
                     else:
@@ -1633,7 +1633,7 @@ with tab_template:
                     # URLからスニダン商品メタ取得しパック判定
                     meta = fetch_apparel_meta(url.rsplit("/", 1)[-1]) if "/apparels/" in url else None
                     target_name = (meta.get("name") or "") if meta else ""
-                    is_pack_target = bool(_re.search(r'(パック|BOX|ボックス|箱)', target_name + name))
+                    is_pack_target = bool(_re.search(r'(パック|PACK|BOX|ボックス|箱)', target_name + name))
                     if "PSA" in target_name.upper() or "PSA" in rarity.upper():
                         grade_hint = "PSA10"
                     else:

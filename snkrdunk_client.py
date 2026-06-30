@@ -179,12 +179,12 @@ def _detect_box(card_name: str) -> bool:
 
 def _detect_pack_request(card_name: str) -> bool:
     """カード名がパック/BOX商品を指しているか"""
-    return bool(re.search(r'(パック|BOX|箱|ボックス)', card_name or ""))
+    return bool(re.search(r'(パック|PACK|BOX|箱|ボックス)', card_name or "", re.IGNORECASE))
 
 
 def _detect_pack_in_meta(meta_name: str) -> bool:
     """スニダン商品名がパック/BOXか"""
-    return bool(re.search(r'(パック|BOX|箱|ボックス)', meta_name or ""))
+    return bool(re.search(r'(パック|PACK|BOX|箱|ボックス)', meta_name or "", re.IGNORECASE))
 
 
 def _search_snkrdunk_official(keyword: str, max_candidates: int = 10) -> list:
