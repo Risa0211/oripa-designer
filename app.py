@@ -2379,8 +2379,27 @@ with tab_match:
                 st.success(f"選択中: 商品{target['base_no']} {target['card_name']} ({target['rarity']}) 現¥{int(target.get('db_price') or 0):,}")
 
                 if mode_effective == "⏸ 要確認のみ":
-                    # 要確認モード=最終チェック者: リスト内でURL入力→即採用→消える
+                    # 要確認モード=最終チェック者: 画像確認+リスト内でURL入力→即採用→消える
                     st.caption("💡 最終チェック者用: URL入力 or そのまま承認で **即採用扱い** で要確認から消えます")
+                    # 画像 + 商品ページリンク
+                    img_cols = st.columns([1, 2, 2])
+                    with img_cols[0]:
+                        _t_img = _get_tc_image(target.get('base_url', ''), target['card_name'], target['rarity'])
+                        if _t_img:
+                            st.image(_t_img, width=160, caption="トレカ画像")
+                        else:
+                            st.caption("(競合画像なし)")
+                    with img_cols[1]:
+                        if target.get('base_url'):
+                            st.link_button("🎴 競合商品ページを開く", target['base_url'], use_container_width=True)
+                        if target.get('db_url'):
+                            st.link_button("🔗 現スニダンURLを開く", target['db_url'], use_container_width=True)
+                    with img_cols[2]:
+                        # 現スニダンURL画像も小さく表示(あれば)
+                        if target.get('db_url'):
+                            _s_img = _get_snk_image(target['db_url'])
+                            if _s_img:
+                                st.image(_s_img, width=160, caption="現スニダン画像")
                     with st.form(key="match_approve_form", clear_on_submit=False):
                         new_url = st.text_input(
                             "スニダンURL (修正する場合のみ入力。空ならDB現値そのまま採用)",
