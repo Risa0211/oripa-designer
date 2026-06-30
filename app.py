@@ -1867,8 +1867,13 @@ with tab_template:
                             except Exception as ex:
                                 st.error(f"保存失敗: {str(ex)[:80]}")
                     with ck_cols[6]:
-                        # 修正用URLポップオーバー
-                        with st.popover("✏️ URL修正", use_container_width=True):
+                        # 修正用ポップオーバー (URL + レアリティ + カード名)
+                        with st.popover("✏️ 修正", use_container_width=True):
+                            st.caption(f"現在: {e['cn']} ({e['rar']})")
+                            new_name = st.text_input("カード名 (誤りなら修正)", value=e['cn'],
+                                                      key=f"fix_name_{cur_base_no}_{e['ri']}")
+                            new_rarity = st.text_input("レアリティ (例: SAR/CSR/CHR/SR/SSR/HR/UR/PROMO等)",
+                                                        value=e['rar'], key=f"fix_rar_{cur_base_no}_{e['ri']}")
                             new_url = st.text_input("新スニダンURL", key=f"fix_url_{cur_base_no}_{e['ri']}",
                                                      placeholder="https://snkrdunk.com/apparels/...")
                             if st.button("💾 修正して確定", key=f"fix_btn_{cur_base_no}_{e['ri']}", type="primary"):
@@ -1878,16 +1883,22 @@ with tab_template:
                                 else:
                                     if not st.session_state.get('_worker_name'):
                                         st.session_state['_worker_name'] = '設計者'
+                                    final_name = (new_name or e['cn']).strip()
+                                    final_rar = (new_rarity or e['rar']).strip()
                                     try:
-                                        price, msg = _fetch_price_for_url(url, e['cn'], e['rar'])
+                                        price, msg = _fetch_price_for_url(url, final_name, final_rar)
                                         if price <= 0:
                                             st.error(f"価格0で取得失敗 ({msg[:50]})。URL再確認してください")
                                         else:
-                                            _save_card_match(cur_base_no, e['cn'], e['rar'], str(e['row']['賞']),
+                                            _save_card_match(cur_base_no, final_name, final_rar, str(e['row']['賞']),
                                                              int(e['row']['本数']), url, price,
-                                                             f"設計時修正", status='confirmed_by_designer')
+                                                             f"設計時修正(name/rar変更可)",
+                                                             status='confirmed_by_designer')
                                             _done_local.add(e_local_key)
-                                            st.success(f"修正確定 ¥{price:,}")
+                                            change_note = ""
+                                            if final_name != e['cn']: change_note += f" / カード名:{e['cn']}→{final_name}"
+                                            if final_rar != e['rar']: change_note += f" / レア:{e['rar']}→{final_rar}"
+                                            st.success(f"修正確定 ¥{price:,}{change_note}")
                                             st.rerun()
                                     except Exception as ex:
                                         st.error(f"エラー: {str(ex)[:80]}")
