@@ -2376,14 +2376,32 @@ with tab_match:
             sel_rows = (ev_match.selection or {}).get("rows", [])
             if sel_rows:
                 target = filtered[sel_rows[0]]
-                cc = st.columns([3, 1])
+                cc = st.columns([2, 1.5, 1.5, 1])
                 with cc[0]:
-                    st.success(f"選択中: 商品{target['base_no']} {target['card_name']} ({target['rarity']})")
+                    st.success(f"選択中: 商品{target['base_no']} {target['card_name']} ({target['rarity']}) ¥{int(target.get('db_price') or 0):,}")
                 with cc[1]:
-                    if st.button("📝 このカードを修正", type="primary", use_container_width=True, key="match_edit_btn"):
-                        # 全件モードでこのカードに飛ぶ(widget keyは触らず force_all フラグ使用)
+                    # 要確認モードのみ「✅そのまま承認」ボタン表示(最終チェック者用)
+                    if mode_effective == "⏸ 要確認のみ":
+                        if st.button("✅ そのまま承認(URL/価格そのまま採用)", type="primary",
+                                      use_container_width=True, key="match_approve_btn"):
+                            if not st.session_state.get('_worker_name'):
+                                st.session_state['_worker_name'] = '設計者'
+                            try:
+                                # 現在のURL/価格でそのまま採用
+                                _save_card_match(
+                                    target['base_no'], target['card_name'], target['rarity'],
+                                    target['tier'], target['qty'],
+                                    target.get('db_url') or '', int(target.get('db_price') or 0),
+                                    "要確認→承認", status='confirmed_by_worker',
+                                )
+                                _load_match_data.clear()
+                                st.success(f"✅ 承認しました: {target['card_name']}")
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"保存失敗: {str(ex)[:80]}")
+                with cc[2]:
+                    if st.button("📝 修正(画像見て選び直し)", use_container_width=True, key="match_edit_btn"):
                         st.session_state["_match_force_all"] = True
-                        # 全件モード時の対象itemのインデックスを正しく特定
                         all_idx = None
                         target_key = _item_key(target)
                         for i, x in enumerate(all_items):
@@ -2392,7 +2410,7 @@ with tab_match:
                                 break
                         st.session_state["_match_idx"] = all_idx if all_idx is not None else 0
                         st.rerun()
-            st.stop()  # ← 採用済リスト表示時は詳細画面を出さない
+            st.stop()
 
         if not filtered:
             st.info("該当なし")
