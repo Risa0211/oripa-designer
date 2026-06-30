@@ -1869,14 +1869,15 @@ with tab_template:
                     with ck_cols[6]:
                         # 修正用ポップオーバー (URL + レアリティ + カード名)
                         with st.popover("✏️ 修正", use_container_width=True):
-                            st.caption(f"現在: {e['cn']} ({e['rar']})")
-                            new_name = st.text_input("カード名 (誤りなら修正)", value=e['cn'],
-                                                      key=f"fix_name_{cur_base_no}_{e['ri']}")
-                            new_rarity = st.text_input("レアリティ (例: SAR/CSR/CHR/SR/SSR/HR/UR/PROMO等)",
-                                                        value=e['rar'], key=f"fix_rar_{cur_base_no}_{e['ri']}")
-                            new_url = st.text_input("新スニダンURL", key=f"fix_url_{cur_base_no}_{e['ri']}",
-                                                     placeholder="https://snkrdunk.com/apparels/...")
-                            if st.button("💾 修正して確定", key=f"fix_btn_{cur_base_no}_{e['ri']}", type="primary"):
+                            with st.form(key=f"fix_form_{cur_base_no}_{e['ri']}", clear_on_submit=False):
+                                st.caption(f"現在: {e['cn']} ({e['rar']})")
+                                new_name = st.text_input("カード名 (誤りなら修正)", value=e['cn'])
+                                new_rarity = st.text_input("レアリティ (例: SAR/CSR/CHR/SR/SSR/HR/UR/PROMO等)",
+                                                            value=e['rar'])
+                                new_url = st.text_input("新スニダンURL",
+                                                         placeholder="https://snkrdunk.com/apparels/...")
+                                _submitted_design = st.form_submit_button("💾 修正して確定", type="primary", use_container_width=True)
+                            if _submitted_design:
                                 url = new_url.strip()
                                 if not url.startswith('http'):
                                     st.warning("URLを正しく入力してください")
@@ -2617,29 +2618,29 @@ with tab_match:
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
                     st.rerun()
 
-            # カード名/レアリティが間違っている場合の修正
+            # カード名/レアリティ修正 (st.form で rerun を抑制してフォーム入力を保持)
             st.markdown("---")
             with st.expander("✏️ カード名/レアリティ修正 (例: SAR→CSR / カード名誤り)", expanded=False):
-                fix_cols = st.columns([2, 1.5, 3, 1])
-                with fix_cols[0]:
-                    fix_name = st.text_input("カード名", value=item['card_name'],
-                                              key=f"fix_match_name_{item['no']}_{idx}")
-                with fix_cols[1]:
-                    fix_rar = st.text_input("レアリティ", value=item['rarity'],
-                                             key=f"fix_match_rar_{item['no']}_{idx}",
-                                             help="例: SAR/CSR/CHR/SR/SSR/HR/UR/PROMO")
-                with fix_cols[2]:
-                    fix_url = st.text_input("スニダンURL", key=f"fix_match_url_{item['no']}_{idx}",
-                                             placeholder="https://snkrdunk.com/apparels/...")
-                with fix_cols[3]:
-                    st.write("")
-                    if st.button("💾修正確定", key=f"fix_match_btn_{item['no']}_{idx}", type="primary"):
+                with st.form(key=f"fix_match_form_{item['no']}_{idx}", clear_on_submit=False):
+                    st.caption(f"現在: {item['card_name']} ({item['rarity']})")
+                    fix_cols = st.columns([2, 1.5, 3])
+                    with fix_cols[0]:
+                        fix_name = st.text_input("カード名", value=item['card_name'])
+                    with fix_cols[1]:
+                        fix_rar = st.text_input("レアリティ", value=item['rarity'],
+                                                 help="例: SAR/CSR/CHR/SR/SSR/HR/UR/PROMO")
+                    with fix_cols[2]:
+                        fix_url = st.text_input("スニダンURL",
+                                                 placeholder="https://snkrdunk.com/apparels/...")
+                    submitted = st.form_submit_button("💾 修正して確定", type="primary",
+                                                       use_container_width=True)
+                    if submitted:
                         if not st.session_state.get('_worker_name'):
                             st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
                             st.stop()
                         url = (fix_url or '').strip()
                         if not url.startswith('http'):
-                            st.warning("URLを正しく入力してください")
+                            st.warning("URLを正しく入力してください (https://snkrdunk.com/apparels/...)")
                         else:
                             f_name = (fix_name or item['card_name']).strip()
                             f_rar = (fix_rar or item['rarity']).strip()
