@@ -2617,6 +2617,51 @@ with tab_match:
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
                     st.rerun()
 
+            # カード名/レアリティが間違っている場合の修正
+            st.markdown("---")
+            with st.expander("✏️ カード名/レアリティ修正 (例: SAR→CSR / カード名誤り)", expanded=False):
+                fix_cols = st.columns([2, 1.5, 3, 1])
+                with fix_cols[0]:
+                    fix_name = st.text_input("カード名", value=item['card_name'],
+                                              key=f"fix_match_name_{item['no']}_{idx}")
+                with fix_cols[1]:
+                    fix_rar = st.text_input("レアリティ", value=item['rarity'],
+                                             key=f"fix_match_rar_{item['no']}_{idx}",
+                                             help="例: SAR/CSR/CHR/SR/SSR/HR/UR/PROMO")
+                with fix_cols[2]:
+                    fix_url = st.text_input("スニダンURL", key=f"fix_match_url_{item['no']}_{idx}",
+                                             placeholder="https://snkrdunk.com/apparels/...")
+                with fix_cols[3]:
+                    st.write("")
+                    if st.button("💾修正確定", key=f"fix_match_btn_{item['no']}_{idx}", type="primary"):
+                        if not st.session_state.get('_worker_name'):
+                            st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
+                            st.stop()
+                        url = (fix_url or '').strip()
+                        if not url.startswith('http'):
+                            st.warning("URLを正しく入力してください")
+                        else:
+                            f_name = (fix_name or item['card_name']).strip()
+                            f_rar = (fix_rar or item['rarity']).strip()
+                            try:
+                                price, msg = _fetch_price_for_url(url, f_name, f_rar)
+                                if price <= 0:
+                                    st.error(f"価格0で取得失敗 ({msg[:50]})。URL再確認してください")
+                                else:
+                                    _save_card_match(item['base_no'], f_name, f_rar,
+                                                     item['tier'], item['qty'], url, price,
+                                                     f"カード名/レア修正",
+                                                     status='confirmed_by_worker')
+                                    st.session_state['_match_done_local'].add(_item_key(item))
+                                    note = ""
+                                    if f_name != item['card_name']: note += f" / 名:{item['card_name']}→{f_name}"
+                                    if f_rar != item['rarity']: note += f" / レア:{item['rarity']}→{f_rar}"
+                                    st.success(f"✅ 修正確定 ¥{price:,}{note}")
+                                    st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
+                                    st.rerun()
+                            except Exception as ex:
+                                st.error(f"エラー: {str(ex)[:80]}")
+
 
 # ---------- トレカセンター商品一覧タブ ----------
 with tab_torecacenter:
