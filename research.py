@@ -560,8 +560,9 @@ def load_per_product_card_index() -> dict:
     except Exception:
         return {}
     out = {}
-    # 重要: 手動採用(manual_ui/manual_url/manual_exclude)は CLIP自動より優先
-    MANUAL_KEYWORDS = ('manual_ui', 'manual_url', 'manual_exclude')
+    # 重要: 手動採用(旧 manual_ui/url/exclude + 新 confirmed_by_*)は CLIP自動より優先
+    MANUAL_KEYWORDS = ('manual_ui', 'manual_url', 'manual_exclude',
+                       'confirmed_by_worker', 'confirmed_by_designer')
     for r in rows:
         base_no = str(r.get("商品No", "")).strip()
         name = str(r.get("カード名", "")).strip()
