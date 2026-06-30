@@ -2618,51 +2618,13 @@ with tab_match:
                     st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
                     st.rerun()
 
-            # カード名/レアリティ修正 (モーダルで安定表示)
-            st.markdown("---")
-
-            @st.dialog("✏️ カード名/レアリティ/URL 修正")
-            def _edit_card_modal():
-                st.caption(f"現在: **{item['card_name']}** ({item['rarity']})")
-                with st.form(key=f"fix_modal_form_{item['no']}_{idx}", clear_on_submit=False):
-                    fix_name = st.text_input("カード名", value=item['card_name'])
-                    fix_rar = st.text_input("レアリティ", value=item['rarity'],
-                                             help="例: SAR/CSR/CHR/SR/SSR/HR/UR/PROMO")
-                    fix_url = st.text_input("スニダンURL",
-                                             placeholder="https://snkrdunk.com/apparels/...")
-                    submitted = st.form_submit_button("💾 修正して確定", type="primary", use_container_width=True)
-                if submitted:
-                    if not st.session_state.get('_worker_name'):
-                        st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
-                        return
-                    url = (fix_url or '').strip()
-                    if not url.startswith('http'):
-                        st.warning("URLを正しく入力してください")
-                        return
-                    f_name = (fix_name or item['card_name']).strip()
-                    f_rar = (fix_rar or item['rarity']).strip()
-                    try:
-                        price, msg = _fetch_price_for_url(url, f_name, f_rar)
-                        if price <= 0:
-                            st.error(f"価格0で取得失敗 ({msg[:50]})。URL再確認してください")
-                            return
-                        _save_card_match(item['base_no'], f_name, f_rar,
-                                         item['tier'], item['qty'], url, price,
-                                         f"カード名/レア修正",
-                                         status='confirmed_by_worker')
-                        st.session_state['_match_done_local'].add(_item_key(item))
-                        note = ""
-                        if f_name != item['card_name']: note += f" / 名:{item['card_name']}→{f_name}"
-                        if f_rar != item['rarity']: note += f" / レア:{item['rarity']}→{f_rar}"
-                        st.success(f"✅ 修正確定 ¥{price:,}{note}")
-                        st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
-                        st.rerun()
-                    except Exception as ex:
-                        st.error(f"エラー: {str(ex)[:80]}")
-
-            if st.button("✏️ カード名/レアリティ/URL 修正", key=f"fix_open_{item['no']}_{idx}",
-                          help="カード名やレアリティの誤り、別URLで再採用するときに使う", use_container_width=True):
-                _edit_card_modal()
+            # カード名/レアリティに誤りがある場合は管理者に連絡してDB側で直接修正
+            # (ツール側からの修正はStreamlit制約で安定しないため非対応)
+            st.caption(
+                "📝 カード名やレアリティに誤りがある場合は管理者に連絡してください "
+                "(例: 「商品1481 スターミーV のレアは SAR ではなく CSR」)。"
+                "スニダンURLの修正は上の「📝 手動採用」(現状のカード名/レアリティのまま)で再採用してください"
+            )
 
 
 # ---------- トレカセンター商品一覧タブ ----------
