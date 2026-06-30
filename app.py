@@ -2283,8 +2283,8 @@ with tab_match:
 
     btn_cols = st.columns([2, 2, 6])
     with btn_cols[0]:
-        if st.button("🔄 データ完全再読込", key="match_reload",
-                      help="スプシから読み直し+ローカル採用記録もリセット"):
+        if st.button("🔄 最新データ取得", key="match_reload",
+                      help="スプシから最新DBを読み直すだけ。採用済データは壊れません(DBに保存済なので安全)。表示が古いと感じた時のみ使用"):
             _load_match_data.clear()
             st.session_state['_match_done_local'] = set()
             st.session_state['_match_idx'] = 0
