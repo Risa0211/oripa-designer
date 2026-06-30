@@ -1892,8 +1892,18 @@ with tab_template:
                                         else:
                                             _save_card_match(cur_base_no, final_name, final_rar, str(e['row']['賞']),
                                                              int(e['row']['本数']), url, price,
-                                                             f"設計時修正(name/rar変更可)",
+                                                             f"設計時修正(name/rar変更)",
                                                              status='confirmed_by_designer')
+                                            # tmpl_state["cards"] の該当行も更新(見た目も変える)
+                                            for _ci, _c in enumerate(st.session_state.get('tmpl_state', {}).get('cards', [])):
+                                                if (str(_c.get('カード名', '')).strip() == e['cn'] and
+                                                    str(_c.get('レアリティ', '')).strip() == e['rar'] and
+                                                    str(_c.get('賞', '')).strip() == str(e['row']['賞'])):
+                                                    _c['カード名'] = final_name
+                                                    _c['レアリティ'] = final_rar
+                                                    _c['実価値/枚(円)'] = price
+                                                    _c['snkrdunk URL'] = url
+                                                    break
                                             _done_local.add(e_local_key)
                                             change_note = ""
                                             if final_name != e['cn']: change_note += f" / カード名:{e['cn']}→{final_name}"
