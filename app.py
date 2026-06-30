@@ -2530,14 +2530,13 @@ with tab_match:
             # 同類グループ検出: 同じベース名+レアリティ (商品横断)
             # パック/BOX系は商品違いでも同じURLになるため横断検索
             # シングルカードも同名同レアは多くの場合同じカード(シャワーズ問題は手動で除外)
+            # 採用済の同類カードも上書き対象に含める=「全部同じカードなら一括」のユーザー要望対応
             _is_pack_or_box = bool(_re_match.search(r'(パック|PACK|BOX|ボックス|箱)', item['card_name']))
             same_base_group = [
                 x for x in all_items
                 if extract_multiplier_and_base(x['card_name'])[1] == cur_base and
                    x['rarity'] == item['rarity'] and
-                   _item_key(x) != _item_key(item) and
-                   not x.get('db_done') and
-                   _item_key(x) not in st.session_state['_match_done_local']
+                   _item_key(x) != _item_key(item)
             ]
             if same_base_group:
                 _group_label = "📚 同類グループ(商品横断)" if _is_pack_or_box else "📚 同類グループ"
