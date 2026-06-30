@@ -2326,7 +2326,8 @@ with tab_match:
         st.markdown(f"**{len(filtered):,}件 / 全{len(all_items):,}件**")
 
         # 採用済/要確認/仮採用モードはリスト表示優先
-        if f_mode in ("採用済のみ(修正用)", "⏸ 要確認のみ", "🟡 仮採用のみ") and filtered:
+        # mode_effective を使う(force_all時はリスト表示せず詳細画面に遷移)
+        if mode_effective in ("採用済のみ(修正用)", "⏸ 要確認のみ", "🟡 仮採用のみ") and filtered:
             import pandas as _pd_match
             df_match = _pd_match.DataFrame([{
                 "商品No": x['base_no'],
