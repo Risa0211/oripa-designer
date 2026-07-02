@@ -17,7 +17,7 @@ from research import open_research, clear_per_product_card_cache
 from snkrdunk_client import fetch_recent_price
 
 
-# app.py の extract_multiplier_and_base と同ロジック(BOX=30換算)
+# app.py の extract_multiplier_and_base と同ロジック(BOX/PACK区別なく単純×N)
 _UNIT_NORM = {
     'パック': 'pack', 'pack': 'pack',
     'ボックス': 'box', 'box': 'box', '箱': 'box',
@@ -31,14 +31,11 @@ MULT_PAT = re.compile(
 
 
 def get_multiplier(card_name: str) -> int:
+    """スニダン価格は「1アイテム=1BOX or 1PACK」の価格を返す約束のため単純×N"""
     m = MULT_PAT.search(card_name or '')
     if not m:
         return 1
-    mult = int(m.group(1))
-    unit_norm = _UNIT_NORM.get(m.group(2).lower(), m.group(2).lower())
-    if unit_norm == 'box':
-        mult *= 30
-    return mult
+    return int(m.group(1))
 
 
 def is_pack_or_box(name: str, rarity: str) -> bool:
@@ -51,7 +48,7 @@ def fetch_for_row(row_meta):
     is_pack = is_pack_or_box(name, rarity)
     grade = 'PSA10' if ('PSA' in (name + rarity).upper() and not is_pack) else ''
     try:
-        price, msg = fetch_recent_price(url, grade, is_pack=is_pack)
+        price, msg = fetch_recent_price(url, grade, is_pack=is_pack, item_name=name)
         return url, int(price or 0), msg
     except Exception as ex:
         return url, 0, f'ERR:{str(ex)[:60]}'

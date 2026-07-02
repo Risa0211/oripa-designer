@@ -28,12 +28,14 @@ def _normalize_grade(grade: str) -> str:
     return g.upper()
 
 
-def fetch_recent_price(snkrdunk_url: str, grade: str = "", is_pack: bool = False) -> Tuple[Optional[int], str]:
+def fetch_recent_price(snkrdunk_url: str, grade: str = "", is_pack: bool = False, item_name: str = "") -> Tuple[Optional[int], str]:
     """
     snkrdunk URLから価格取得。
 
     is_pack=True (パック/BOX商品):
-      → 新品最安(minPriceOfNewListing or minPrice)を優先
+      → item_name に「BOX」を含めば size="N個" の直近販売単価 (1BOX価格)
+      → それ以外は sales-history "Nパック" の中央値単価 (1パック価格)
+      戻り値は「そのアイテム1個(=1BOX or 1パック)の価格」
     is_pack=False (シングルカード等):
       → 1. sales-history グレード一致(PSA10等)の直近販売
         2. sales-history サイズ1個/1枚の直近販売
@@ -44,9 +46,14 @@ def fetch_recent_price(snkrdunk_url: str, grade: str = "", is_pack: bool = False
     if not apparel_id:
         return None, "URL不正: apparel ID抽出失敗"
 
-    # パック/BOX商品: sales-history から Nパック の実売価格を取り、1パック単価を算出
-    # (minPriceOfNewListing は¥1,000等の下限値ノイズのため使わない)
     if is_pack:
+        # item_name から BOX か PACK かを判定 (item_name無ければURL meta から取得)
+        target_name = (item_name or "")
+        if not target_name:
+            meta = fetch_apparel_meta(apparel_id)
+            target_name = (meta or {}).get("name") or ""
+        is_box = bool(re.search(r'BOX|ボックス|箱', target_name, re.IGNORECASE))
+
         try:
             r = requests.get(
                 f"https://snkrdunk.com/v1/apparels/{apparel_id}/sales-history",
@@ -55,28 +62,67 @@ def fetch_recent_price(snkrdunk_url: str, grade: str = "", is_pack: bool = False
             )
             if r.status_code == 200:
                 history = r.json().get("history", [])
-                unit_prices = []  # (単価, 日付, サイズ)
-                for e in history:
-                    size = str(e.get("size") or "")
-                    price = e.get("price") or 0
-                    if not price:
-                        continue
-                    m = re.search(r"(\d+)\s*パック", size)
-                    if not m:
-                        continue
-                    n = int(m.group(1))
-                    if n <= 0:
-                        continue
-                    unit_prices.append((price / n, e.get("date", ""), size))
-                if unit_prices:
-                    unit_prices.sort(key=lambda x: x[0])
-                    mid = unit_prices[len(unit_prices) // 2]
-                    latest = unit_prices[0] if len(unit_prices) == 1 else max(unit_prices, key=lambda x: 1 if "分" in x[1] or "時間" in x[1] else 0)
-                    unit = int(mid[0])
-                    return unit, f"直近{len(unit_prices)}件中央値 ¥{unit:,}/パック (サンプル: {mid[2]} @ {mid[1]})"
+
+                if is_box:
+                    # BOX: size="N個" or "1個" の直近販売単価 (price/N=1BOX価格)
+                    box_prices = []
+                    for e in history:
+                        size = str(e.get("size") or "")
+                        price = e.get("price") or 0
+                        if not price:
+                            continue
+                        m = re.search(r"(\d+)\s*個", size)
+                        if not m:
+                            continue
+                        n = int(m.group(1))
+                        if n <= 0:
+                            continue
+                        box_prices.append((price / n, e.get("date", ""), size))
+                    if box_prices:
+                        box_prices.sort(key=lambda x: x[0])
+                        mid = box_prices[len(box_prices) // 2]
+                        unit = int(mid[0])
+                        return unit, f"直近{len(box_prices)}件中央値 ¥{unit:,}/BOX (サンプル: {mid[2]} @ {mid[1]})"
+                    # BOX で "N個" 履歴なし → "Nパック" から 1BOX=30パック換算
+                    pack_unit_prices = []
+                    for e in history:
+                        size = str(e.get("size") or "")
+                        price = e.get("price") or 0
+                        m = re.search(r"(\d+)\s*パック", size)
+                        if not m or not price:
+                            continue
+                        n = int(m.group(1))
+                        if n <= 0:
+                            continue
+                        pack_unit_prices.append(price / n)
+                    if pack_unit_prices:
+                        pack_unit_prices.sort()
+                        unit_per_pack = pack_unit_prices[len(pack_unit_prices) // 2]
+                        box_price = int(unit_per_pack * 30)
+                        return box_price, f"1BOX=30パック換算 ¥{int(unit_per_pack):,}/パック × 30 = ¥{box_price:,}"
+                else:
+                    # PACK: "Nパック" size から中央値単価
+                    unit_prices = []
+                    for e in history:
+                        size = str(e.get("size") or "")
+                        price = e.get("price") or 0
+                        if not price:
+                            continue
+                        m = re.search(r"(\d+)\s*パック", size)
+                        if not m:
+                            continue
+                        n = int(m.group(1))
+                        if n <= 0:
+                            continue
+                        unit_prices.append((price / n, e.get("date", ""), size))
+                    if unit_prices:
+                        unit_prices.sort(key=lambda x: x[0])
+                        mid = unit_prices[len(unit_prices) // 2]
+                        unit = int(mid[0])
+                        return unit, f"直近{len(unit_prices)}件中央値 ¥{unit:,}/パック (サンプル: {mid[2]} @ {mid[1]})"
         except (requests.RequestException, ValueError, KeyError):
             pass
-        # パック商品で sales-history 空 → 下の一般ロジックにフォールバック
+        # パック/BOX商品で sales-history 空 → 下の一般ロジックにフォールバック
 
     norm_grade = _normalize_grade(grade)
     note_prefix = ""

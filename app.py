@@ -183,11 +183,11 @@ _UNIT_NORM = {
 
 def extract_multiplier_and_base(card_name):
     """カード名から数量を抽出。ベース名は正規化済(空白/括弧/日英差を吸収)
-    BOX/箱は「1BOX = 30パック」換算で mult×30 する(スニダン価格は1パック単価のため)
+    スニダン価格は「そのアイテム1個(=1BOX/1PACK)」の価格を返す約束なので単純に×N倍する
     例:
-      'ブラックボルト(2PACK)'   → (2, 'ブラックボルトpack')
+      'ブラックボルト(2PACK)'   → (2, 'ブラックボルトpack')  # 1パック単価×2
       'ブラックボルト 3パック'    → (3, 'ブラックボルトpack')
-      'メガシンフォニア(1BOX)'  → (30, 'メガシンフォニアbox')  # 1BOX=30パック換算
+      'メガシンフォニア(1BOX)'  → (1, 'メガシンフォニアbox')  # 1BOX価格×1
       '通常カード'             → (1, '通常カード')
     """
     if not card_name:
@@ -197,9 +197,6 @@ def extract_multiplier_and_base(card_name):
         mult = int(m.group(1))
         unit = m.group(2).lower()
         unit_norm = _UNIT_NORM.get(unit, unit)
-        # BOX/箱 は 1BOX = 30パック 換算 (スニダン価格は1パック単価のため)
-        if unit_norm == 'box':
-            mult = mult * 30
         base = card_name[:m.start()] + unit_norm + card_name[m.end():]
         base_norm = _re_mult.sub(r'[\s()()（）\[\]【】]+', '', base).lower()
         return mult, base_norm
@@ -258,7 +255,7 @@ def _fetch_price_for_url(snk_url, card_name, rarity):
     is_pack = bool(_re_fetch.search(r'(パック|PACK|BOX|ボックス|箱)', target_name + card_name))
     grade = "PSA10" if "PSA" in (target_name + rarity).upper() else ""
     try:
-        price, msg = fetch_recent_price(snk_url, grade, is_pack=is_pack)
+        price, msg = fetch_recent_price(snk_url, grade, is_pack=is_pack, item_name=card_name)
         return price or 0, msg
     except Exception as ex:
         return 0, f'ERR:{str(ex)[:50]}'
