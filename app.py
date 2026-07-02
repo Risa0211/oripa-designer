@@ -203,7 +203,7 @@ def extract_multiplier_and_base(card_name):
 
 
 def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, source_note, status='confirmed_by_worker'):
-    """商品別カードマスタに高速append
+    """商品別カードマスタに高速append。失敗時は例外を投げて呼び出し元でst.errorさせる。
     status: confirmed_by_worker / confirmed_by_designer / provisional_review / provisional_clip
     """
     from research import open_research, clear_per_product_card_cache
@@ -224,8 +224,25 @@ def _save_card_match(base_no, card_name, rarity, tier, qty, snk_url, price, sour
     full_status = f'{status} | {source_note}{note_suffix} | by:{worker}'
     row = [base_no, '', card_name, rarity, tier, qty, snk_url, final_price,
            source_note + note_suffix, '', full_status, now]
-    ws_per.append_row(row, value_input_option='USER_ENTERED')
+    # 書き込み+レスポンス検証(APIが実際に反映したか確認)
+    resp = ws_per.append_row(row, value_input_option='USER_ENTERED',
+                             include_values_in_response=True)
     clear_per_product_card_cache()
+    # ★検証: レスポンスに書き込んだURL/更新日時が入っているか
+    try:
+        updated_vals = (resp or {}).get('updates', {}).get('updatedData', {}).get('values', [])
+        if not updated_vals:
+            raise RuntimeError(f"書き込みAPIレスポンス空 (updates.updatedData.values 不在): {str(resp)[:200]}")
+        wrote = updated_vals[0]
+        if (str(wrote[0] if len(wrote)>0 else '') != str(base_no) or
+            (wrote[6] if len(wrote)>6 else '') != snk_url):
+            raise RuntimeError(
+                f"書き込み内容不一致: 期待=商品{base_no}/{snk_url} 実際=商品{wrote[0] if len(wrote)>0 else '?'}/{wrote[6] if len(wrote)>6 else '?'}"
+            )
+    except RuntimeError:
+        raise
+    except Exception:
+        pass  # レスポンス構造が想定外でも、append 自体が例外投げなければ書き込みは成功しているとみなす
 
 
 def _fetch_price_for_url(snk_url, card_name, rarity):
@@ -2539,9 +2556,10 @@ with tab_match:
                    _item_key(x) != _item_key(item)
             ]
             if same_base_group:
-                _group_label = "📚 同類グループ(商品横断)" if _is_pack_or_box else "📚 同類グループ"
-                _help_txt = "**全商品の同名カード**に同じURLが登録されます" if _is_pack_or_box else "**同類カード全て**に同じURLが登録されます"
-                with st.expander(f"{_group_label} {len(same_base_group)}件: 数違いの同じカード(同じスニダンURLで一括採用可)", expanded=True):
+                _group_label = "📚 同類グループ(商品横断)" if _is_pack_or_box else "📚 同類グループ(同名同レア)"
+                _help_txt = "**全商品の同名カード**に同じURLが登録されます" if _is_pack_or_box else "**同名同レアの全カード**に同じURLが登録されます"
+                _sub_txt = "数違いの同じパック/BOX" if _is_pack_or_box else "同じカード名+同じレアリティ(別商品)"
+                with st.expander(f"{_group_label} {len(same_base_group)}件: {_sub_txt} (同じスニダンURLで一括採用可)", expanded=True):
                     for g in same_base_group[:30]:
                         gm, _ = extract_multiplier_and_base(g['card_name'])
                         st.caption(f"  ↳ 商品{g['base_no']} | {g['card_name']} (×{gm}) / 賞:{g['tier']}")
@@ -2577,21 +2595,26 @@ with tab_match:
                             if not st.session_state.get('_worker_name'):
                                 st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
                                 st.stop()
-                            with st.spinner("価格取得+DB保存中..."):
-                                price, msg = _fetch_price_for_url(c['url'], item['card_name'], item['rarity'])
-                                _save_card_match(item['base_no'], item['card_name'], item['rarity'],
-                                                 item['tier'], item['qty'], c['url'], price,
-                                                 f"候補{j+1} sim={c['sim']:.2f} {msg[:20]}",
-                                                 status='confirmed_by_worker')
-                                st.session_state['_match_done_local'].add(_item_key(item))
-                                for g in same_base_group:
-                                    _save_card_match(g['base_no'], g['card_name'], g['rarity'],
-                                                     g['tier'], g['qty'], c['url'], price,
-                                                     f"同類一括 sim={c['sim']:.2f}",
+                            try:
+                                with st.spinner("価格取得+DB保存中..."):
+                                    price, msg = _fetch_price_for_url(c['url'], item['card_name'], item['rarity'])
+                                    _save_card_match(item['base_no'], item['card_name'], item['rarity'],
+                                                     item['tier'], item['qty'], c['url'], price,
+                                                     f"候補{j+1} sim={c['sim']:.2f} {msg[:20]}",
                                                      status='confirmed_by_worker')
-                                    st.session_state['_match_done_local'].add(_item_key(g))
+                                    st.session_state['_match_done_local'].add(_item_key(item))
+                                    for g in same_base_group:
+                                        _save_card_match(g['base_no'], g['card_name'], g['rarity'],
+                                                         g['tier'], g['qty'], c['url'], price,
+                                                         f"同類一括 sim={c['sim']:.2f}",
+                                                         status='confirmed_by_worker')
+                                        st.session_state['_match_done_local'].add(_item_key(g))
+                            except Exception as _ex:
+                                st.error(f"❌ DB保存失敗: {str(_ex)[:200]}\n\n再度お試しください。継続する場合は管理者に連絡してください。")
+                                st.stop()
                             extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
-                            st.success(f"候補{j+1}を採用 (パック単価¥{price:,}{extra})")
+                            _unit_label = "パック単価" if _is_pack_or_box else "単価"
+                            st.success(f"候補{j+1}を採用 ({_unit_label}¥{price:,}{extra})")
                             # キャッシュクリア(要確認等の状態を即反映)
                             _load_match_data.clear()
                             st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
@@ -2638,20 +2661,25 @@ with tab_match:
                                 f"もし本当に値段がつかないカード(ハズレ枠相当)なら「❌除外」を押してください"
                             )
                         else:
-                            with st.spinner("DB保存中..."):
-                                _save_card_match(item['base_no'], item['card_name'], item['rarity'],
-                                                 item['tier'], item['qty'], url, price,
-                                                 f"手動URL {msg[:30]}",
-                                                 status='confirmed_by_worker')
-                                st.session_state['_match_done_local'].add(_item_key(item))
-                                for g in same_base_group:
-                                    _save_card_match(g['base_no'], g['card_name'], g['rarity'],
-                                                     g['tier'], g['qty'], url, price,
-                                                     f"手動URL(同類一括)",
+                            try:
+                                with st.spinner("DB保存中..."):
+                                    _save_card_match(item['base_no'], item['card_name'], item['rarity'],
+                                                     item['tier'], item['qty'], url, price,
+                                                     f"手動URL {msg[:30]}",
                                                      status='confirmed_by_worker')
-                                    st.session_state['_match_done_local'].add(_item_key(g))
+                                    st.session_state['_match_done_local'].add(_item_key(item))
+                                    for g in same_base_group:
+                                        _save_card_match(g['base_no'], g['card_name'], g['rarity'],
+                                                         g['tier'], g['qty'], url, price,
+                                                         f"手動URL(同類一括)",
+                                                         status='confirmed_by_worker')
+                                        st.session_state['_match_done_local'].add(_item_key(g))
+                            except Exception as _ex:
+                                st.error(f"❌ DB保存失敗: {str(_ex)[:200]}\n\n再度お試しください。継続する場合は管理者に連絡してください。")
+                                st.stop()
                             extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
-                            st.success(f"✅ 手動URLを採用 (パック単価¥{price:,}{extra})")
+                            _unit_label2 = "パック単価" if _is_pack_or_box else "単価"
+                            st.success(f"✅ 手動URLを採用 ({_unit_label2}¥{price:,}{extra})")
                             st.session_state.pop(manual_key, None)
                             _load_match_data.clear()  # キャッシュクリアで状態即反映
                             st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
