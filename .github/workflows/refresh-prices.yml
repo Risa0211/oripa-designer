@@ -31,9 +31,53 @@ jobs:
           python3 -c "import json; d=json.load(open('credentials.json')); print('client_email:', d.get('client_email'))"
 
       - name: Refresh Snkrdunk prices in DB
+        id: refresh
         run: |
-          python3 scripts/refresh_all_prices.py
+          python3 scripts/refresh_all_prices.py 2>&1 | tee refresh.log
+          # 最終行にupdate件数が出ているのを拾って GITHUB_OUTPUT に流す
+          UPDATED=$(grep -oE '完了: [0-9]+行更新' refresh.log | grep -oE '[0-9]+' | head -1 || echo "0")
+          echo "updated=$UPDATED" >> "$GITHUB_OUTPUT"
 
       - name: Cleanup credentials
         if: always()
         run: rm -f credentials.json
+
+      - name: Notify Chatwork on failure
+        if: failure()
+        env:
+          CHATWORK_API_TOKEN: ${{ secrets.CHATWORK_API_TOKEN }}
+          CHATWORK_ROOM_ID: ${{ secrets.CHATWORK_ROOM_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          BODY="[toall]
+[info][title]❌ oripa-designer スニダン価格自動更新 失敗[/title]
+Workflow: 毎朝スニダン価格自動更新
+リポジトリ: ${{ github.repository }}
+Run: $RUN_URL
+時刻(JST): $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')
+
+ログ末尾:
+$(tail -20 refresh.log 2>/dev/null || echo '(refresh.log なし)')
+[/info]"
+          curl -s -X POST "https://api.chatwork.com/v2/rooms/$CHATWORK_ROOM_ID/messages" \
+            -H "X-ChatWorkToken: $CHATWORK_API_TOKEN" \
+            --data-urlencode "body=$BODY" > /dev/null
+
+      - name: Notify Chatwork on success
+        if: success()
+        env:
+          CHATWORK_API_TOKEN: ${{ secrets.CHATWORK_API_TOKEN }}
+          CHATWORK_ROOM_ID: ${{ secrets.CHATWORK_ROOM_ID }}
+        run: |
+          UPDATED="${{ steps.refresh.outputs.updated }}"
+          # 更新0件なら無音 (ノイズ削減)
+          if [ "$UPDATED" = "0" ] || [ -z "$UPDATED" ]; then
+            echo "No changes → skip notification"
+            exit 0
+          fi
+          BODY="[info][title]✅ oripa-designer スニダン価格自動更新[/title]
+時刻(JST): $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')
+更新: ${UPDATED}行[/info]"
+          curl -s -X POST "https://api.chatwork.com/v2/rooms/$CHATWORK_ROOM_ID/messages" \
+            -H "X-ChatWorkToken: $CHATWORK_API_TOKEN" \
+            --data-urlencode "body=$BODY" > /dev/null
