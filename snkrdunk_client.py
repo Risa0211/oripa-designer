@@ -44,24 +44,39 @@ def fetch_recent_price(snkrdunk_url: str, grade: str = "", is_pack: bool = False
     if not apparel_id:
         return None, "URL不正: apparel ID抽出失敗"
 
-    # パック商品: 新品最安を最優先で取得
+    # パック/BOX商品: sales-history から Nパック の実売価格を取り、1パック単価を算出
+    # (minPriceOfNewListing は¥1,000等の下限値ノイズのため使わない)
     if is_pack:
         try:
             r = requests.get(
-                f"https://snkrdunk.com/v1/apparels/{apparel_id}",
+                f"https://snkrdunk.com/v1/apparels/{apparel_id}/sales-history",
+                params={"size_id": 0, "page": 1, "per_page": 30},
                 headers=HEADERS, timeout=TIMEOUT,
             )
             if r.status_code == 200:
-                d = r.json()
-                mp_new = d.get("minPriceOfNewListing") or 0
-                mp = d.get("minPrice") or 0
-                price = mp_new if mp_new > 0 else mp
-                if price > 0:
-                    return int(price), f"新品最安 ¥{int(price):,}〜 (パック)"
-        except (requests.RequestException, ValueError):
+                history = r.json().get("history", [])
+                unit_prices = []  # (単価, 日付, サイズ)
+                for e in history:
+                    size = str(e.get("size") or "")
+                    price = e.get("price") or 0
+                    if not price:
+                        continue
+                    m = re.search(r"(\d+)\s*パック", size)
+                    if not m:
+                        continue
+                    n = int(m.group(1))
+                    if n <= 0:
+                        continue
+                    unit_prices.append((price / n, e.get("date", ""), size))
+                if unit_prices:
+                    unit_prices.sort(key=lambda x: x[0])
+                    mid = unit_prices[len(unit_prices) // 2]
+                    latest = unit_prices[0] if len(unit_prices) == 1 else max(unit_prices, key=lambda x: 1 if "分" in x[1] or "時間" in x[1] else 0)
+                    unit = int(mid[0])
+                    return unit, f"直近{len(unit_prices)}件中央値 ¥{unit:,}/パック (サンプル: {mid[2]} @ {mid[1]})"
+        except (requests.RequestException, ValueError, KeyError):
             pass
-        # パック商品で新品なし→sales-historyにフォールバック
-        # (下のロジックへ進む)
+        # パック商品で sales-history 空 → 下の一般ロジックにフォールバック
 
     norm_grade = _normalize_grade(grade)
     note_prefix = ""

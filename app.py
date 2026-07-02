@@ -183,10 +183,11 @@ _UNIT_NORM = {
 
 def extract_multiplier_and_base(card_name):
     """カード名から数量を抽出。ベース名は正規化済(空白/括弧/日英差を吸収)
+    BOX/箱は「1BOX = 30パック」換算で mult×30 する(スニダン価格は1パック単価のため)
     例:
       'ブラックボルト(2PACK)'   → (2, 'ブラックボルトpack')
       'ブラックボルト 3パック'    → (3, 'ブラックボルトpack')
-      'ブラックボルト2PACK'     → (2, 'ブラックボルトpack')
+      'メガシンフォニア(1BOX)'  → (30, 'メガシンフォニアbox')  # 1BOX=30パック換算
       '通常カード'             → (1, '通常カード')
     """
     if not card_name:
@@ -196,6 +197,9 @@ def extract_multiplier_and_base(card_name):
         mult = int(m.group(1))
         unit = m.group(2).lower()
         unit_norm = _UNIT_NORM.get(unit, unit)
+        # BOX/箱 は 1BOX = 30パック 換算 (スニダン価格は1パック単価のため)
+        if unit_norm == 'box':
+            mult = mult * 30
         base = card_name[:m.start()] + unit_norm + card_name[m.end():]
         base_norm = _re_mult.sub(r'[\s()()（）\[\]【】]+', '', base).lower()
         return mult, base_norm
