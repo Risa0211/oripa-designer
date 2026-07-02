@@ -9,7 +9,9 @@
 from __future__ import annotations
 import sys, os, re, argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+JST = timezone(timedelta(hours=9))
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -107,7 +109,7 @@ def main():
     # 変更行の集計 (multiplier 適用後の final_price で比較)
     updates_h = []  # (row_idx_1based, new_value) 買取価格
     updates_l = []  # 更新日時
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now = datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
     price_source_map = {}
     changed_count = 0
     for i, r in enumerate(rows[1:], start=2):  # 2行目からデータ
@@ -170,6 +172,19 @@ def main():
         time.sleep(1.5)  # ペースダウン
 
     clear_per_product_card_cache()
+
+    # 最終一括更新スタンプ (Streamlit全体ページ表示用)
+    # value_input_option='RAW' で文字列保持 (USER_ENTEREDだと "01:55:17"→"1:55:17"に変換されstrptime破綻)
+    try:
+        ws.batch_update([
+            {'range': 'P1', 'values': [['最終一括更新日時']]},
+            {'range': 'P2', 'values': [[now]]},
+            {'range': 'P3', 'values': [[f'変更{changed_count}行 / 対象{len(per_url_meta)}URL']]},
+        ], value_input_option='RAW')
+        print(f'  📝 スタンプ書込 P1:P3 = {now} / 変更{changed_count}行')
+    except Exception as ex:
+        print(f'  ⚠️ スタンプ書込失敗: {ex}')
+
     print(f'\n✅ 完了: {changed_count}行更新')
 
 

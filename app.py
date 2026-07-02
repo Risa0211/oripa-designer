@@ -1,7 +1,7 @@
 """Streamlit UI — みんなのトレカ オリパ商品設計ツール"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import streamlit as st
 import pandas as pd
 
@@ -75,6 +75,21 @@ def cached_references():
     return _safe_load(load_all_references)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_price_refresh_stamp():
+    """商品別カードマスタ!P1:P3 から最終一括更新日時を取得 (JST文字列)"""
+    try:
+        from research import open_research
+        ss = open_research()
+        ws = ss.worksheet('商品別カードマスタ')
+        vals = ws.get('P1:P3')
+        ts = vals[1][0] if len(vals) >= 2 and vals[1] else ''
+        note = vals[2][0] if len(vals) >= 3 and vals[2] else ''
+        return ts, note
+    except Exception as ex:
+        return '', f'取得失敗: {str(ex)[:60]}'
+
+
 # ロゴヘッダー
 header_cols = st.columns([1, 4, 1])
 with header_cols[0]:
@@ -122,6 +137,43 @@ if st.session_state.test_mode:
 else:
     with mode_col1:
         st.info("🔴 **本番モード中** - 操作は本番の在庫スプシに反映されます")
+
+
+# ---------- スニダン価格 最終更新バナー (全タブ共通表示) ----------
+def _render_price_refresh_banner():
+    _ts, _note = cached_price_refresh_stamp()
+    _JST = timezone(timedelta(hours=9))
+    if _ts:
+        try:
+            _last = datetime.strptime(_ts, '%Y-%m-%d %H:%M:%S').replace(tzinfo=_JST)
+            _hours = (datetime.now(_JST) - _last).total_seconds() / 3600
+        except Exception:
+            _hours = -1
+        if 0 <= _hours <= 26:
+            _bg, _fg, _icon, _msg = '#d1fae5', '#065f46', '✅', '最新'
+        elif 26 < _hours <= 48:
+            _bg, _fg, _icon, _msg = '#fef3c7', '#92400e', '⚠️', 'やや古い'
+        else:
+            _bg, _fg, _icon, _msg = '#fee2e2', '#991b1b', '❌', '要確認'
+        _hours_disp = f'{_hours:.1f}時間前' if _hours >= 0 else '経過不明'
+        cols = st.columns([5, 1])
+        with cols[0]:
+            st.markdown(
+                f'<div style="background:{_bg};color:{_fg};padding:10px 16px;'
+                f'border-radius:6px;border-left:5px solid {_fg};font-size:15px;">'
+                f'<b>{_icon} スニダン価格 最終一括更新: {_ts} (JST) — {_hours_disp}・{_msg}</b>'
+                f'<br><span style="font-size:12px;opacity:0.85;">{_note}｜毎朝 JST 06:00 に自動更新（失敗時のみChatwork通知）</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with cols[1]:
+            if st.button('🔄 最新に更新', help='キャッシュを破棄して再取得', use_container_width=True):
+                cached_price_refresh_stamp.clear()
+                st.rerun()
+    else:
+        st.warning(f'⚠️ スニダン価格の最終更新日時が未取得です。{_note}')
+
+_render_price_refresh_banner()
 
 
 # ---------- 共通画像取得関数 (tab_template/tab_match 両方で使用) ----------
