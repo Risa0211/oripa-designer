@@ -1145,6 +1145,8 @@ with tab_template:
     else:
         # ---- ヘッダ情報 ----
         st.markdown("---")
+        # 📊 上部KPIサマリー領域(コード下部の計算結果をここに描画)
+        kpi_container = st.container(border=True)
         header_row = st.columns([3, 2, 2, 2, 2])
         with header_row[0]:
             st.markdown(f"**📦 {state['title']}**")
@@ -1193,9 +1195,10 @@ with tab_template:
                 {"賞": "ラストワン", "カード名": "", "レアリティ": "", "本数": 0,
                  "実価値/枚(円)": 0, "snkrdunk URL": "", "上乗せ倍率": 0.0, "除外": False},
             ]
-        # snkrdunk URL列がない既存stateに後付け
+        # snkrdunk URL / 発送限 列がない既存stateに後付け
         for c in state["cards"]:
             c.setdefault("snkrdunk URL", "")
+            c.setdefault("発送限", False)
 
         # ===== 💰 最大の操作: 一括取得+配分 (最目立つ位置) =====
         rw_meta_state = state.get("_rewrite_meta") if state else None
@@ -1410,20 +1413,32 @@ with tab_template:
             df_init = pd.DataFrame([{
                 "賞": "1等", "カード名": "", "レアリティ": "",
                 "本数": 1, "実価値/枚(円)": 0, "snkrdunk URL": "",
-                "上乗せ倍率": 0.0, "除外": False,
+                "上乗せ倍率": 0.0, "発送限": False, "除外": False,
             }])
 
         # 列順を統一
-        col_order = ["賞", "カード名", "レアリティ", "本数", "実価値/枚(円)", "snkrdunk URL", "上乗せ倍率", "除外"]
+        col_order = ["賞", "カード名", "レアリティ", "本数", "実価値/枚(円)", "snkrdunk URL", "上乗せ倍率", "発送限", "除外"]
         for c in col_order:
             if c not in df_init.columns:
-                df_init[c] = "" if c == "snkrdunk URL" else 0
+                if c == "snkrdunk URL":
+                    df_init[c] = ""
+                elif c in ("発送限", "除外"):
+                    df_init[c] = False
+                else:
+                    df_init[c] = 0
         df_init = df_init[col_order]
+
+        # 全カード表示(スクロールなし)のため高さを行数で動的計算
+        _row_h = 35
+        _header_h = 40
+        _editor_height = max(_header_h + _row_h * (len(df_init) + 1) + 4, 200)
+        _editor_height = min(_editor_height, 4000)
 
         edited = st.data_editor(
             df_init,
             num_rows="dynamic",
             use_container_width=True,
+            height=_editor_height,
             column_config={
                 "賞": st.column_config.TextColumn("賞", width="small"),
                 "カード名": st.column_config.TextColumn("カード名", width="medium"),
@@ -1437,6 +1452,10 @@ with tab_template:
                 ),
                 "上乗せ倍率": st.column_config.NumberColumn("上乗せ倍率", min_value=0.0, step=0.1,
                                                   help="0なら一括倍率を適用"),
+                "発送限": st.column_config.CheckboxColumn(
+                    "発送限", width="small",
+                    help="ONにすると当選=必ず発送(実価値=仕入原価で計算)。OFFの場合はポイント還元想定で表示PTをコスト計算",
+                ),
                 "除外": st.column_config.CheckboxColumn("除外", width="small"),
             },
             key="tmpl_card_editor",
@@ -1733,53 +1752,110 @@ with tab_template:
 
         # ---- 計算 ----
         df_calc = edited.fillna({
-            "本数": 0, "実価値/枚(円)": 0, "上乗せ倍率": 0.0, "除外": False
+            "本数": 0, "実価値/枚(円)": 0, "上乗せ倍率": 0.0, "発送限": False, "除外": False
         })
         df_calc["本数"] = pd.to_numeric(df_calc["本数"], errors="coerce").fillna(0).astype(int)
         df_calc["実価値/枚(円)"] = pd.to_numeric(df_calc["実価値/枚(円)"], errors="coerce").fillna(0).astype(int)
         df_calc["上乗せ倍率"] = pd.to_numeric(df_calc["上乗せ倍率"], errors="coerce").fillna(0.0).astype(float)
+        df_calc["発送限"] = df_calc["発送限"].astype(bool)
+        df_calc["除外"] = df_calc["除外"].astype(bool)
 
         # 各行の倍率（0なら一括倍率を使う）
         df_calc["適用倍率"] = df_calc["上乗せ倍率"].where(df_calc["上乗せ倍率"] > 0, bulk_markup)
         df_calc["表示PT/枚"] = (df_calc["実価値/枚(円)"] * df_calc["適用倍率"]).round().astype(int)
         df_calc["表示PT合計"] = df_calc["表示PT/枚"] * df_calc["本数"]
         df_calc["実価値合計"] = df_calc["実価値/枚(円)"] * df_calc["本数"]
+        # 弊社コスト = 発送限ON→実価値/枚、OFF→表示PT/枚 (最悪ケース=ポイント還元で払い戻し想定)
+        df_calc["コスト/枚"] = df_calc["実価値/枚(円)"].where(df_calc["発送限"], df_calc["表示PT/枚"]).astype(int)
+        df_calc["コスト合計"] = df_calc["コスト/枚"] * df_calc["本数"]
         # 除外を反映
-        active = df_calc[~df_calc["除外"].astype(bool)]
+        active = df_calc[~df_calc["除外"]]
 
         total_card_qty = int(active["本数"].sum())
         total_real = int(active["実価値合計"].sum())
         total_pt_view = int(active["表示PT合計"].sum())
+        # 発送限別コスト
+        ship_active = active[active["発送限"]]
+        point_active = active[~active["発送限"]]
+        ship_cost = int(ship_active["実価値合計"].sum())      # 実発送分の仕入れ
+        point_cost = int(point_active["表示PT合計"].sum())    # ポイント還元想定分
+        total_cost_worst = ship_cost + point_cost             # 弊社の実質支出 (最悪ケース)
 
         revenue = price * total_tickets + charge_amount
-        cost = total_real
-        gross = revenue - cost
-        gross_rate = (gross / revenue) if revenue else 0
-        real_return = (cost / revenue) if revenue else 0
+        profit = revenue - total_cost_worst                   # 弊社の得(円)
+        profit_rate = (profit / revenue) if revenue else 0    # 弊社の利益率
+        real_return = (total_real / revenue) if revenue else 0
         coin_return = (total_pt_view / revenue) if revenue else 0
         markup_diff = coin_return - real_return
 
-        # ---- 結果表示 ----
-        st.markdown("##### 📊 計算結果")
-        r1 = st.columns(4)
-        r1[0].metric("売上", f"¥{revenue:,}", help=f"単価 ¥{price:,} × {total_tickets:,}口" + (f" + 課金 ¥{charge_amount:,}" if charge_amount else ""))
-        r1[1].metric("仕入れ合計", f"¥{cost:,}")
-        r1[2].metric("粗利", f"¥{gross:,}", f"{gross_rate:.1%}")
-        r1[3].metric("カード合計", f"{total_card_qty:,}枚")
+        # ---- 結果表示 (画面上部の kpi_container に描画) ----
+        with kpi_container:
+            st.markdown("##### 📊 計算結果（画面最上部固定）")
 
-        r2 = st.columns(4)
-        r2[0].metric("顧客還元率(コイン)", f"{coin_return:.1%}",
-                     help="顧客が見る還元率 = 表示PT合計 / 売上")
-        r2[1].metric("実還元率(仕入れ)", f"{real_return:.1%}",
-                     help="運営の本当の還元率 = 仕入れ合計 / 売上")
-        r2[2].metric("上乗せ差分", f"+{markup_diff:.1%}")
-        r2[3].metric("総口数 vs カード本数",
-                     f"{total_tickets:,} / {total_card_qty:,}",
-                     delta=f"差 {total_tickets - total_card_qty:+,}枚" if total_tickets != total_card_qty else "一致",
-                     delta_color="off" if total_tickets == total_card_qty else "inverse")
+            # 1段目: 売上/表示PT/コスト/利益
+            m1 = st.columns(4)
+            m1[0].metric(
+                "売上",
+                f"¥{revenue:,}",
+                help=f"単価 ¥{price:,} × {total_tickets:,}口" + (f" + 課金 ¥{charge_amount:,}" if charge_amount else "")
+            )
+            m1[1].metric(
+                "表示ポイント数(発行総額)",
+                f"{total_pt_view:,}pt",
+                help="全カードの表示PT合計 = ポイント還元された場合に払い戻す最悪コスト"
+            )
+            m1[2].metric(
+                "弊社コスト(最悪ケース)",
+                f"¥{total_cost_worst:,}",
+                help=f"発送限ON={ship_cost:,}円(実仕入) + 発送限OFF={point_cost:,}円(表示PT還元想定)"
+            )
+            m1[3].metric(
+                "弊社の得",
+                f"¥{profit:,}",
+                delta=f"{profit_rate:.1%}",
+                delta_color="normal" if profit >= 0 else "inverse",
+                help="売上 − 弊社コスト(最悪ケース)"
+            )
 
-        if total_tickets != total_card_qty and total_card_qty > 0:
-            st.warning(f"⚠️ 総口数 {total_tickets:,} と カード本数 {total_card_qty:,} が一致しません")
+            # 2段目: 還元率/上乗せ差/仕入内訳/カード枚数
+            m2 = st.columns(4)
+            m2[0].metric(
+                "顧客還元率(表示PT基準)",
+                f"{coin_return:.1%}",
+                help="顧客が見る還元率 = 表示PT合計 / 売上"
+            )
+            m2[1].metric(
+                "実仕入還元率(発送分のみ)",
+                f"{real_return:.1%}",
+                help="実仕入合計(全カード実価値) / 売上 — 参考値"
+            )
+            m2[2].metric(
+                "上乗せ差分",
+                f"+{markup_diff:.1%}",
+                help="顧客還元率 − 実仕入還元率"
+            )
+            m2[3].metric(
+                "総口数 vs カード本数",
+                f"{total_tickets:,} / {total_card_qty:,}",
+                delta=f"差 {total_tickets - total_card_qty:+,}枚" if total_tickets != total_card_qty else "一致",
+                delta_color="off" if total_tickets == total_card_qty else "inverse"
+            )
+
+            # アラート
+            if total_tickets != total_card_qty and total_card_qty > 0:
+                st.warning(f"⚠️ 総口数 {total_tickets:,} と カード本数 {total_card_qty:,} が一致しません")
+            if profit < 0:
+                st.error(f"❌ 弊社の得がマイナス（{profit:,}円）。上乗せ倍率を下げるか、発送限ONのカードを減らしてください")
+            if coin_return > 1.0:
+                st.error(f"❌ 顧客還元率が100%超え（{coin_return:.1%}）。上乗せ倍率を見直してください")
+
+            # 発送限の内訳
+            n_ship = int(ship_active["本数"].sum())
+            n_point = int(point_active["本数"].sum())
+            st.caption(
+                f"📦 発送限ON: {n_ship:,}枚(実仕入 ¥{ship_cost:,}) ／ "
+                f"OFF: {n_point:,}枚(ポイント還元想定 ¥{point_cost:,})"
+            )
 
         # 実価値0のカードチェック (販売前に必ず潰すべき=価格未取得 or 除外扱い)
         import re as _re_zero
@@ -1794,17 +1870,13 @@ with tab_template:
             with st.expander(f"⚠️ 実価値0のカード一覧 ({len(zero_value_rows)}行)", expanded=True):
                 st.dataframe(zero_value_rows[["賞", "カード名", "レアリティ", "本数"]], use_container_width=True, hide_index=True)
 
-        if coin_return > 1.0:
-            st.error(f"❌ 顧客還元率が100%超え（{coin_return:.1%}）。上乗せ倍率を見直してください")
-        elif gross_rate < 0:
-            st.error(f"❌ 粗利マイナス（仕入れが売上を超過）")
-
         # ---- 出現率(参考) ----
         if total_card_qty > 0:
             df_calc["出現率"] = (df_calc["本数"] / total_card_qty * 100).round(2).astype(str) + "%"
-            with st.expander("📋 行ごとの内訳"):
+            with st.expander("📋 行ごとの内訳(表示PT/コスト/発送限)"):
                 show_cols = ["賞", "カード名", "レアリティ", "本数", "出現率",
-                             "実価値/枚(円)", "適用倍率", "表示PT/枚", "表示PT合計", "実価値合計", "除外"]
+                             "実価値/枚(円)", "適用倍率", "表示PT/枚", "表示PT合計",
+                             "実価値合計", "発送限", "コスト/枚", "コスト合計", "除外"]
                 st.dataframe(df_calc[show_cols], use_container_width=True, hide_index=True)
 
         # ---- カード確認(設計者がスニダンURLを最終チェック) ----
