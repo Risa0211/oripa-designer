@@ -45,16 +45,18 @@ jobs:
           CHATWORK_ROOM_ID: ${{ secrets.CHATWORK_ROOM_ID }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          BODY="[toall]
-[info][title]❌ oripa-designer スニダン価格自動更新 失敗[/title]
-Workflow: 毎朝スニダン価格自動更新
-リポジトリ: ${{ github.repository }}
-Run: $RUN_URL
-時刻(JST): $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')
-
-ログ末尾:
-$(tail -20 refresh.log 2>/dev/null || echo '(refresh.log なし)')
-[/info]"
+          {
+            echo "[toall]"
+            echo "[info][title]❌ oripa-designer スニダン価格自動更新 失敗[/title]"
+            echo "Workflow: 毎朝スニダン価格自動更新"
+            echo "リポジトリ: ${{ github.repository }}"
+            echo "Run: $RUN_URL"
+            echo "時刻(JST): $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')"
+            echo ""
+            echo "ログ末尾:"
+            tail -20 refresh.log 2>/dev/null || echo "(refresh.log なし)"
+            echo "[/info]"
+          } > body.txt
           curl -s -X POST "https://api.chatwork.com/v2/rooms/$CHATWORK_ROOM_ID/messages" \
             -H "X-ChatWorkToken: $CHATWORK_API_TOKEN" \
-            --data-urlencode "body=$BODY" > /dev/null
+            --data-urlencode "body@body.txt" > /dev/null
