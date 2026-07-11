@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from research import open_research, clear_per_product_card_cache
 from snkrdunk_client import fetch_recent_price
+import config
+from sheets_client import open_inventory
 
 
 # app.py の extract_multiplier_and_base と同ロジック(BOX/PACK区別なく単純×N)
@@ -148,6 +150,11 @@ def main():
             row_num = int(upd['range'][1:])
             r = rows[row_num - 1]
             print(f'  行{row_num}: 商品{r[0]} | {r[2][:25]} | {r[3]} | 旧¥{r[7]} → 新¥{upd["values"][0][0]}')
+        # dry-run でも在庫タブの更新プレビューは表示
+        try:
+            refresh_inventory_tabs(new_prices, dry_run=True)
+        except Exception as ex:
+            print(f'⚠️ 在庫タブ dry-run 失敗: {ex}')
         return
 
     print(f'★ Sheets batch_update 実行中 ({len(updates_h) + len(updates_l)}セル)...')
@@ -186,6 +193,139 @@ def main():
         print(f'  ⚠️ スタンプ書込失敗: {ex}')
 
     print(f'\n✅ 完了: {changed_count}行更新')
+
+    # ========== 在庫タブ(PSA10在庫登録/ボックス在庫記録)も同じ価格で更新 ==========
+    try:
+        refresh_inventory_tabs(new_prices, dry_run=args.dry_run)
+    except Exception as ex:
+        # マスタ更新は成功済みなので、在庫失敗でも cron 自体は成功扱い(warning)
+        print(f'⚠️ 在庫タブ更新失敗(マスタは成功済み): {ex}')
+
+
+def _cell(col_idx_0: int, row: int) -> str:
+    """0-based col → A1 表記"""
+    s = ''
+    c = col_idx_0
+    while True:
+        s = chr(ord('A') + c % 26) + s
+        c = c // 26 - 1
+        if c < 0:
+            break
+    return f'{s}{row}'
+
+
+def refresh_inventory_tabs(new_prices: dict, dry_run: bool = False):
+    """在庫スプシ(PSA10在庫登録/ボックス在庫記録)の相場を最新価格で更新
+
+    - new_prices: {url: price} 商品別カードマスタ側で取得済みの URL→価格
+    - マスタに無い URL は追加取得(並列)
+    """
+    import time
+    JST_ = timezone(timedelta(hours=9))
+    now_jst = datetime.now(JST_).strftime('%Y-%m-%d %H:%M')
+
+    print('\n★ 在庫タブ 相場更新 開始')
+    inv = open_inventory()
+
+    tab_info = []  # [(tab_label, tab_name, ws, headers, c_url, c_price, c_updated, rows)]
+    extra_urls = set()
+
+    for tab_label, tab_name in [('PSA10', config.TAB_PSA10), ('BOX', config.TAB_BOX)]:
+        try:
+            ws = inv.worksheet(tab_name)
+        except Exception as ex:
+            print(f'  ⚠️ {tab_name}: 開けず → スキップ ({ex})')
+            continue
+        headers = ws.row_values(1)
+        try:
+            c_url = headers.index('スニダン used URL')
+        except ValueError:
+            print(f'  {tab_name}: スニダン used URL 列が無い → スキップ')
+            continue
+        try:
+            c_price = headers.index('相場（1枚）')
+        except ValueError:
+            print(f'  {tab_name}: 相場（1枚）列が無い → スキップ')
+            continue
+        c_updated = headers.index(config.COL_PRICE_UPDATED) if config.COL_PRICE_UPDATED in headers else -1
+        rows_inv = ws.get_all_values()
+        tab_info.append((tab_label, tab_name, ws, headers, c_url, c_price, c_updated, rows_inv))
+        for r in rows_inv[1:]:
+            u = ((r[c_url] if c_url < len(r) else '') or '').strip()
+            if u.startswith('http') and u not in new_prices:
+                extra_urls.add(u)
+
+    if not tab_info:
+        print('  在庫タブが1つも見つからず → 終了')
+        return
+
+    # マスタに無かった URL は追加取得(並列)
+    extra_prices = {}
+    if extra_urls:
+        print(f'  ⏳ マスタに無い {len(extra_urls)} URL を追加取得...')
+        def _fetch_extra(u):
+            try:
+                p, _msg = fetch_recent_price(u, '', is_pack=False)
+                return u, int(p or 0)
+            except Exception:
+                return u, 0
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futs = {ex.submit(_fetch_extra, u): u for u in extra_urls}
+            for fut in as_completed(futs):
+                u, p = fut.result()
+                extra_prices[u] = p
+        ok_extra = sum(1 for p in extra_prices.values() if p > 0)
+        print(f'  追加取得: 成功{ok_extra}件 / 失敗{len(extra_prices)-ok_extra}件')
+
+    # タブ別に batch_update
+    total_changed = 0
+    for tab_label, tab_name, ws, headers, c_url, c_price, c_updated, rows_inv in tab_info:
+        batch = []
+        changed = 0
+        for i, r in enumerate(rows_inv[1:], start=2):
+            u = ((r[c_url] if c_url < len(r) else '') or '').strip()
+            if not u.startswith('http'):
+                continue
+            new_price = new_prices.get(u) or extra_prices.get(u) or 0
+            if new_price <= 0:
+                continue
+            try:
+                old_price = int(((r[c_price] if c_price < len(r) else '0') or '0').replace(',', ''))
+            except Exception:
+                old_price = 0
+            if new_price == old_price:
+                continue
+            batch.append({'range': _cell(c_price, i), 'values': [[new_price]]})
+            if c_updated >= 0:
+                batch.append({'range': _cell(c_updated, i), 'values': [[f'{now_jst}（cron自動）']]})
+            changed += 1
+
+        if not batch:
+            print(f'  {tab_name}: 変更なし')
+            continue
+
+        if dry_run:
+            print(f'  {tab_name}: [dry-run] {changed}行 更新予定')
+            continue
+
+        print(f'  {tab_name}: {changed}行 batch_update 実行中...')
+        chunk_ = 500
+        for start in range(0, len(batch), chunk_):
+            for attempt in range(6):
+                try:
+                    ws.batch_update(batch[start:start + chunk_], value_input_option='USER_ENTERED')
+                    break
+                except Exception as ex:
+                    if '429' in str(ex) or 'quota' in str(ex).lower():
+                        wait = 20 * (attempt + 1)
+                        print(f'  ⚠️ 429 quota → {wait}秒待機 (attempt {attempt+1}/6)')
+                        time.sleep(wait)
+                        continue
+                    raise
+            time.sleep(1.5)
+        total_changed += changed
+
+    print(f'✅ 在庫タブ更新完了: {total_changed}行')
 
 
 if __name__ == '__main__':
