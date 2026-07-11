@@ -273,6 +273,18 @@ def update_purchase_price(tab_label: str, row_idx: int, new_price: int):
     )
 
 
+def update_snkrdunk_url(tab_label: str, row_idx: int, new_url: str):
+    """指定行のスニダン used URL を更新"""
+    inv = open_inventory()
+    ws = inv.worksheet(config.TAB_PSA10 if tab_label == "PSA10" else config.TAB_BOX)
+    headers = ws.row_values(1)
+    c = headers.index("スニダン used URL")
+    ws.batch_update(
+        [{"range": _col_a1(c, row_idx), "values": [[new_url]]}],
+        value_input_option="USER_ENTERED",
+    )
+
+
 def apply_allocation_deltas(deltas: List[Tuple[str, int, str, int, int, int]]):
     """
     deltas: [(tab_label, row_idx, product_id, delta_reserved, delta_on_sale, delta_qty), ...]

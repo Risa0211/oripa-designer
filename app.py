@@ -4022,8 +4022,22 @@ with tab_inventory:
         return items
 
     items = load_inv_df()
+
+    from snkrdunk_client import extract_apparel_id as _extract_aid
+
+    def _url_health(url: str) -> str:
+        """URL健全性: ✅個別カードURL / ⚠️検索一覧URL / ❌URL空 / ❓その他"""
+        if not url:
+            return "❌"
+        if _extract_aid(url):
+            return "✅"
+        if "/apparels?" in url or "/search" in url:
+            return "⚠️"
+        return "❓"
+
     df = pd.DataFrame([
         {
+            "URL": _url_health(it.snkrdunk_url),
             "区分": it.tab, "カード名": it.name, "シリーズ": it.series,
             "グレード": it.grade,
             "数量": it.qty, "予約中": it.reserved_qty, "販売中": it.on_sale_qty,
@@ -4036,7 +4050,12 @@ with tab_inventory:
         } for it in items
     ])
 
-    fc1, fc2, fc3, fc4 = st.columns(4)
+    # URL健全性サマリ
+    bad_count = int((df["URL"] != "✅").sum())
+    if bad_count > 0:
+        st.warning(f"⚠️ URLが要修正の在庫が **{bad_count}件** あります（下の「⚠️URL要修正のみ」で絞込めます）")
+
+    fc1, fc2, fc3, fc4, fc5 = st.columns([1.2, 1, 1.4, 1.2, 1.6])
     with fc1:
         f_tab = st.multiselect("区分", options=["PSA10", "BOX"], default=["PSA10", "BOX"])
     with fc2:
@@ -4044,6 +4063,9 @@ with tab_inventory:
     with fc3:
         only_no_purchase = st.checkbox("仕入れ価格未入力のみ", value=False)
     with fc4:
+        only_bad_url = st.checkbox("⚠️URL要修正のみ", value=False,
+                                    help="スニダンURLが個別カードURLになっていない在庫だけ表示")
+    with fc5:
         f_search = st.text_input("カード名で絞込")
 
     df_show = df[df["区分"].isin(f_tab)]
@@ -4051,6 +4073,8 @@ with tab_inventory:
         df_show = df_show[df_show["残数量"] > 0]
     if only_no_purchase:
         df_show = df_show[df_show["仕入れ価格"] == 0]
+    if only_bad_url:
+        df_show = df_show[df_show["URL"] != "✅"]
     if f_search.strip():
         df_show = df_show[df_show["カード名"].str.contains(f_search.strip(), na=False)]
 
@@ -4090,12 +4114,72 @@ with tab_inventory:
             sel = df_op.loc[sel_idx_label]
             sel_url = str(sel["snk URL"]) if pd.notna(sel["snk URL"]) else ""
             sel_grade = str(sel["グレード"]) if pd.notna(sel["グレード"]) else ""
+            sel_url_ok = bool(_extract_aid(sel_url))
+
+            # URL不正時は先に修復UIを表示
+            if not sel_url_ok:
+                st.warning(
+                    f"⚠️ このカードのスニダンURLが正しく設定されていません。\n\n"
+                    f"現URL: `{sel_url or '(空)'}`\n\n"
+                    "下の候補一覧から正しいカードを選んでURLを保存してください。"
+                )
+                cand_cols = st.columns([2, 1])
+                with cand_cols[0]:
+                    fix_query = st.text_input(
+                        "検索キーワード（デフォルト=カード名）",
+                        value=str(sel["カード名"]),
+                        key=f"fix_q_{sel_idx_label}",
+                    )
+                with cand_cols[1]:
+                    fix_rarity = st.text_input(
+                        "レア表記（任意・精度UP）",
+                        value="PSA10" if sel["区分"] == "PSA10" else "",
+                        key=f"fix_r_{sel_idx_label}",
+                        help="例: SAR / UR / SR / PSA10",
+                    )
+                if st.button("🔍 候補を検索", key=f"fix_search_{sel_idx_label}"):
+                    from snkrdunk_client import search_apparel_id_by_keyword
+                    with st.spinner("snkrdunk 検索中..."):
+                        cands = search_apparel_id_by_keyword(
+                            fix_query.strip(), fix_rarity.strip(), max_candidates=8,
+                        )
+                    st.session_state[f"fix_cands_{sel_idx_label}"] = cands
+
+                cands = st.session_state.get(f"fix_cands_{sel_idx_label}", [])
+                if cands:
+                    st.markdown(f"**候補 {len(cands)}件（スコア順）**")
+                    cand_labels = [
+                        f"[{c.get('score', 0):+d}] id={c['id']} | {c.get('name', '')[:80]}"
+                        for c in cands
+                    ]
+                    chosen_i = st.radio(
+                        "正しいカードを選択",
+                        options=list(range(len(cands))),
+                        format_func=lambda i: cand_labels[i],
+                        key=f"fix_pick_{sel_idx_label}",
+                    )
+                    save_cols = st.columns([1, 1, 1])
+                    with save_cols[0]:
+                        if st.button("💾 このURLで保存", type="primary",
+                                     key=f"fix_save_{sel_idx_label}",
+                                     use_container_width=True):
+                            from inventory import update_snkrdunk_url
+                            new_url = cands[chosen_i]["url"]
+                            update_snkrdunk_url(str(sel["区分"]), int(sel["row_idx"]), new_url)
+                            st.success(f"✅ URL保存: {new_url}")
+                            st.session_state.pop(f"fix_cands_{sel_idx_label}", None)
+                            st.cache_data.clear()
+                            st.rerun()
+                    with save_cols[1]:
+                        st.link_button("🔗 選択候補を開く",
+                                       cands[chosen_i]["url"], use_container_width=True)
+                st.markdown("---")
 
             op_cols = st.columns([2, 2, 2])
             with op_cols[0]:
                 if st.button(
                     "📈 このカードの相場をsnkrdunkから更新",
-                    disabled=not sel_url,
+                    disabled=not sel_url_ok,
                     use_container_width=True,
                 ):
                     from snkrdunk_client import fetch_recent_price
