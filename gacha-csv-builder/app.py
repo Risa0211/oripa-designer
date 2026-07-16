@@ -72,7 +72,11 @@ def load_palette():
 @st.cache_data(show_spinner=False)
 def load_store():
     """保管庫マスター（DOPA + 管理画面移行分）。カード名/型番/URL/媒体id付き＝検索も編集も速い。"""
-    return SH.load_store_master(str(MASTER_CSV), str(HERE / "master_db_admin.csv"))
+    rows = B.read_csv_dict(str(MASTER_CSV))
+    admin_p = HERE / "master_db_admin.csv"
+    if admin_p.exists():
+        rows = rows + B.read_csv_dict(str(admin_p))
+    return rows
 
 
 def parse_design(uploaded):
