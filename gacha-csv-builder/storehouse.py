@@ -113,6 +113,40 @@ def search_dopa(master_rows, query, limit=24):
     return out
 
 
+def load_store_master(*paths):
+    """保管庫マスター（DOPA/管理画面移行分）を読み込んで結合。
+    各行: カード名/レアリティ/型番/画像URL/wp_id/source。"""
+    rows = []
+    for path in paths:
+        p = Path(path)
+        if not p.exists():
+            continue
+        with p.open(encoding="utf-8-sig", newline="") as f:
+            rows.extend(list(csv.DictReader(f)))
+    return rows
+
+
+def search_store(store_rows, query, limit=48):
+    """保管庫マスターをカード名/型番の部分一致で検索（媒体ID付き＝編集/削除に使える）。"""
+    q = norm(query)
+    if not q:
+        return []
+    out = []
+    for r in store_rows:
+        if q in norm(r.get("カード名", "")) or q in norm(r.get("型番", "")):
+            out.append({
+                "name": r.get("カード名", ""),
+                "rarity": r.get("レアリティ", ""),
+                "kata": r.get("型番", ""),
+                "image_url": r.get("画像URL", ""),
+                "wp_id": r.get("wp_id", ""),
+                "source": r.get("source", "保管庫"),
+            })
+            if len(out) >= limit:
+                break
+    return out
+
+
 _KATA_RE = re.compile(r"[\{｛]([^}｝]+)[\}｝]|[\(（]([0-9]{1,3}\s*/\s*[0-9A-Za-z\-]+)[\)）]")
 
 
