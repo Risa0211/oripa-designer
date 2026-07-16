@@ -154,6 +154,17 @@ def get(row: dict, *names, default=""):
     return default
 
 
+# 自社ドメイン（保管庫WP / 管理画面 / 業者倉庫S3）。これ以外(=競合dopa等)のURLはA列に出さない。
+_OWN_DOMAINS = ("minnano-toreka.com", "minnano-toreca.com", "s3.minnano-toreca.com")
+
+
+def _is_own_url(url: str) -> bool:
+    u = (url or "").lower()
+    if not u.startswith(("http://", "https://")):
+        return True  # 相対/自由記述はそのまま許可（競合の絶対URLだけ弾く）
+    return any(d in u for d in _OWN_DOMAINS)
+
+
 def _name_key(s):
     """カード名の照合キー（全角半角/空白/括弧内注記のゆれを吸収）。"""
     s = unicodedata.normalize("NFKC", str(s or ""))
@@ -283,6 +294,9 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None):
                 image_url  = get(m, "画像URL", "image_url", "image", "Image URL-src")
                 price      = get(m, "参照価格", "price", "Price")
                 source_url = get(m, "元URL", "source_url", "url", "URL")
+                # A列(非表示の元サイト参照)に競合ドメインのURLを残さない（DOPA等の取込元を秘匿）
+                if source_url and not _is_own_url(source_url):
+                    source_url = ""
                 category   = category or get(m, "カテゴリ", "category", "Category")
             elif len(cands) > 1:
                 # 複数の絵柄が該当 → 勝手に決めず picker へ（型番を入れれば一意化できる旨を案内）
