@@ -311,93 +311,74 @@ with tab_make:
         render_make(uploaded)
 
 # ============================================================ ② 保管庫（検索・コピー・編集）
-def card_editor(h):
-    """1枚のカード：画像＋コピー＋（ログイン中は）編集/差し替え/削除。全部この場で完結。"""
+def card_cell(h):
+    """グリッド1マス：サムネ＋名前＋型番コピー＋（開くと）全コピー/編集。省スペース。"""
     mid = h.get("wp_id", "")
-    colL, colR = st.columns([1, 3])
-    with colL:
-        if h["image_url"]:
-            show_img(h["image_url"])
-    with colR:
-        st.markdown(f"**{h['name']}**　<span style='color:#999;font-size:11px'>[{h['source']}]</span>",
-                    unsafe_allow_html=True)
-        cc = st.columns(4)
-        with cc[0]:
-            st.caption("カード名")
-            st.code(h["name"], language=None)
-        with cc[1]:
-            st.caption("型番")
-            st.code(h["kata"] or "—", language=None)
-        with cc[2]:
-            st.caption("レア")
-            st.code(h["rarity"] or "—", language=None)
-        with cc[3]:
-            st.caption("名前/型番/レア(1行)")
-            st.code(f'{h["name"]}\t{h["kata"]}\t{h["rarity"]}', language=None)
-        st.caption("画像URL")
-        st.code(h["image_url"], language=None)
-
-        # --- 編集・差し替え・削除（ログイン＝書込認証があるときのみ）---
+    if h["image_url"]:
+        show_img(h["image_url"])
+    st.markdown(f"**{h['name'][:20]}**", unsafe_allow_html=True)
+    st.code(h["kata"] or "—", language=None)     # 型番＝一番使うのですぐコピー
+    with st.expander("コピー / 編集"):
+        st.caption("カード名"); st.code(h["name"], language=None)
+        st.caption("レア"); st.code(h["rarity"] or "—", language=None)
+        st.caption("名前/型番/レア(1行)")
+        st.code(f'{h["name"]}\t{h["kata"]}\t{h["rarity"]}', language=None)
+        st.caption("画像URL"); st.code(h["image_url"], language=None)
         if can_write and mid:
-            with st.expander("✏️ このカードを編集・差し替え・削除"):
-                e1, e2, e3 = st.columns([2, 1, 1])
-                n_name = e1.text_input("カード名", value=h["name"], key=f"an_{mid}")
-                n_kata = e2.text_input("型番", value=h["kata"], key=f"ak_{mid}")
-                n_rar = e3.text_input("レア", value=h["rarity"], key=f"ar_{mid}")
+            st.divider()
+            n_name = st.text_input("カード名", value=h["name"], key=f"an_{mid}")
+            n_kata = st.text_input("型番", value=h["kata"], key=f"ak_{mid}")
+            n_rar = st.text_input("レア", value=h["rarity"], key=f"ar_{mid}")
 
-                def _title():
-                    t = (n_name or "").strip()
-                    if (n_rar or "").strip():
-                        t += f"（{n_rar.strip()}）"
-                    if (n_kata or "").strip():
-                        t += f"[{n_kata.strip()}]"
-                    return t
+            def _title():
+                t = (n_name or "").strip()
+                if (n_rar or "").strip():
+                    t += f"（{n_rar.strip()}）"
+                if (n_kata or "").strip():
+                    t += f"[{n_kata.strip()}]"
+                return t
 
-                b1, b2, b3 = st.columns(3)
-                if b1.button("名前などを保存", key=f"save_{mid}"):
-                    try:
-                        WPA.update_meta(mid, title=_title(), user=WP_USER, app_pass=WP_PASS)
-                        st.success(f"保存しました: {_title()}")
-                    except Exception as e:
-                        st.error(f"保存に失敗: {e}")
-                with b2.popover("画像を差し替え"):
-                    rep = st.file_uploader("新しい画像", type=["png", "jpg", "jpeg", "webp"],
-                                           key=f"rep_{mid}")
-                    if rep is not None and st.button("この画像に差し替え", key=f"repbtn_{mid}"):
-                        ext = os.path.splitext(rep.name)[1] or ".png"
-                        fn = SH.san_filename(n_kata, n_name, "rep", ext=ext)
-                        try:
-                            _, nu = WPA.replace_media(mid, fn, rep.getvalue(), _title(),
-                                                      user=WP_USER, app_pass=WP_PASS)
-                            st.success("差し替えました（URLが変わります）。管理画面のそのカードに新URLを設定してください。")
-                            st.code(nu)
-                        except Exception as e:
-                            st.error(f"差し替えに失敗: {e}")
-                with b3.popover("削除"):
-                    st.warning("削除すると元に戻せません。")
-                    if st.checkbox("削除を確認", key=f"delchk_{mid}") and \
-                       st.button("完全に削除", key=f"delbtn_{mid}"):
-                        try:
-                            WPA.delete_media(mid, user=WP_USER, app_pass=WP_PASS)
-                            st.success("削除しました。")
-                        except Exception as e:
-                            st.error(f"削除に失敗: {e}")
-        elif can_write and not mid:
-            st.caption("※このカードは媒体IDが未取得のため、この画面からの編集はできません。")
+            if st.button("名前などを保存", key=f"save_{mid}"):
+                try:
+                    WPA.update_meta(mid, title=_title(), user=WP_USER, app_pass=WP_PASS)
+                    st.success("保存しました")
+                except Exception as e:
+                    st.error(f"保存に失敗: {e}")
+            rep = st.file_uploader("画像を差し替え", type=["png", "jpg", "jpeg", "webp"], key=f"rep_{mid}")
+            if rep is not None and st.button("この画像に差し替え", key=f"repbtn_{mid}"):
+                ext = os.path.splitext(rep.name)[1] or ".png"
+                fn = SH.san_filename(n_kata, n_name, "rep", ext=ext)
+                try:
+                    _, nu = WPA.replace_media(mid, fn, rep.getvalue(), _title(),
+                                              user=WP_USER, app_pass=WP_PASS)
+                    st.success("差し替えました（URLが変わります）"); st.code(nu)
+                except Exception as e:
+                    st.error(f"差し替えに失敗: {e}")
+            if st.checkbox("削除を確認", key=f"delchk_{mid}") and \
+               st.button("完全に削除", key=f"delbtn_{mid}"):
+                try:
+                    WPA.delete_media(mid, user=WP_USER, app_pass=WP_PASS)
+                    st.success("削除しました")
+                except Exception as e:
+                    st.error(f"削除に失敗: {e}")
 
 
 with tab_view:
-    st.caption("保管庫を部分一致で検索。各カードでカード名・型番・レア・画像URLをコピー、"
-               "そのまま編集・差し替え・削除もできます（ログイン中のみ）。")
+    st.caption("保管庫を部分一致で検索。型番はすぐコピー、その他コピー・編集は各カードの「コピー / 編集」を開いて。")
     store_rows = load_store()
     q = st.text_input("検索ワード（カード名 or 型番の一部・部分一致）", key="view_q",
                       placeholder="例: リザードン / 066/060 / PSA10")
+    tc1, tc2 = st.columns([3, 1])
+    ncol = tc2.selectbox("表示列数", [4, 3, 5, 6], index=0, key="view_ncol")
     if q:
-        hits = SH.search_store(store_rows, q, limit=60)
-        st.write(f"{len(hits)} 件（保管庫 {len(store_rows):,} 枚から検索）")
-        for h in hits:
-            st.divider()
-            card_editor(h)
+        hits = SH.search_store(store_rows, q, limit=120)
+        tc1.write(f"**{len(hits)} 件**（保管庫 {len(store_rows):,} 枚から）　"
+                  f"多すぎる時は型番や正式名で絞り込むと見やすいです")
+        cols = st.columns(ncol)
+        for i, h in enumerate(hits):
+            with cols[i % ncol]:
+                card_cell(h)
+                st.divider()
     else:
         st.info(f"検索ワードを入れると保管庫（{len(store_rows):,}枚）から表示します。")
 
