@@ -1,7 +1,10 @@
 """共通パスワード認証（Streamlit Secretsから取得）"""
 from __future__ import annotations
 import hmac
+from pathlib import Path
 import streamlit as st
+
+_LOGO = str(Path(__file__).parent / "assets" / "logo.png")
 
 
 def _get_password() -> str:
@@ -27,7 +30,7 @@ def check_password() -> bool:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         try:
-            st.image("assets/logo.png", width=280)
+            st.image(_LOGO, width=280)
         except Exception:
             pass
         st.markdown("### ガチャ登録CSVビルダー")

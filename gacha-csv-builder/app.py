@@ -23,6 +23,8 @@ import build_import_csv as B
 import palette_lookup
 import storehouse as SH
 import wp_client as WP
+import wp_admin as WPA
+from auth import check_password
 
 HERE = Path(__file__).parent
 MASTER_CSV = HERE / "master_db_dopa.csv"
@@ -35,6 +37,10 @@ st.set_page_config(
     page_title="ガチャ登録CSVビルダー",
     page_icon=str(ICON) if ICON.exists() else None,
     layout="wide")
+
+# ログイン（Secretsに app_password がある時のみ有効。無ければ素通り＝開発モード）
+if not check_password():
+    st.stop()
 
 
 def wp_creds():
@@ -147,7 +153,21 @@ def show_img(url):
     st.markdown(img_tag(url), unsafe_allow_html=True)
 
 
-tab_make, tab_view, tab_add = st.tabs(["① ガチャCSV作成", "② 保管庫を見る", "③ 画像を追加"])
+tab_make, tab_view, tab_add, tab_admin = st.tabs(
+    ["① ガチャCSV作成", "② 保管庫を見る", "③ 画像を追加", "④ 管理（編集・差し替え・削除）"])
+
+
+def parse_card_title(t):
+    """WPメディアのタイトル『カード名（レア）[型番]』を name/rar/kata に分解。"""
+    import re as _re
+    kata = rar = ""
+    m = _re.search(r"[\[［]([^\]］]+)[\]］]\s*$", t)
+    if m:
+        kata = m.group(1); t = t[:m.start()]
+    m = _re.search(r"[（(]([^）)]+)[）)]\s*$", t.strip())
+    if m:
+        rar = m.group(1); t = t[:m.start()]
+    return t.strip(), rar, kata
 
 # ============================================================ ① ガチャCSV作成
 def render_make(uploaded):
@@ -347,7 +367,79 @@ with tab_add:
                                      user=WP_USER, app_pass=WP_PASS)
             st.success("保管庫に追加しました。")
             st.code(url)
-            st.image(url, width=180)
+            show_img(url)
             st.caption("「② 保管庫を見る」で名前検索すると出てきます。")
         except Exception as e:
             st.error(f"追加に失敗: {e}")
+
+# ============================================================ ④ 管理（編集・差し替え・削除）
+with tab_admin:
+    st.caption("保管庫の画像を検索して、カード名・型番・レアの修正／画像の差し替え／削除ができます。"
+               "破壊的な操作なので、ここはログイン中のみ動きます。")
+    if not can_write:
+        st.warning("編集・差し替え・削除は停止中です。Secrets に WP_USER / WP_APP_PASS を設定すると有効になります。")
+    else:
+        aq = st.text_input("編集したいカードを検索（カード名 or 型番の一部）", key="admin_q",
+                           placeholder="例: リザードン / 066/060")
+        if aq:
+            media = WP.search_media(aq, user=WP_USER, app_pass=WP_PASS, per_page=24)
+            media = [m for m in media if m.get("id")]
+            st.write(f"{len(media)} 件（上から最大24件）")
+            for m in media:
+                mid = m["id"]
+                cur_title = m["title"]
+                name0, rar0, kata0 = parse_card_title(cur_title)
+                st.divider()
+                colL, colR = st.columns([1, 3])
+                with colL:
+                    show_img(m["url"])
+                with colR:
+                    e1, e2, e3 = st.columns([2, 1, 1])
+                    n_name = e1.text_input("カード名", value=name0, key=f"an_{mid}")
+                    n_kata = e2.text_input("型番", value=kata0, key=f"ak_{mid}")
+                    n_rar = e3.text_input("レア", value=rar0, key=f"ar_{mid}")
+                    b1, b2, b3 = st.columns(3)
+                    # --- 保存（メタ編集）---
+                    if b1.button("保存（名前など）", key=f"save_{mid}"):
+                        t = n_name.strip()
+                        if n_rar.strip():
+                            t += f"（{n_rar.strip()}）"
+                        if n_kata.strip():
+                            t += f"[{n_kata.strip()}]"
+                        try:
+                            WPA.update_meta(mid, title=t, user=WP_USER, app_pass=WP_PASS)
+                            st.success(f"保存しました: {t}")
+                        except Exception as e:
+                            st.error(f"保存に失敗: {e}")
+                    # --- 差し替え ---
+                    with b2.popover("差し替え"):
+                        rep = st.file_uploader("新しい画像", type=["png", "jpg", "jpeg", "webp"],
+                                               key=f"rep_{mid}")
+                        if rep is not None and st.button("この画像に差し替え", key=f"repbtn_{mid}"):
+                            t = n_name.strip() or name0
+                            if n_rar.strip():
+                                t += f"（{n_rar.strip()}）"
+                            if n_kata.strip():
+                                t += f"[{n_kata.strip()}]"
+                            ext = os.path.splitext(rep.name)[1] or ".png"
+                            fn = SH.san_filename(n_kata.strip(), n_name.strip(), "rep", ext=ext)
+                            try:
+                                _, nu = WPA.replace_media(mid, fn, rep.getvalue(), t,
+                                                          user=WP_USER, app_pass=WP_PASS)
+                                st.success("差し替えました（URLが変わります）。")
+                                st.code(nu)
+                                st.caption("この新URLを管理画面のそのカードに設定/再取込してください。")
+                            except Exception as e:
+                                st.error(f"差し替えに失敗: {e}")
+                    # --- 削除（確認チェック必須）---
+                    with b3.popover("削除"):
+                        st.warning("削除すると元に戻せません。")
+                        ok = st.checkbox("削除を確認", key=f"delchk_{mid}")
+                        if st.button("完全に削除", key=f"delbtn_{mid}", disabled=not ok):
+                            try:
+                                WPA.delete_media(mid, user=WP_USER, app_pass=WP_PASS)
+                                st.success("削除しました。")
+                            except Exception as e:
+                                st.error(f"削除に失敗: {e}")
+        else:
+            st.info("編集したいカードを検索してください。")
