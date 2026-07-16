@@ -113,7 +113,7 @@ def _norm_shubetsu(s):
 
 def derive_key(pal, shubetsu, hyoji_pt=None, kosu=None):
     """種別＋（表示pt or 個数）→ パレットキーを導出。
-    戻り値: (key or None, reason)。福袋は色情報が要るので自動不可（担当者確認待ち）。"""
+    戻り値: (key or None, reason)。福袋は画像にptが無く色で見分けるため自動不可＝手動で画像選択。"""
     shu = _norm_shubetsu(shubetsu)
     if not shu:
         return None, "種別が空"
@@ -161,7 +161,9 @@ def derive_key(pal, shubetsu, hyoji_pt=None, kosu=None):
         return (k, "最低保証(なにかのカード)") if k else (None, "最低保証の既定画像が未登録")
 
     if shu == "福袋":
-        return None, "福袋は色↔pt対応が担当者確認待ちのため自動不可（演出キーで手動指定を）"
+        # 福袋は画像にpt数字が入っておらず、色（シルバー/ゴールド等）で見分けるため自動特定不可。
+        # → カード名は設計シートの賞品名どおり（例: 福袋（シルバー））。画像は①「要追加」で色を見て手動選択。
+        return None, "福袋は色で選ぶ→①「要追加」で画像を選択（名前は設計の賞品名どおり・例:福袋（シルバー））"
 
     return None, f"未知の種別: {shubetsu}"
 
