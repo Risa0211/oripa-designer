@@ -291,6 +291,17 @@ def render_make(uploaded):
                        data=csv_bytes, file_name=Path(uploaded.name).stem + "_import.csv",
                        mime="text/csv", type="primary", disabled=(len(out_rows) == 0))
 
+    # ---- 管理画面へのインポート手順（DLしたCSVをどこに貼るか）----
+    with st.expander("▶ このCSVを管理画面に入れる手順", expanded=(len(out_rows) > 0)):
+        st.markdown(
+            "1. [管理画面にログイン](https://minnano-toreca.com)\n"
+            "2. 左メニュー **「商品」** → 登録したい **ガチャ** を開く\n"
+            "3. **「カード一覧」** タブ → **「CSVのインポート」**\n"
+            "4. いまダウンロードした **`_import.csv`** を選んでインポート\n\n"
+            "※ CSVの **カテゴリ（G列）** は、先に管理画面で **カードフォルダー** を作っておく必要があります"
+            "（未作成だと取り込みが弾かれます）。\n"
+            "※ 文字化けする時は、CSVをExcelで開き直さずそのままアップしてください（UTF-8のまま取り込む）。")
+
     remaining = len(ambiguous) + len(unmatched)
     if remaining:
         st.warning(f"未解決 {remaining}件（要選択{len(ambiguous)}・要追加{len(unmatched)}）はまだCSVに含まれていません。")
