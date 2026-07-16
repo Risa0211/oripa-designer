@@ -134,6 +134,19 @@ def resolve_image_url(row, src_url, filename, title):
     return src_url  # 認証無し=閲覧のみ→元URLを直接使う（後で移行可）
 
 
+def img_tag(url, radius=6):
+    """全画面ボタンの付かないHTML画像（st.imageの拡大トラップを回避）。"""
+    if not url:
+        return ""
+    return (f'<img src="{url}" loading="lazy" '
+            f'style="width:100%;border-radius:{radius}px;display:block;'
+            f'border:1px solid #eee">')
+
+
+def show_img(url):
+    st.markdown(img_tag(url), unsafe_allow_html=True)
+
+
 tab_make, tab_view, tab_add = st.tabs(["① ガチャCSV作成", "② 保管庫を見る", "③ 画像を追加"])
 
 # ============================================================ ① ガチャCSV作成
@@ -180,7 +193,7 @@ def render_make(uploaded):
             for idx, c in enumerate(a["候補"]):
                 with cols[idx % len(cols)]:
                     if c["画像URL"]:
-                        st.image(c["画像URL"], use_container_width=True)
+                        show_img(c["画像URL"])
                     st.caption(f'{c["型番"]}｜{c["レアリティ"]}')
                 labels.append(f'{c["型番"]}｜{c["レアリティ"]}｜{c["カード名"]}')
             choice = st.radio("絵柄を選択", ["（未選択）"] + labels,
@@ -209,7 +222,7 @@ def render_make(uploaded):
                 for idx, h in enumerate(hits):
                     with cols[idx % 6]:
                         if h["image_url"]:
-                            st.image(h["image_url"], use_container_width=True)
+                            show_img(h["image_url"])
                         src = "保管庫" if h["image_url"].startswith(WP.WP_BASE) else "管理画面"
                         st.caption(f'{h["title"][:22]}\n［{src}］')
                         if st.button("これを使う", key=f"use_{row}_{idx}"):
@@ -281,15 +294,20 @@ with tab_view:
                 hits.append({"name": m["title"], "rarity": "", "kata": "",
                              "image_url": m["url"], "title": m["title"], "source": "保管庫"})
         st.write(f"{len(hits)} 件")
+        with st.expander("一括コピー（全件をまとめてコピー／Excel・スプレッドシートに貼れます）"):
+            st.caption("下の右上のコピーボタンで全件コピー。列は カード名 / 型番 / レア（タブ区切り）")
+            tsv = "カード名\t型番\tレア\n" + "\n".join(
+                f'{h["name"]}\t{h["kata"]}\t{h["rarity"]}' for h in hits)
+            st.code(tsv, language=None)
         cols = st.columns(4)
         for idx, h in enumerate(hits):
             with cols[idx % 4]:
                 if h["image_url"]:
-                    st.image(h["image_url"], use_container_width=True)
+                    show_img(h["image_url"])
                 st.markdown(f"**{h['name'][:30]}**　<span style='color:#999;font-size:11px'>[{h['source']}]</span>",
                             unsafe_allow_html=True)
-                st.caption("カード名（クリックでコピー）")
-                st.code(h["name"], language=None)
+                # 1行まとめ（カード名／型番／レア）をワンクリックでコピー
+                st.code(f'{h["name"]}\t{h["kata"]}\t{h["rarity"]}', language=None)
                 mc1, mc2 = st.columns(2)
                 with mc1:
                     st.caption("型番")
