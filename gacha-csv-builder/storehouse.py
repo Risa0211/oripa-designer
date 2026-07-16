@@ -34,9 +34,33 @@ def load_admin(path):
         return list(csv.DictReader(f))
 
 
+_RAR_TOKENS = ("SAR", "SSR", "CSR", "CHR", "UR", "HR", "SR", "RRR", "RR", "ACE",
+               "AR", "TR", "PROMO", "プロモ")
+
+
+def extract_rarity(title):
+    """タイトルからレア表記をざっくり取り出す（無ければ ''）。"""
+    t = unicodedata.normalize("NFKC", str(title or ""))
+    for r in _RAR_TOKENS:
+        if re.search(r"(?<![0-9A-Za-z])" + r + r"(?![0-9A-Za-z])", t, re.I):
+            return r.upper()
+    return ""
+
+
+def base_name(title):
+    """管理画面タイトルからカード名の基底を取り出す（型番/レア/括弧内注記を除去）。"""
+    t = unicodedata.normalize("NFKC", str(title or ""))
+    t = re.sub(r"[\(（\[【{｛].*?[\)）\]】}｝]", "", t)   # 括弧内(型番/セット)を除去
+    t = re.sub(r"\d{1,3}\s*/\s*[0-9A-Za-z\-]+", "", t)   # 素の型番 NNN/XXX を除去
+    for r in _RAR_TOKENS:                                  # 末尾/中間のレア表記を除去
+        t = re.sub(r"(?<![0-9A-Za-z])" + r + r"(?![0-9A-Za-z])", "", t, flags=re.I)
+    t = re.sub(r"[:：].*$", "", t)                         # 「: プロモ」等の注記を除去
+    return re.sub(r"\s+", " ", t).strip("　 ・:-")
+
+
 def search_admin(admin_rows, query, limit=24):
     """管理画面ダンプをタイトル部分一致で検索（画像URLありのみ）。
-    戻り値: [{"title","image_url","category","型番推定","id"}]"""
+    戻り値: [{"name","rarity","kata","image_url","title","category","id","source"}]"""
     q = norm(query)
     if not q:
         return []
@@ -45,11 +69,14 @@ def search_admin(admin_rows, query, limit=24):
         t = r.get("title", "")
         if q in norm(t) and (r.get("image_url") or "").strip():
             out.append({
-                "title": t,
+                "name": base_name(t) or t,
+                "rarity": extract_rarity(t),
+                "kata": _extract_kata(t),
                 "image_url": r["image_url"].strip(),
+                "title": t,
                 "category": r.get("category_name", ""),
                 "id": r.get("id", ""),
-                "kata": _extract_kata(t),
+                "source": "管理画面",
             })
             if len(out) >= limit:
                 break
@@ -65,7 +92,8 @@ def load_dopa_master(path):
 
 
 def search_dopa(master_rows, query, limit=24):
-    """自社保管庫(DOPA由来)をカード名/型番の部分一致で検索。"""
+    """自社保管庫(DOPA由来)をカード名/型番の部分一致で検索。
+    戻り値: [{"name","rarity","kata","image_url","title","source"}]"""
     q = norm(query)
     if not q:
         return []
@@ -73,10 +101,12 @@ def search_dopa(master_rows, query, limit=24):
     for r in master_rows:
         if q in norm(r.get("カード名", "")) or q in norm(r.get("型番", "")):
             out.append({
-                "title": r.get("画像タイトル") or r.get("カード名", ""),
-                "image_url": r.get("画像URL", ""),
+                "name": r.get("カード名", ""),
+                "rarity": r.get("レアリティ", ""),
                 "kata": r.get("型番", ""),
-                "rar": r.get("レアリティ", ""),
+                "image_url": r.get("画像URL", ""),
+                "title": r.get("画像タイトル") or r.get("カード名", ""),
+                "source": "保管庫",
             })
             if len(out) >= limit:
                 break
