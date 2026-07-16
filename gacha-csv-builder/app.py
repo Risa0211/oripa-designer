@@ -69,6 +69,12 @@ def load_palette():
     return palette_lookup.load_palette(*[str(p) for p in PALETTE_CSVS if p.exists()])
 
 
+@st.cache_data(ttl=300, show_spinner="保管庫を読み込み中…")
+def load_wp_media(user, app_pass):
+    """保管庫の全画像(id/title/url)。部分一致検索と④管理の編集/削除に使う。5分キャッシュ。"""
+    return WP.list_all_media(user=(user or None), app_pass=(app_pass or None))
+
+
 def parse_design(uploaded):
     if uploaded.name.lower().endswith(".xlsx"):
         tmp = HERE / "_uploaded_design.xlsx"
@@ -168,6 +174,21 @@ def parse_card_title(t):
     if m:
         rar = m.group(1); t = t[:m.start()]
     return t.strip(), rar, kata
+
+
+def search_wp_local(all_media, query, limit=48):
+    """保管庫の全画像をツール側で部分一致検索（WP検索APIの日本語部分一致の弱さを回避）。"""
+    q = SH.norm(query)
+    out = []
+    for m in all_media:
+        if q and q in SH.norm(m["title"]):
+            name, rar, kata = parse_card_title(m["title"])
+            out.append({"id": m["id"], "name": name or m["title"], "rarity": rar,
+                        "kata": kata, "image_url": m["url"], "title": m["title"],
+                        "source": "保管庫"})
+            if len(out) >= limit:
+                break
+    return out
 
 # ============================================================ ① ガチャCSV作成
 def render_make(uploaded):
@@ -308,17 +329,12 @@ with tab_view:
                       placeholder="例: リザードン / 066/060 / PSA10")
     if q:
         hits = SH.search_dopa(master_rows, q, limit=48)
-        # 追加された新しい画像も拾えるよう保管庫(WP)を直接検索してマージ
-        for m in WP.search_media(q, user=WP_USER or None, app_pass=WP_PASS or None, per_page=30):
-            if m["url"] and not any(h["image_url"] == m["url"] for h in hits):
-                hits.append({"name": m["title"], "rarity": "", "kata": "",
-                             "image_url": m["url"], "title": m["title"], "source": "保管庫"})
+        # 追加/編集された画像も部分一致で拾う（保管庫を全件取得しツール側で照合）
+        seen = {h["image_url"] for h in hits}
+        for h in search_wp_local(load_wp_media(WP_USER, WP_PASS), q, limit=48):
+            if h["image_url"] not in seen:
+                hits.append(h); seen.add(h["image_url"])
         st.write(f"{len(hits)} 件")
-        with st.expander("一括コピー（全件をまとめてコピー／Excel・スプレッドシートに貼れます）"):
-            st.caption("下の右上のコピーボタンで全件コピー。列は カード名 / 型番 / レア（タブ区切り）")
-            tsv = "カード名\t型番\tレア\n" + "\n".join(
-                f'{h["name"]}\t{h["kata"]}\t{h["rarity"]}' for h in hits)
-            st.code(tsv, language=None)
         cols = st.columns(4)
         for idx, h in enumerate(hits):
             with cols[idx % 4]:
@@ -326,14 +342,15 @@ with tab_view:
                     show_img(h["image_url"])
                 st.markdown(f"**{h['name'][:30]}**　<span style='color:#999;font-size:11px'>[{h['source']}]</span>",
                             unsafe_allow_html=True)
-                # 1行まとめ（カード名／型番／レア）をワンクリックでコピー
+                # このカードの カード名／型番／レア を1行でコピー（Excelにそのまま貼れます）
+                st.caption("カード名／型番／レア（1行コピー）")
                 st.code(f'{h["name"]}\t{h["kata"]}\t{h["rarity"]}', language=None)
                 mc1, mc2 = st.columns(2)
                 with mc1:
-                    st.caption("型番")
+                    st.caption("型番だけ")
                     st.code(h["kata"] or "—", language=None)
                 with mc2:
-                    st.caption("レア")
+                    st.caption("レアだけ")
                     st.code(h["rarity"] or "—", language=None)
                 st.divider()
     else:
@@ -379,20 +396,19 @@ with tab_admin:
     if not can_write:
         st.warning("編集・差し替え・削除は停止中です。Secrets に WP_USER / WP_APP_PASS を設定すると有効になります。")
     else:
-        aq = st.text_input("編集したいカードを検索（カード名 or 型番の一部）", key="admin_q",
+        aq = st.text_input("編集したいカードを検索（カード名 or 型番の一部・部分一致）", key="admin_q",
                            placeholder="例: リザードン / 066/060")
         if aq:
-            media = WP.search_media(aq, user=WP_USER, app_pass=WP_PASS, per_page=24)
-            media = [m for m in media if m.get("id")]
+            media = search_wp_local(load_wp_media(WP_USER, WP_PASS), aq, limit=24)
             st.write(f"{len(media)} 件（上から最大24件）")
             for m in media:
                 mid = m["id"]
                 cur_title = m["title"]
-                name0, rar0, kata0 = parse_card_title(cur_title)
+                name0, rar0, kata0 = m["name"], m["rarity"], m["kata"]
                 st.divider()
                 colL, colR = st.columns([1, 3])
                 with colL:
-                    show_img(m["url"])
+                    show_img(m["image_url"])
                 with colR:
                     e1, e2, e3 = st.columns([2, 1, 1])
                     n_name = e1.text_input("カード名", value=name0, key=f"an_{mid}")

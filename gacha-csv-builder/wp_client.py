@@ -57,6 +57,34 @@ def search_media(query, *, base=WP_BASE, user=None, app_pass=None, per_page=40):
     return out
 
 
+def list_all_media(*, base=WP_BASE, user=None, app_pass=None, per_page=100, max_pages=80):
+    """保管庫の画像メディアを全件取得（id/title/url付き）。
+    WPの検索APIは日本語の部分一致に弱いので、全件取ってツール側で部分一致するため。
+    戻り値: [{"id","title","url","alt"}]"""
+    headers = {}
+    if user and app_pass:
+        headers["Authorization"] = auth_header(user, app_pass)
+    out, page = [], 1
+    while page <= max_pages:
+        url = (f"{base}/wp-json/wp/v2/media?media_type=image&per_page={per_page}"
+               f"&page={page}&_fields=id,source_url,title,alt_text")
+        try:
+            data = json.loads(_req(url, headers=headers).decode("utf-8", "replace"))
+        except Exception:
+            break   # page超過などで400 → 終了
+        if not data:
+            break
+        for m in data:
+            t = m.get("title", {})
+            title = t.get("rendered", "") if isinstance(t, dict) else str(t)
+            out.append({"id": m.get("id"), "url": m.get("source_url", ""),
+                        "title": title, "alt": m.get("alt_text", "")})
+        if len(data) < per_page:
+            break
+        page += 1
+    return out
+
+
 def upload_media(filename, data, title, *, base=WP_BASE, user, app_pass, alt=None):
     """画像を保管庫に新規追加（追加のみ）。title/alt/caption を付け、captionにtool-addedタグ。
     戻り値: (media_id, source_url)"""
