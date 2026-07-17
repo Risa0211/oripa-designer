@@ -69,6 +69,17 @@ def load_admin():
     return SH.load_admin(str(ADMIN_CSV))
 
 
+@st.cache_data(show_spinner=False)
+def load_categories():
+    """管理画面に実在するカードフォルダー名（G Categoryの有効値）を件数順で返す。
+    CSVインポートはこの名前と完全一致しないと弾かれるため、選択式にして事故を防ぐ。"""
+    from collections import Counter
+    rows = SH.load_admin(str(ADMIN_CSV))
+    c = Counter((r.get("category_name") or "").strip() for r in rows)
+    bad = {"", "未登録", "未設", "未", "ログインボーナス", "ログインボーナス（新規）"}
+    return [name for name, _ in c.most_common() if name and name not in bad]
+
+
 @st.cache_resource(show_spinner=False)
 def load_palette():
     return palette_lookup.load_palette(*[str(p) for p in PALETTE_CSVS if p.exists()])
@@ -325,13 +336,15 @@ with tab_make:
     st.caption("設計シートをアップ → 自動照合 → 迷う分だけ画像で選ぶ → 管理画面インポートCSV")
     mc1, mc2 = st.columns([2, 3])
     uploaded = mc1.file_uploader("ガチャ設計シート（.xlsx / .csv）", type=["xlsx", "csv"])
-    cat = mc2.text_input("カテゴリ（管理画面のカードフォルダー名・必須）",
-                         value="ポケモン", key="make_category",
-                         help="管理画面に作成済みのフォルダー名と完全一致で。例: ポケモン / ワンピース")
+    cat_opts = load_categories()
+    default_i = cat_opts.index("プロモ") if "プロモ" in cat_opts else 0
+    cat = mc2.selectbox("カテゴリ（管理画面のカードフォルダー・必須）", cat_opts,
+                        index=default_i, key="make_category",
+                        help="管理画面に実在するフォルダーだけを表示。CSVのG列に入り、全カードに適用されます。")
     if not uploaded:
         st.info("設計シートをアップロードすると照合が始まります。")
     else:
-        render_make(uploaded, cat.strip())
+        render_make(uploaded, (cat or "").strip())
 
 # ============================================================ ② 保管庫（検索・コピー・編集）
 def card_cell(h):
