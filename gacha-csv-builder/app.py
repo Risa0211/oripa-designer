@@ -184,7 +184,7 @@ def parse_card_title(t):
     return t.strip(), rar, kata
 
 # ============================================================ ① ガチャCSV作成
-def render_make(uploaded):
+def render_make(uploaded, category=""):
     """設計シートアップ後の本体（tab内で呼ぶ。st.stopは使わずreturnで抜ける）。"""
     try:
         design_rows = parse_design(uploaded)
@@ -204,6 +204,9 @@ def render_make(uploaded):
             d["型番"] = picks[i]
         if i in manual:
             d.update(manual[i])
+        # カテゴリ(G列・管理画面で必須)を全行に適用（行に無い場合のみ）
+        if category and not str(d.get("カテゴリ") or "").strip():
+            d["カテゴリ"] = category
 
     out_rows, unmatched, warnings, ambiguous = B.build(
         master_rows, inject, B.DEFAULT_HEADERS, {}, palette)
@@ -320,11 +323,15 @@ def render_make(uploaded):
 
 with tab_make:
     st.caption("設計シートをアップ → 自動照合 → 迷う分だけ画像で選ぶ → 管理画面インポートCSV")
-    uploaded = st.file_uploader("ガチャ設計シート（.xlsx / .csv）", type=["xlsx", "csv"])
+    mc1, mc2 = st.columns([2, 3])
+    uploaded = mc1.file_uploader("ガチャ設計シート（.xlsx / .csv）", type=["xlsx", "csv"])
+    cat = mc2.text_input("カテゴリ（管理画面のカードフォルダー名・必須）",
+                         value="ポケモン", key="make_category",
+                         help="管理画面に作成済みのフォルダー名と完全一致で。例: ポケモン / ワンピース")
     if not uploaded:
         st.info("設計シートをアップロードすると照合が始まります。")
     else:
-        render_make(uploaded)
+        render_make(uploaded, cat.strip())
 
 # ============================================================ ② 保管庫（検索・コピー・編集）
 def card_cell(h):

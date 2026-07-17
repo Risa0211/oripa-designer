@@ -59,6 +59,10 @@ DESIGN_XLSX_MAP = {
     "表示PT/枚\n(自動)": "還元ポイント",
     "表示PT/枚(自動)": "還元ポイント",
     "表示PT/枚": "還元ポイント",
+    "実価値/枚\n(円)": "参照価格",   # D Price に使う（管理画面で必須の価格）
+    "実価値/枚(円)": "参照価格",
+    "実価値/枚": "参照価格",
+    "実価値": "参照価格",
     "メモ": "社内メモ",
     # --- 演出カード（画像にpt/個数が焼き込まれた擬似カード）用 ---
     "種別": "種別",            # PSA10/パック/BOX/ポイント交換/なにかのカード/なにかAR・HR/福袋
@@ -336,6 +340,12 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None):
         badges     = get(d, "バッジ", "badges") or get(m, "デフォルトバッジ", "default_badges", "badges")
         desc       = get(d, "社内メモ", "description")
 
+        # --- 管理画面の必須項目を埋める（A URL / D Price / G Category は空だとインポート弾かれる）---
+        # A URL: 元サイト参照は競合URLを出さない方針で空。必須なので自社の画像URLで代替（非表示・害なし）
+        a_url = source_url or image_url
+        # D Price: 原簿に参照価格が無い(DOPA)ので、設計の実価値/枚→無ければ還元ptで代替（数値必須）
+        price = price or get(d, "参照価格", "実価値", "price", "Price") or redeem
+
         # --- 検証（ユーザー表示に関わる欠落は必ず知らせる）---
         if not image_url:
             warnings.append(f"設計 {i}行目 型番{key}: 画像URLが原簿に無い（保管庫へ画像投入＋原簿追記が必要）")
@@ -345,9 +355,11 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None):
             warnings.append(f"設計 {i}行目 型番{key}: 還元ポイントが未入力")
         if not inventory:
             warnings.append(f"設計 {i}行目 型番{key}: 在庫数が未入力")
+        if not category:
+            warnings.append(f"設計 {i}行目「{design_name}」: カテゴリ(G)未設定→管理画面で弾かれます。①でカテゴリを指定してください")
 
         record = {
-            "URL": source_url,
+            "URL": a_url,
             "Title": title,
             "Description": desc,
             "Price": price,
