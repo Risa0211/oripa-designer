@@ -178,11 +178,13 @@ def _name_key(s):
 
 
 import re as _re
-_RAR_SUFFIX = _re.compile(r"(SAR|SSR|CSR|CHR|UR|HR|SR|RRR|RR|ACE|AR|PROMO|プロモ)$")
+# 末尾のレア表記。裸(リーリエSR) / 括弧付き(リーリエ(SR)・リーリエ【SR】・リーリエ（SR）) 両対応。
+_RAR_TOKEN = r"(SAR|SSR|CSR|CHR|UR|HR|SR|RRR|RR|ACE|AR|PROMO|プロモ)"
+_RAR_SUFFIX = _re.compile(r"[（(\[【｛{]?" + _RAR_TOKEN + r"[）)\]】｝}]?$")
 
 
 def _strip_rarity(name_key):
-    """賞品名末尾のレア表記（例: アセロラのいたずらSR）を落として基底名にする。"""
+    """賞品名末尾のレア表記（例: アセロラのいたずらSR / コダック(AR)）を落として基底名にする。"""
     return _RAR_SUFFIX.sub("", name_key)
 
 
@@ -292,9 +294,15 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None):
                             if norm_key(get(c, "型番", "kataban", "card_number", "number")) == key]
                     if both:
                         cands = both
-                    else:
+                    elif key in type_index:
+                        # 型番は原簿にあるが別カード＝賞品名と食い違い
                         warnings.append(
-                            f"設計 {i}行目「{design_name}」: 型番{raw_kata}は賞品名と不一致→型番を無視し名前で照合")
+                            f"設計 {i}行目「{design_name}」: 型番{raw_kata}は別カードの型番→無視し名前で照合")
+                    else:
+                        # ★再発検知: 型番が原簿に1件も無い＝表記ゆれ/未収録の可能性。手動送りの原因になる。
+                        warnings.append(
+                            f"設計 {i}行目「{design_name}」: 型番{raw_kata}が原簿に見つからず絞り込めず"
+                            f"（表記ゆれ/未収録の可能性・要確認）")
             elif has_kata:
                 # 賞品名がマスターに無い → 型番で引くが、候補名が賞品名と一致する時だけ採用。
                 # 別カードの型番仲間（例: コダックに066/060=リーリエ等）は絶対に候補にしない。
