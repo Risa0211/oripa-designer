@@ -195,8 +195,9 @@ def parse_card_title(t):
     return t.strip(), rar, kata
 
 # ============================================================ ① ガチャCSV作成
-def render_make(uploaded, category=""):
-    """設計シートアップ後の本体（tab内で呼ぶ。st.stopは使わずreturnで抜ける）。"""
+def render_make(uploaded, category="交換専用"):
+    """設計シートアップ後の本体（tab内で呼ぶ。st.stopは使わずreturnで抜ける）。
+    category=レアリティを持たない賞（演出/ポイント変換/最低保証）のG列フォールバック。"""
     try:
         design_rows = parse_design(uploaded)
     except Exception as e:
@@ -333,19 +334,12 @@ def render_make(uploaded, category=""):
 
 
 with tab_make:
-    st.caption("設計シートをアップ → 自動照合 → 迷う分だけ画像で選ぶ → 管理画面インポートCSV")
-    mc1, mc2 = st.columns([2, 3])
-    uploaded = mc1.file_uploader("ガチャ設計シート（.xlsx / .csv）", type=["xlsx", "csv"])
-    cat_opts = load_categories()
-    default_i = cat_opts.index("交換専用") if "交換専用" in cat_opts else 0
-    cat = mc2.selectbox("演出・ポイント系カードのカテゴリ（実カードはレアリティ自動）", cat_opts,
-                        index=default_i, key="make_category",
-                        help="実カードのG列は各カードのレアリティ(SR/P/AR…)を自動採用。"
-                             "ここで選ぶのは、レアリティを持たない賞（ポイント変換・最低保証・演出）用のフォルダーだけ。")
+    st.caption("設計シートをアップするだけ → 自動照合＋カテゴリ自動 → 管理画面インポートCSV")
+    uploaded = st.file_uploader("ガチャ設計シート（.xlsx / .csv）", type=["xlsx", "csv"])
     if not uploaded:
         st.info("設計シートをアップロードすると照合が始まります。")
     else:
-        render_make(uploaded, (cat or "").strip())
+        render_make(uploaded)
 
 # ============================================================ ② 保管庫（検索・コピー・編集）
 def card_cell(h):
