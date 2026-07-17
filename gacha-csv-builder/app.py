@@ -57,10 +57,11 @@ def wp_creds():
 
 @st.cache_data(show_spinner=False)
 def load_master():
-    """①照合用のカード原簿（DOPAポケモン＋DOPAワンピ）。型番/名前で賞品を引く。"""
+    """①照合用のカード原簿（DOPAポケ＋DOPAワンピ＋管理画面移行分）。型番/名前で賞品を引く。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
-    if ONEPIECE_CSV.exists():
-        rows = rows + B.read_csv_dict(str(ONEPIECE_CSV))
+    for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
+        if extra.exists():
+            rows = rows + B.read_csv_dict(str(extra))
     return rows
 
 
