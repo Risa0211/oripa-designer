@@ -277,7 +277,11 @@ def render_make(uploaded, category="交換専用"):
                             fn = SH.san_filename(h.get("kata", ""), name, f"a{idx}",
                                                  ext=os.path.splitext(h["image_url"])[1] or ".png")
                             url = resolve_image_url(row, h["image_url"], fn, name)
-                            manual[row] = {"画像URL上書き": url}
+                            # 画像URLだけでなく、選んだカードのレアリティ/型番も持たせる
+                            # →G列カテゴリにレアリティが入る（要追加でも実カード扱いで正しく反映）
+                            manual[row] = {"画像URL上書き": url,
+                                           "レアリティ": h.get("rarity", ""),
+                                           "型番": h.get("kata", "")}
                             st.rerun()
             else:
                 st.caption("該当なし。検索ワードを短くするか、下で画像URL/パレットを指定してください。")

@@ -361,8 +361,9 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
             warnings.append(f"設計 {i}行目 型番{key}: 還元ポイントが未入力")
         if not inventory:
             warnings.append(f"設計 {i}行目 型番{key}: 在庫数が未入力")
-        # G列カテゴリ：実カードはレアリティ自動、無ければ default_category（演出/pt賞用）
-        category = category or default_category
+        # G列カテゴリ：実カードはレアリティ自動。要追加で手動選択したカードのレアリティも採用。
+        # どちらも無い賞（演出/ポイント変換/最低保証）だけ default_category にフォールバック。
+        category = category or get(d, "レアリティ", "rarity") or default_category
         if not category:
             warnings.append(f"設計 {i}行目「{design_name}」: カテゴリ(G)が空→管理画面で弾かれます。①で演出カード用カテゴリを指定してください")
 
