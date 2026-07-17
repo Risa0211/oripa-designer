@@ -198,7 +198,10 @@ def _design_rarity(design_name):
     return m.group(1) if m else ""
 
 
-def build(master_rows, design_rows, headers, generic_map=None, palette=None):
+def build(master_rows, design_rows, headers, generic_map=None, palette=None,
+          default_category=""):
+    """default_category: レアリティを持たない賞（演出/ポイント変換/最低保証等）のG列カテゴリ。
+    実カードは各カードのレアリティ（SR/P/AR…）を1枚ずつ自動でG列に入れる。"""
     generic_map = generic_map or {}
     # マスターを型番でインデックス化（型番は重複するのでリストで保持＝2段階照合用）
     type_index = {}
@@ -325,7 +328,10 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None):
                 # A列(非表示の元サイト参照)に競合ドメインのURLを残さない（DOPA等の取込元を秘匿）
                 if source_url and not _is_own_url(source_url):
                     source_url = ""
-                category   = category or get(m, "カテゴリ", "category", "Category")
+                # G列カテゴリ＝そのカードのレアリティ(SR/P/AR…)を1枚ずつ自動採用。管理画面の
+                # 「カードを選ぶとレアリティ欄が自動で入る」挙動と同じ。設計にカテゴリ指定があれば優先。
+                category   = (category or get(m, "カテゴリ", "category", "Category")
+                              or get(m, "レアリティ", "rarity"))
             elif len(cands) > 1:
                 # 複数の絵柄が該当 → 勝手に決めず picker へ（型番を入れれば一意化できる旨を案内）
                 ambiguous.append({"row": i, "ランク": rank, "設計上の名前": design_name,
@@ -355,8 +361,10 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None):
             warnings.append(f"設計 {i}行目 型番{key}: 還元ポイントが未入力")
         if not inventory:
             warnings.append(f"設計 {i}行目 型番{key}: 在庫数が未入力")
+        # G列カテゴリ：実カードはレアリティ自動、無ければ default_category（演出/pt賞用）
+        category = category or default_category
         if not category:
-            warnings.append(f"設計 {i}行目「{design_name}」: カテゴリ(G)未設定→管理画面で弾かれます。①でカテゴリを指定してください")
+            warnings.append(f"設計 {i}行目「{design_name}」: カテゴリ(G)が空→管理画面で弾かれます。①で演出カード用カテゴリを指定してください")
 
         record = {
             "URL": a_url,

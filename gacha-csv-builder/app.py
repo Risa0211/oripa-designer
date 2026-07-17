@@ -215,12 +215,11 @@ def render_make(uploaded, category=""):
             d["型番"] = picks[i]
         if i in manual:
             d.update(manual[i])
-        # カテゴリ(G列・管理画面で必須)を全行に適用（行に無い場合のみ）
-        if category and not str(d.get("カテゴリ") or "").strip():
-            d["カテゴリ"] = category
 
+    # 実カードはレアリティを1枚ずつ自動でG列に。categoryは演出/pt賞など
+    # レアリティを持たない賞のフォールバックとしてのみ使う。
     out_rows, unmatched, warnings, ambiguous = B.build(
-        master_rows, inject, B.DEFAULT_HEADERS, {}, palette)
+        master_rows, inject, B.DEFAULT_HEADERS, {}, palette, default_category=category)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("確定（CSV出力）", len(out_rows))
@@ -294,7 +293,8 @@ def render_make(uploaded, category=""):
     # ---- 確定プレビュー & ダウンロード ----
     st.subheader("確定してCSVに出力される賞")
     if out_rows:
-        view = [{"ランク": r[10], "カード名": r[1], "還元pt": r[4], "在庫": r[7], "画像": r[5]}
+        view = [{"ランク": r[10], "カード名": r[1], "カテゴリ(G)": r[6],
+                 "還元pt": r[4], "在庫": r[7], "画像": r[5]}
                 for r in out_rows]
         st.dataframe(view, use_container_width=True, hide_index=True,
                      column_config={"画像": st.column_config.ImageColumn("画像", width="small")})
@@ -337,10 +337,11 @@ with tab_make:
     mc1, mc2 = st.columns([2, 3])
     uploaded = mc1.file_uploader("ガチャ設計シート（.xlsx / .csv）", type=["xlsx", "csv"])
     cat_opts = load_categories()
-    default_i = cat_opts.index("プロモ") if "プロモ" in cat_opts else 0
-    cat = mc2.selectbox("カテゴリ（管理画面のカードフォルダー・必須）", cat_opts,
+    default_i = cat_opts.index("交換専用") if "交換専用" in cat_opts else 0
+    cat = mc2.selectbox("演出・ポイント系カードのカテゴリ（実カードはレアリティ自動）", cat_opts,
                         index=default_i, key="make_category",
-                        help="管理画面に実在するフォルダーだけを表示。CSVのG列に入り、全カードに適用されます。")
+                        help="実カードのG列は各カードのレアリティ(SR/P/AR…)を自動採用。"
+                             "ここで選ぶのは、レアリティを持たない賞（ポイント変換・最低保証・演出）用のフォルダーだけ。")
     if not uploaded:
         st.info("設計シートをアップロードすると照合が始まります。")
     else:
