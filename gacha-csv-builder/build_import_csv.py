@@ -269,25 +269,36 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None):
             if not get(d, "タイトル上書き", "title_override"):
                 title = design_name or ((p.get("使用中の表記名", "").split(" / ")[0]) if p else "")
 
-        # ④ 実カード：型番があれば確定（重複時は賞品名→レアで2段階）、無ければ賞品名で照合
+        # ④ 実カード：★名前を主キーに照合。型番は「同名で絵柄が複数」時の絞り込みだけに使う。
+        #   （型番が賞品名と食い違う場合は型番を信用せず、無関係な型番仲間は候補に出さない）
         else:
-            cands = []
-            if has_kata:
-                cands = type_index.get(key, [])
-                if len(cands) > 1:  # 型番重複→賞品名で絞る
-                    nk = _name_key(design_name)
-                    named = [c for c in cands if _name_key(get(c, "カード名")) == nk]
-                    if named:
-                        cands = named
-            if not cands:  # 型番なし or 型番一致なし → 賞品名で照合（末尾レア表記も考慮）
-                nk = _name_key(design_name)
-                cands = name_index.get(nk) or name_index.get(_strip_rarity(nk)) or []
-                # 賞品名にレア表記があれば、それでさらに絞る
-                dr = _design_rarity(design_name)
-                if dr and len(cands) > 1:
-                    rared = [c for c in cands if _name_key(get(c, "レアリティ", "rarity")) == dr]
-                    if rared:
-                        cands = rared
+            nk = _name_key(design_name)
+            # まず賞品名で照合（末尾レア表記を剥がした基底名も試す）
+            cands = name_index.get(nk) or name_index.get(_strip_rarity(nk)) or []
+            dr = _design_rarity(design_name)
+            if dr and len(cands) > 1:
+                rared = [c for c in cands if _name_key(get(c, "レアリティ", "rarity")) == dr]
+                if rared:
+                    cands = rared
+            if cands:
+                # 同名で絵柄が複数 → 型番があれば型番で1枚に絞る（型番＝絵柄の指定）
+                if has_kata and len(cands) > 1:
+                    both = [c for c in cands
+                            if norm_key(get(c, "型番", "kataban", "card_number", "number")) == key]
+                    if both:
+                        cands = both
+                    else:
+                        warnings.append(
+                            f"設計 {i}行目「{design_name}」: 型番{raw_kata}は賞品名と不一致→型番を無視し名前で照合")
+            elif has_kata:
+                # 賞品名がマスターに無い → 型番で引くが、候補名が賞品名と一致する時だけ採用。
+                # 別カードの型番仲間（例: コダックに066/060=リーリエ等）は絶対に候補にしない。
+                kcands = type_index.get(key, [])
+                named = [c for c in kcands if _name_key(get(c, "カード名")) == nk]
+                cands = named
+                if not named and kcands:
+                    warnings.append(
+                        f"設計 {i}行目「{design_name}」: 型番{raw_kata}は別カード{len(kcands)}件に該当し賞品名と不一致→要追加扱い")
 
             if len(cands) == 1:
                 m = cands[0]
