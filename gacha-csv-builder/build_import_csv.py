@@ -43,6 +43,7 @@
 import argparse
 import csv
 import json
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -127,10 +128,14 @@ DEFAULT_HEADERS = [
 def norm_key(s: str) -> str:
     """型番の表記ゆれを吸収して照合キーにする。
     例: '201/165', '２０１/１６５', ' 201 / 165 ' → '201/165'
+    ★DOPA原簿の型番は '{286/SM-P}' や '{015/034} [CP1]' のように波括弧やセットタグ付き
+      → 角括弧の中身(セットタグ)を除去し、残った括弧文字も除去して核の型番で照合する。
     全角→半角、空白除去、大文字化。"""
     if s is None:
         return ""
-    s = unicodedata.normalize("NFKC", str(s))  # 全角英数記号→半角
+    s = unicodedata.normalize("NFKC", str(s))          # 全角英数記号→半角
+    s = re.sub(r"[\[【［].*?[\]】］]", "", s)             # [CP1] [その他] 等のセットタグを除去
+    s = re.sub(r"[\{\}｛｝\[\]［］（）()【】]", "", s)     # 残った括弧文字を除去（{286/SM-P}→286/SM-P）
     s = s.replace(" ", "").replace("　", "").strip()
     return s.upper()
 

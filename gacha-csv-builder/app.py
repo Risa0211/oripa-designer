@@ -28,6 +28,7 @@ from auth import check_password
 
 HERE = Path(__file__).parent
 MASTER_CSV = HERE / "master_db_dopa.csv"
+ONEPIECE_CSV = HERE / "master_db_onepiece.csv"   # DOPAワンピ由来（自社WP保管）
 ADMIN_CSV = HERE / "card_db_export.csv"
 PALETTE_CSVS = [HERE / "palette_pseudo.csv", HERE / "palette_extra.csv"]
 LOGO = HERE / "assets" / "logo.png"
@@ -56,7 +57,11 @@ def wp_creds():
 
 @st.cache_data(show_spinner=False)
 def load_master():
-    return B.read_csv_dict(str(MASTER_CSV))
+    """①照合用のカード原簿（DOPAポケモン＋DOPAワンピ）。型番/名前で賞品を引く。"""
+    rows = B.read_csv_dict(str(MASTER_CSV))
+    if ONEPIECE_CSV.exists():
+        rows = rows + B.read_csv_dict(str(ONEPIECE_CSV))
+    return rows
 
 
 @st.cache_data(show_spinner="管理画面ダンプ読込中…")
@@ -71,11 +76,11 @@ def load_palette():
 
 @st.cache_data(show_spinner=False)
 def load_store():
-    """保管庫マスター（DOPA + 管理画面移行分）。カード名/型番/URL/媒体id付き＝検索も編集も速い。"""
+    """保管庫マスター（DOPAポケ + DOPAワンピ + 管理画面移行分）。カード名/型番/URL/媒体id付き。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
-    admin_p = HERE / "master_db_admin.csv"
-    if admin_p.exists():
-        rows = rows + B.read_csv_dict(str(admin_p))
+    for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
+        if extra.exists():
+            rows = rows + B.read_csv_dict(str(extra))
     return rows
 
 
