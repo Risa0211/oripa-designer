@@ -79,7 +79,9 @@ def load_categories():
     rows = SH.load_admin(str(ADMIN_CSV))
     c = Counter((r.get("category_name") or "").strip() for r in rows)
     bad = {"", "未登録", "未設", "未", "ログインボーナス", "ログインボーナス（新規）"}
-    return [name for name, _ in c.most_common() if name and name not in bad]
+    opts = [name for name, _ in c.most_common() if name and name not in bad]
+    # 「未登録」を先頭に（分からない賞の安全な選択肢）
+    return ["未登録"] + opts
 
 
 @st.cache_resource(show_spinner=False)
