@@ -75,6 +75,18 @@ def cached_references():
     return _safe_load(load_all_references)
 
 
+@st.cache_data(ttl=3600, show_spinner="スニダン全カードを読込中...")
+def cached_snkrdunk_index():
+    """スニダン全カード価格インデックス（ポケカ＋ワンピ・シングル/BOX/パック）を
+    InventoryItem 化して返す。無在庫モードの候補プールに合流させる用途。"""
+    try:
+        from snkrdunk_index import load_snkrdunk_index
+        return load_snkrdunk_index()
+    except Exception as ex:
+        st.warning(f"⚠️ スニダンインデックス読込失敗: {str(ex)[:80]}")
+        return []
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def cached_price_refresh_stamp():
     """商品別カードマスタ!P1:P3 から最終一括更新日時を取得 (JST文字列)"""
@@ -438,6 +450,15 @@ with tab_design:
         else:
             st.info("📦 **在庫連動モード**: 残数量がある在庫から選択。保存で「予約中」になります。")
 
+    # 無在庫モードのときだけ、スニダン全カード（ポケカ＋ワンピ）を候補に含められる
+    include_snk_index = False
+    if stock_mode == "no_stock":
+        include_snk_index = st.checkbox(
+            "🃏 スニダン全カード（ポケカ＋ワンピ・シングル/BOX/パック）も候補に含める",
+            value=True, key="design_include_snk_index",
+            help="在庫スプシに無いカードも、スニダン相場付きで景品候補に選べます（無在庫販売前提）",
+        )
+
     st.subheader("③ 販売パラメータ")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -635,7 +656,10 @@ with tab_design:
         else:
             spec = build_spec()
             with st.spinner("在庫を読込中..."):
-                result = design(spec, reference=selected_ref)
+                design_inventory = None
+                if stock_mode == "no_stock" and include_snk_index:
+                    design_inventory = _safe_load(load_all_inventory) + cached_snkrdunk_index()
+                result = design(spec, inventory=design_inventory, reference=selected_ref)
             # session に保存: tier_selections は (tab, row_idx) のリスト
             tier_selections = {
                 tr.name: [(it.tab, it.row_idx) for it in tr.selected]
@@ -719,6 +743,9 @@ with tab_design:
         # --- 各等の編集UI ---
         st.markdown("### 各等の構成（手動で追加・削除できます）")
         all_inv = session["inventory"]
+        # 区分フィルタの選択肢は候補プールに実在するタブから動的に生成
+        # （在庫: PSA10/BOX ＋ スニダン: ポケカ/ポケカBOX/ワンピ… を自動包含）
+        all_tab_options = sorted({it.tab for it in all_inv})
 
         # 現在どの (tab, row_idx) が他の等で使われているか把握（同じ設計内での重複回避）
         used_in_design = set()
@@ -801,16 +828,27 @@ with tab_design:
                     )
                 with fcol2:
                     filter_tab = st.multiselect(
-                        "区分", options=["PSA10", "BOX"],
-                        default=["PSA10", "BOX"], key=f"tabf_{tname}",
+                        "区分", options=all_tab_options,
+                        default=all_tab_options, key=f"tabf_{tname}",
                     )
                 with fcol3:
                     max_show = st.number_input(
                         "表示件数", min_value=5, max_value=200, value=20, step=5, key=f"show_{tname}",
                     )
+                # スニダン全カードを含めると候補が数千件になるため名前検索を用意
+                name_q = st.text_input(
+                    "🔍 カード名で絞り込み", key=f"nameq_{tname}",
+                    placeholder="例: リザードン / ルフィ / VSTARユニバース BOX",
+                ).strip()
 
                 # 適用フィルタ
                 filtered_candidates = [it for it in available if it.tab in filter_tab]
+                if name_q:
+                    _nq = name_q.lower()
+                    filtered_candidates = [
+                        it for it in filtered_candidates
+                        if _nq in (it.name or "").lower() or _nq in (it.series or "").lower()
+                    ]
                 if target > 0 and price_range != "全て":
                     tol = {"±10%": 0.10, "±25%": 0.25, "±50%": 0.50}[price_range]
                     filtered_candidates = [
@@ -3370,6 +3408,14 @@ with tab_premium:
         else:
             st.info("📦 在庫連動モード: 残数量から選択・引当する")
 
+    pg_include_snk_index = False
+    if pg_stock_mode == "no_stock":
+        pg_include_snk_index = st.checkbox(
+            "🃏 スニダン全カード（ポケカ＋ワンピ・シングル/BOX/パック）も候補に含める",
+            value=True, key="pg_include_snk_index",
+            help="在庫スプシに無いカードも、スニダン相場付きで景品候補に選べます（無在庫販売前提）",
+        )
+
     st.markdown("### ① 販売パラメータ")
     pc1, pc2, pc3, pc4 = st.columns(4)
     with pc1:
@@ -3592,7 +3638,10 @@ with tab_premium:
     if pg_preview_btn or pg_reset_btn:
         spec_pg = build_pg_spec()
         with st.spinner("マッチング中..."):
-            result_pg = design_premium(spec_pg, reference=pg_selected_ref)
+            pg_inventory = None
+            if pg_stock_mode == "no_stock" and pg_include_snk_index:
+                pg_inventory = _safe_load(load_all_inventory) + cached_snkrdunk_index()
+            result_pg = design_premium(spec_pg, inventory=pg_inventory, reference=pg_selected_ref)
         tier_selections_pg = {
             tr.name: [(it.tab, it.row_idx) for it in tr.selected]
             for tr in result_pg.card_tier_results
@@ -3699,6 +3748,13 @@ with tab_premium:
                     cand = [it for it in all_inv_pg if (it.tab, it.row_idx) not in used_in_pg]
                 else:
                     cand = [it for it in all_inv_pg if it.available_qty > 0 and (it.tab, it.row_idx) not in used_in_pg]
+                pg_nameq = st.text_input(
+                    f"🔍 カード名で絞り込み_{tname}", key=f"pg_nameq_{tname}",
+                    placeholder="例: リザードン / ルフィ / BOX", label_visibility="collapsed",
+                ).strip()
+                if pg_nameq:
+                    _pnq = pg_nameq.lower()
+                    cand = [it for it in cand if _pnq in (it.name or "").lower() or _pnq in (it.series or "").lower()]
                 if target > 0:
                     cand.sort(key=lambda x: abs(x.price - target))
                 show_n = st.number_input(f"表示件数_{tname}", min_value=5, max_value=50, value=10, key=f"pg_showcnt_{tname}", label_visibility="collapsed")
@@ -3731,6 +3787,13 @@ with tab_premium:
                     cand = [it for it in all_inv_pg if (it.tab, it.row_idx) not in used_in_pg]
                 else:
                     cand = [it for it in all_inv_pg if it.available_qty > 0 and (it.tab, it.row_idx) not in used_in_pg]
+                pg_lo_nameq = st.text_input(
+                    "🔍 カード名で絞り込み_lastone", key="pg_nameq_lastone",
+                    placeholder="例: リザードン / ルフィ / BOX", label_visibility="collapsed",
+                ).strip()
+                if pg_lo_nameq:
+                    _lnq = pg_lo_nameq.lower()
+                    cand = [it for it in cand if _lnq in (it.name or "").lower() or _lnq in (it.series or "").lower()]
                 if target > 0:
                     cand.sort(key=lambda x: abs(x.price - target))
                 for j, it in enumerate(cand[:10]):
