@@ -332,8 +332,25 @@ def render_make(uploaded, category="交換専用"):
                 manual.setdefault(row, {})["バッジ"] = bsel
             elif "バッジ" in cur:
                 manual[row].pop("バッジ", None)
-            with st.expander("手動で指定（画像URL / 演出パレット）"):
-                mu = st.text_input("画像URLを直接指定", key=f"url_{row}",
+            with st.expander("正しい画像が無い時（アップロード / URL / 演出パレット）"):
+                # 正しい画像を直接アップして保管庫に入れ、この賞に使う（差し替え相当）
+                up = st.file_uploader("正しい画像をアップロード（保管庫に追加してこの賞に使う）",
+                                      type=["png", "jpg", "jpeg", "webp"], key=f"upimg_{row}")
+                if up is not None and st.button("この画像を使う（保管庫に追加）", key=f"upbtn_{row}"):
+                    if not can_write:
+                        st.error("画像追加にはログイン(WP_USER/WP_APP_PASS)が必要です。")
+                    else:
+                        ext = os.path.splitext(up.name)[1] or ".png"
+                        fn = SH.san_filename(name, "add", ext=ext)
+                        try:
+                            _, nu = WP.upload_media(fn, up.getvalue(), name,
+                                                    user=WP_USER, app_pass=WP_PASS)
+                            manual.setdefault(row, {})["画像URL上書き"] = nu
+                            st.success("保管庫に追加してこの賞に設定しました。")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"追加に失敗: {e}")
+                mu = st.text_input("または画像URLを直接指定", key=f"url_{row}",
                                    value=manual.get(row, {}).get("画像URL上書き", ""))
                 sel = st.selectbox("または演出パレット", pal_labels, key=f"pal_{row}")
                 if mu.strip():

@@ -413,6 +413,7 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
         title = get(d, "タイトル上書き", "title_override") or design_name
         image_url = price = source_url = ""
         category = get(d, "カテゴリ", "category")
+        is_enshutsu = False   # 演出/ポイント交換/最低保証など（カテゴリは交換専用でよい賞）
 
         # ===== 画像ソースの決定（優先順）=====
         # ① 画像URL直指定（最優先の手動選択）
@@ -421,6 +422,7 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
 
         # ② 演出キー直指定（手動でパレットから選ぶ）
         elif enshutsu_key:
+            is_enshutsu = True
             p = pal_row(enshutsu_key)
             if p is None:
                 unmatched.append({"row": i, "型番": raw_kata, "設計上の名前": design_name,
@@ -432,6 +434,7 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
 
         # ③ 演出カード：種別（明示 or 名前から推定）＋表示pt/個数 でパレット導出
         elif eff_shubetsu:
+            is_enshutsu = True
             pt_hint = get(d, "表示pt", "表示PT") or redeem   # PSA10/ポイントは表示pt優先・無ければ還元pt
             kosu    = get(d, "個数") or (str(kosu_from_name) if kosu_from_name else "")
             pkey, why = palette_lookup.derive_key(palette, eff_shubetsu, pt_hint, kosu)
@@ -529,16 +532,22 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
             warnings.append(f"設計 {i}行目 型番{key}: 還元ポイントが未入力")
         if not inventory:
             warnings.append(f"設計 {i}行目 型番{key}: 在庫数が未入力")
-        # G列カテゴリ：実カードはレアリティ自動。要追加で手動選択したカードのレアリティも採用。
-        # BOX/パック商品は名前/タイトルから判定してカテゴリ=BOX（バッジも未開封）に。
+        # G列カテゴリの決定：
+        #  1) 設計/選択で明示 → それ
+        #  2) BOX/パック商品 → BOX（バッジ未開封）
+        #  3) 実カードのレアリティ → それ
+        #  4) 演出/ポイント交換/最低保証 → default_category（交換専用）
+        #  5) それ以外で不明 → ★空欄のまま（勝手に交換専用にしない）＋警告で人に委ねる
         if not category and _is_box_like(design_name, title, get(m, "カード名"), get(m, "画像タイトル")):
             category = "BOX"
             if not badges:
                 badges = "未開封"
-        # どちらも無い賞（演出/ポイント変換/最低保証）だけ default_category にフォールバック。
-        category = category or get(d, "レアリティ", "rarity") or default_category
+        category = category or get(d, "レアリティ", "rarity")
+        if not category and is_enshutsu:
+            category = default_category      # 演出/pt/最低保証だけ交換専用にフォールバック
         if not category:
-            warnings.append(f"設計 {i}行目「{design_name}」: カテゴリ(G)が空→管理画面で弾かれます。①で演出カード用カテゴリを指定してください")
+            warnings.append(f"設計 {i}行目「{design_name}」: カテゴリ(G)が未確定→"
+                            f"①でカテゴリ(G)を指定してください（不明なまま出すと管理画面で弾かれます）")
 
         record = {
             "URL": a_url,
