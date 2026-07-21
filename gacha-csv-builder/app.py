@@ -105,7 +105,13 @@ def parse_design(uploaded):
             return B.read_design_xlsx(str(tmp))
         finally:
             tmp.unlink(missing_ok=True)
-    return list(csv.DictReader(io.StringIO(uploaded.getvalue().decode("utf-8-sig"))))
+    # CSV: 設計シートのCSVエクスポート（賞ランクヘッダ行を自動検出）も、素の明細CSVも両対応
+    tmp = HERE / "_uploaded_design.csv"
+    tmp.write_bytes(uploaded.getbuffer())
+    try:
+        return B.read_design_csv_table(str(tmp))
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def palette_options(palette):

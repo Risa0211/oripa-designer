@@ -109,6 +109,40 @@ def _find_prize_table(wb):
     return None, None
 
 
+def _find_header_row(rows):
+    """行リスト(list of list/tuple)から、A列に'賞ランク'があるヘッダ行indexを返す。無ければNone。"""
+    for i, r in enumerate(rows):
+        if r and len(r) and r[0] is not None and str(r[0]).strip() == "賞ランク":
+            return i
+    return None
+
+
+def _rows_to_designs(rows, hdr_i):
+    """賞ランクヘッダ行以降を DESIGN_XLSX_MAP でビルダー内部キーの辞書リストに変換。
+    xlsx/csv共通。『合計』行 or A列空で終端。"""
+    headers = [("" if c is None else str(c).strip()) for c in rows[hdr_i]]
+    out = []
+    for r in rows[hdr_i + 1:]:
+        a = "" if (not len(r) or r[0] is None) else str(r[0]).strip()
+        if a in ("", "合計"):
+            break
+        d = {}
+        for c_i, h in enumerate(headers):
+            key = DESIGN_XLSX_MAP.get(h)
+            if key and c_i < len(r) and r[c_i] is not None:
+                v = r[c_i]
+                if isinstance(v, float) and v.is_integer():  # 1.0 → 1
+                    v = int(v)
+                v = str(v).strip()
+                if v == "":
+                    continue
+                # 同じ内部キーに複数列が対応（本数/本数(変更)等）→後勝ち・空はスキップ済
+                d[key] = v
+        if d:
+            out.append(d)
+    return out
+
+
 def read_design_xlsx(path: str, sheet: str = None):
     """自社のガチャ設計テンプレ(.xlsx)の『賞品テーブル』を直接読む。
     旧「設計入力」/新「設計テンプレート」の両方に対応（シート名・ヘッダ行を自動検出）。
@@ -119,37 +153,28 @@ def read_design_xlsx(path: str, sheet: str = None):
     rows = hdr_i = None
     if sheet and sheet in wb.sheetnames:  # 明示指定があればまずそのシートで探す
         srows = list(wb[sheet].iter_rows(values_only=True))
-        for i, r in enumerate(srows):
-            if r and r[0] is not None and str(r[0]).strip() == "賞ランク":
-                rows, hdr_i = srows, i
-                break
+        hi = _find_header_row(srows)
+        if hi is not None:
+            rows, hdr_i = srows, hi
     if hdr_i is None:                      # 見つからなければ全シート自動検出
         rows, hdr_i = _find_prize_table(wb)
     if hdr_i is None:
         sys.exit(f"[ERROR] 賞品テーブルのヘッダ(賞ランク)が見つからない。シート: {wb.sheetnames}")
+    return _rows_to_designs(rows, hdr_i)
 
-    headers = [("" if c is None else str(c).strip()) for c in rows[hdr_i]]
-    out = []
-    for r in rows[hdr_i + 1:]:
-        a = "" if r[0] is None else str(r[0]).strip()
-        if a in ("", "合計"):
-            break
-        d = {}
-        for c_i, h in enumerate(headers):
-            key = DESIGN_XLSX_MAP.get(h)
-            if key and c_i < len(r) and r[c_i] is not None:
-                v = r[c_i]
-                # 口数などの 1.0 → 1 整形
-                if isinstance(v, float) and v.is_integer():
-                    v = int(v)
-                v = str(v).strip()
-                if v == "":
-                    continue
-                # 同じ内部キーに複数列が対応する場合（本数/本数(変更)等）、後勝ちだが空はスキップ済
-                d[key] = v
-        if d:
-            out.append(d)
-    return out
+
+def read_design_csv_table(path: str):
+    """設計シートを『CSVエクスポート』したものを読む（設計入力/設計テンプレートのCSV書き出し）。
+    賞ランクヘッダ行を自動検出できれば賞品テーブルとして解釈。
+    検出できなければ、単純な1行1カードCSV(カード名/型番/在庫…を直接持つ)として全行を返す。"""
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    hdr_i = _find_header_row(rows)
+    if hdr_i is not None:
+        return _rows_to_designs(rows, hdr_i)
+    # 賞ランクが無い＝素の明細CSV → DictReaderで素直に返す（build側のget()が日本語/英語両対応）
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
 
 # ---- 出力CSVのヘッダ（A〜L）。実サンプルで要確定。columns.json で上書き可。----
 DEFAULT_HEADERS = [
