@@ -266,6 +266,7 @@ def render_make(uploaded, category="交換専用"):
         st.caption("既定で賞品名を検索します。正しい画像の『これを使う』を押すと、その1枚だけ保管庫にコピーしてCSVに入ります。")
         admin_rows = load_admin()
         pal_labels = ["（パレットから選ばない）"] + [o[0] for o in pal_opts]
+        cat_opts = load_categories()   # G列カテゴリの有効フォルダー（要追加の上書き用）
         for u in unmatched:
             row = u["row"]
             name = u["設計上の名前"]
@@ -285,22 +286,35 @@ def render_make(uploaded, category="交換専用"):
                             fn = SH.san_filename(h.get("kata", ""), name, f"a{idx}",
                                                  ext=os.path.splitext(h["image_url"])[1] or ".png")
                             url = resolve_image_url(row, h["image_url"], fn, name)
-                            # 画像URLだけでなく、選んだカードのレアリティ/型番も持たせる
-                            # →G列カテゴリにレアリティが入る（要追加でも実カード扱いで正しく反映）
-                            manual[row] = {"画像URL上書き": url,
-                                           "レアリティ": h.get("rarity", ""),
-                                           "型番": h.get("kata", "")}
+                            # 画像URL＋選んだカードのレアリティ/型番/実カテゴリを持たせる（マージ）
+                            adm_cat = h.get("category", "")
+                            picked = {"画像URL上書き": url,
+                                      "レアリティ": h.get("rarity", ""),
+                                      "型番": h.get("kata", "")}
+                            if adm_cat in cat_opts:       # 管理画面の実カテゴリが有効フォルダーなら採用
+                                picked["カテゴリ"] = adm_cat
+                            manual.setdefault(row, {}).update(picked)
                             st.rerun()
             else:
                 st.caption("該当なし。検索ワードを短くするか、下で画像URL/パレットを指定してください。")
+            # カテゴリ(G)の上書き：パック/特別賞などレアが無い実カード用に、この賞のフォルダーを選べる
+            cur = manual.get(row, {})
+            cur_cat = cur.get("カテゴリ", "") or cur.get("レアリティ", "")
+            gi = (cat_opts.index(cur_cat) + 1) if cur_cat in cat_opts else 0
+            gsel = st.selectbox(f"カテゴリ(G)を指定（未指定なら自動）", ["（自動）"] + cat_opts,
+                                index=gi, key=f"gcat_{row}")
+            if gsel != "（自動）":
+                manual.setdefault(row, {})["カテゴリ"] = gsel
+            elif "カテゴリ" in cur and cur.get("カテゴリ") not in cat_opts:
+                manual[row].pop("カテゴリ", None)
             with st.expander("手動で指定（画像URL / 演出パレット）"):
                 mu = st.text_input("画像URLを直接指定", key=f"url_{row}",
                                    value=manual.get(row, {}).get("画像URL上書き", ""))
                 sel = st.selectbox("または演出パレット", pal_labels, key=f"pal_{row}")
                 if mu.strip():
-                    manual[row] = {"画像URL上書き": mu.strip()}
+                    manual.setdefault(row, {})["画像URL上書き"] = mu.strip()
                 elif sel != "（パレットから選ばない）":
-                    manual[row] = {"演出キー": pal_opts[pal_labels.index(sel) - 1][1]}
+                    manual.setdefault(row, {})["演出キー"] = pal_opts[pal_labels.index(sel) - 1][1]
             st.divider()
 
     # ---- 確定プレビュー & ダウンロード ----

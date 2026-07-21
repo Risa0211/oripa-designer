@@ -426,7 +426,8 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                 unmatched.append({"row": i, "型番": raw_kata, "設計上の名前": design_name,
                                   "種別": "実カード(保管庫に無し・要画像追加)"})
                 continue
-        usage_lim  = get(d, "ラストワン口数", "usage_limit")
+        # I Usage Limit（ラストワン賞の口数）。通常賞は 0（管理画面サンプルに合わせ空でなく0）。
+        usage_lim  = get(d, "ラストワン口数", "usage_limit") or "0"
         video      = get(d, "動画", "video") or get(m, "デフォルト動画", "default_video", "video")
         badges     = get(d, "バッジ", "badges") or get(m, "デフォルトバッジ", "default_badges", "badges")
         desc       = get(d, "社内メモ", "description")
