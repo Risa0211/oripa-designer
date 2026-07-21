@@ -63,6 +63,13 @@ USAGE = [
     ["        →希少カードも週1で新しい出品/履歴が出ていないかチェックしています（放置しません）。"],
     ["   ・上の色ボックス … 最終更新日時と状態(🟢正常/🔴失敗)。失敗時はChatwork通知。"],
     [""],
+    ["■ 検索・絞り込み（閲覧のままでOK・データは変わりません）"],
+    ["   ・検索 … Ctrl+F（Macは⌘+F）でカード名・型番を検索。"],
+    ["   ・プリセット … 各タブ「データ → フィルタ表示」から選ぶだけ:"],
+    ["        「相場が高い順」「毎日更新(高額)だけ」「相場あり(空欄を除く)」"],
+    ["   ・自由に絞る … 見出しの▼ボタン、または「データ → フィルタ表示 → 新規作成」。"],
+    ["        ※フィルタ表示は自分の画面だけ。他の人の見え方は変わりません。"],
+    [""],
     ["■ やること"],
     ["   1) 基本は何もしなくてOK。価格は自動で更新されます。"],
     ["   2) ガチャの目玉カードだけ、買取チェッカーで買取額を確認し、相場より高ければそちらを採用（手元判断）。"],
@@ -201,6 +208,46 @@ def write_usage(ss):
     ]})
 
 
+VISIBLE_COLS = sum(1 for d in DISPLAY if d[3] != "tech")  # 表示列数
+SOUBA_COL = next(i for i, d in enumerate(DISPLAY) if d[1] == "souba")
+FREQ_COL = next(i for i, d in enumerate(DISPLAY) if d[1] == "freq")
+
+
+def setup_filters(ss, ws, nrows):
+    """閲覧者向けプリセット: 見出しにフィルタ▼ + フィルタ表示(相場順/毎日のみ/空欄除く)。"""
+    sid = ws.id
+    rng = {"sheetId": sid, "startRowIndex": HEADER_ROW - 1, "endRowIndex": HEADER_ROW + nrows,
+           "startColumnIndex": 0, "endColumnIndex": VISIBLE_COLS}
+    sort_souba = [{"dimensionIndex": SOUBA_COL, "sortOrder": "DESCENDING"}]
+    # 既存フィルタ表示/基本フィルタを削除(重複防止)
+    dels = []
+    try:
+        meta = ss.fetch_sheet_metadata()
+        for sh in meta.get("sheets", []):
+            if sh["properties"]["sheetId"] == sid:
+                for fv in sh.get("filterViews", []):
+                    dels.append({"deleteFilterView": {"filterId": fv["filterViewId"]}})
+    except Exception:
+        pass
+    dels.append({"clearBasicFilter": {"sheetId": sid}})
+    try:
+        ss.batch_update({"requests": dels})
+    except Exception:
+        pass
+    adds = [
+        {"setBasicFilter": {"filter": {"range": dict(rng)}}},
+        {"addFilterView": {"filter": {"title": "相場が高い順", "range": dict(rng), "sortSpecs": sort_souba}}},
+        {"addFilterView": {"filter": {"title": "毎日更新(高額)だけ", "range": dict(rng),
+                                      "criteria": {str(FREQ_COL): {"hiddenValues": ["週1"]}}, "sortSpecs": sort_souba}}},
+        {"addFilterView": {"filter": {"title": "相場あり(空欄を除く)", "range": dict(rng),
+                                      "criteria": {str(SOUBA_COL): {"condition": {"type": "NOT_BLANK"}}}, "sortSpecs": sort_souba}}},
+    ]
+    try:
+        ss.batch_update({"requests": adds})
+    except Exception:
+        pass
+
+
 def write_tab(ws, rows, status):
     ss = ws.spreadsheet
     ws.clear()
@@ -217,6 +264,7 @@ def write_tab(ws, rows, status):
         ws.update(f"A{HEADER_ROW + start}", matrix[start:start + CHUNK], value_input_option="RAW")
         time.sleep(0.8)
     ss.batch_update({"requests": fmt_requests(ws.id, len(HEADERS), len(rows), status["ok"])})
+    setup_filters(ss, ws, len(rows))
 
 
 def main():
