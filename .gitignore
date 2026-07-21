@@ -29,3 +29,15 @@ Thumbs.db
 
 # Drive画像 (DBに登録すれば画像本体は不要、ローカルのみ保持)
 data/dopa_paid_images/
+
+# スニダン価格インデックス 中間・状態ファイル(巨大/一時)
+data/snkrdunk_all_ids.csv
+data/snkrdunk_priced_master.csv
+data/snkrdunk_pokemon_onepiece_master.csv
+data/snkrdunk_index_final.csv
+data/index_for_sheet.csv
+data/snkrdunk_card_index.csv
+data/.master_processed_ids.txt
+data/.priced_ids.txt
+data/.*_pid
+data/*.log

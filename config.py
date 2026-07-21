@@ -136,3 +136,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+# スニダン価格インデックス 専用スプレッドシート
+INDEX_SHEET_ID = "17PBcnVbPZj935ZkRHFLMFzUw5nmNgpeTR8g0W7PAD5A"
+INDEX_TABS = {"pokemon": "ポケカ", "onepiece": "ワンピ"}
