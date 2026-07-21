@@ -101,7 +101,8 @@ def parse_design(uploaded):
         tmp = HERE / "_uploaded_design.xlsx"
         tmp.write_bytes(uploaded.getbuffer())
         try:
-            return B.read_design_xlsx(str(tmp), "設計入力")
+            # シート名は指定せず自動検出（旧「設計入力」/新「設計テンプレート」両対応）
+            return B.read_design_xlsx(str(tmp))
         finally:
             tmp.unlink(missing_ok=True)
     return list(csv.DictReader(io.StringIO(uploaded.getvalue().decode("utf-8-sig"))))

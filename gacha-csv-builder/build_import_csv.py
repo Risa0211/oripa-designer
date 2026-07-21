@@ -50,16 +50,33 @@ from pathlib import Path
 
 import palette_lookup  # 演出カードの種別→パレットキー自動導出
 
-# 設計テンプレ「設計入力」賞品テーブルの列ヘッダ → ビルダー内部キーの対応
+# 設計テンプレ賞品テーブルの列ヘッダ → ビルダー内部キーの対応。
+# ★2形式を両対応: 旧「設計入力」(賞品名/型番/口数…) と 新「設計テンプレート」(カード名/レアリティ/本数…)
 DESIGN_XLSX_MAP = {
     "賞ランク": "ランク",
+    # カード名（旧=賞品名 / 新=カード名）
     "賞品名": "カード名",
+    "カード名": "カード名",
+    # レアリティ（新テンプレは独立列。照合の絞り込み＋G列カテゴリに使う）
+    "レアリティ": "レアリティ",
+    "レア": "レアリティ",
+    # 型番（旧=型番 / 新=品番(元) or 品番(スニダン)）
     "型番": "型番",
+    "品番(元)": "型番",
+    "品番（元）": "型番",
+    "品番(スニダン)": "型番",
+    "品番（スニダン）": "型番",
+    # 在庫（旧=口数 / 新=本数。本数(変更)があれば最終値として優先）
     "口数": "在庫",
+    "本数": "在庫",
+    "本数(変更)": "在庫",
+    "本数（変更）": "在庫",
+    # 還元ポイント（旧=表示PT/枚(自動) / 新=表示PT/枚）
     "表示PT/枚\n(自動)": "還元ポイント",
     "表示PT/枚(自動)": "還元ポイント",
     "表示PT/枚": "還元ポイント",
-    "実価値/枚\n(円)": "参照価格",   # D Price に使う（管理画面で必須の価格）
+    # 参照価格＝D Price（管理画面で必須）。旧新とも 実価値/枚
+    "実価値/枚\n(円)": "参照価格",
     "実価値/枚(円)": "参照価格",
     "実価値/枚": "参照価格",
     "実価値": "参照価格",
@@ -76,23 +93,41 @@ DESIGN_XLSX_MAP = {
 }
 
 
-def read_design_xlsx(path: str, sheet: str = "設計入力"):
+def _find_prize_table(wb):
+    """賞品テーブルを持つシートとヘッダ行を自動検出。
+    旧「設計入力」(A列='賞ランク'・ヘッダ行11) と 新「設計テンプレート」(ヘッダ行7) の
+    どちらでも、A列に'賞ランク'があるシート/行を探し当てる。
+    戻り値: (rows, hdr_i) / 見つからなければ (None, None)。"""
+    # 優先的に見るシート名（あれば先に）。無くても全シート走査するので必須ではない。
+    preferred = [s for s in ("設計入力", "設計テンプレート") if s in wb.sheetnames]
+    order = preferred + [s for s in wb.sheetnames if s not in preferred]
+    for name in order:
+        rows = list(wb[name].iter_rows(values_only=True))
+        for i, r in enumerate(rows):
+            if r and r[0] is not None and str(r[0]).strip() == "賞ランク":
+                return rows, i
+    return None, None
+
+
+def read_design_xlsx(path: str, sheet: str = None):
     """自社のガチャ設計テンプレ(.xlsx)の『賞品テーブル』を直接読む。
-    ヘッダ行(A列='賞ランク')を自動検出し、『合計』行 or 空行まで取得。"""
+    旧「設計入力」/新「設計テンプレート」の両方に対応（シート名・ヘッダ行を自動検出）。
+    sheet を指定した場合はそのシートを優先的に探す。"""
     import openpyxl  # 遅延import（CSV運用だけなら不要）
     wb = openpyxl.load_workbook(path, data_only=True)
-    if sheet not in wb.sheetnames:
-        sys.exit(f"[ERROR] シート'{sheet}'が無い。存在: {wb.sheetnames}")
-    ws = wb[sheet]
-    rows = list(ws.iter_rows(values_only=True))
-    # ヘッダ行検出
-    hdr_i = None
-    for i, r in enumerate(rows):
-        if r and str(r[0]).strip() == "賞ランク":
-            hdr_i = i
-            break
+
+    rows = hdr_i = None
+    if sheet and sheet in wb.sheetnames:  # 明示指定があればまずそのシートで探す
+        srows = list(wb[sheet].iter_rows(values_only=True))
+        for i, r in enumerate(srows):
+            if r and r[0] is not None and str(r[0]).strip() == "賞ランク":
+                rows, hdr_i = srows, i
+                break
+    if hdr_i is None:                      # 見つからなければ全シート自動検出
+        rows, hdr_i = _find_prize_table(wb)
     if hdr_i is None:
-        sys.exit("[ERROR] 賞品テーブルのヘッダ(賞ランク)が見つからない")
+        sys.exit(f"[ERROR] 賞品テーブルのヘッダ(賞ランク)が見つからない。シート: {wb.sheetnames}")
+
     headers = [("" if c is None else str(c).strip()) for c in rows[hdr_i]]
     out = []
     for r in rows[hdr_i + 1:]:
@@ -107,7 +142,11 @@ def read_design_xlsx(path: str, sheet: str = "設計入力"):
                 # 口数などの 1.0 → 1 整形
                 if isinstance(v, float) and v.is_integer():
                     v = int(v)
-                d[key] = str(v)
+                v = str(v).strip()
+                if v == "":
+                    continue
+                # 同じ内部キーに複数列が対応する場合（本数/本数(変更)等）、後勝ちだが空はスキップ済
+                d[key] = v
         if d:
             out.append(d)
     return out
@@ -289,9 +328,10 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
             nk = _name_key(design_name)
             # まず賞品名で照合（末尾レア表記を剥がした基底名も試す）
             cands = name_index.get(nk) or name_index.get(_strip_rarity(nk)) or []
-            dr = _design_rarity(design_name)
+            # レアで絞り込み：新テンプレの独立レア列を優先、無ければ賞品名末尾のレア表記。
+            dr = norm_key(get(d, "レアリティ", "rarity")) or _design_rarity(design_name)
             if dr and len(cands) > 1:
-                rared = [c for c in cands if _name_key(get(c, "レアリティ", "rarity")) == dr]
+                rared = [c for c in cands if norm_key(get(c, "レアリティ", "rarity")) == dr]
                 if rared:
                     cands = rared
             if cands:
