@@ -173,6 +173,13 @@ def resolve_image_url(row, src_url, filename, title):
     return src_url  # 認証無し=閲覧のみ→元URLを直接使う（後で移行可）
 
 
+def is_box_like(*texts):
+    """BOX/パック/ボックス等の物販商品かを名前/タイトルから判定（→カテゴリBOX・バッジ未開封）。"""
+    kw = ("BOX", "ボックス", "パック", "PACK", "ブースター", "カートン", "未開封")
+    blob = " ".join(str(t or "") for t in texts).upper()
+    return any(k.upper() in blob for k in kw)
+
+
 def img_tag(url, radius=6):
     """全画面ボタンの付かないHTML画像（st.imageの拡大トラップを回避）。"""
     if not url:
@@ -291,8 +298,14 @@ def render_make(uploaded, category="交換専用"):
                             picked = {"画像URL上書き": url,
                                       "レアリティ": h.get("rarity", ""),
                                       "型番": h.get("kata", "")}
-                            if adm_cat in cat_opts:       # 管理画面の実カテゴリが有効フォルダーなら採用
+                            # BOX/パック商品なら カテゴリ=BOX＋バッジ=未開封 を自動セット
+                            if is_box_like(h.get("title", ""), h.get("name", ""), name):
+                                picked["カテゴリ"] = "BOX"
+                                picked["バッジ"] = "未開封"
+                            elif adm_cat in cat_opts:     # 実カテゴリが有効フォルダーなら採用
                                 picked["カテゴリ"] = adm_cat
+                            elif h.get("rarity", "") in cat_opts:  # レアが有効フォルダーなら採用
+                                picked["カテゴリ"] = h.get("rarity", "")
                             manual.setdefault(row, {}).update(picked)
                             st.rerun()
             else:

@@ -109,6 +109,15 @@ def _find_prize_table(wb):
     return None, None
 
 
+_BOX_KW = ("BOX", "ボックス", "パック", "PACK", "ブースター", "カートン", "未開封")
+
+
+def _is_box_like(*texts):
+    """BOX/パック等の物販商品かを名前/タイトルから判定（→カテゴリBOX・バッジ未開封）。"""
+    blob = unicodedata.normalize("NFKC", " ".join(str(t or "") for t in texts)).upper()
+    return any(k.upper() in blob for k in _BOX_KW)
+
+
 _KANJI_NUM = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5",
               "六": "6", "七": "7", "八": "8", "九": "9", "十": "10"}
 
@@ -276,6 +285,40 @@ def _strip_rarity(name_key):
     return _RAR_SUFFIX.sub("", name_key)
 
 
+def _card_identity(c):
+    """カードの同一性キー。型番があれば型番+名前、無ければ名前+レア。
+    同じキー＝同じカード（画像ファイルが違うだけ）とみなす。"""
+    k = norm_key(get(c, "型番", "kataban", "card_number", "number"))
+    nm = _name_key(get(c, "カード名", "name", "title"))
+    rr = norm_key(get(c, "レアリティ", "rarity"))
+    return ("K", k, nm) if k else ("N", nm, rr)
+
+
+def _prefer_candidate(a, b):
+    """同一カードの重複から残す1枚を選ぶ。自社保管庫(WP)URL＞その他。"""
+    ua = (get(a, "画像URL", "image_url", "image") or "").lower()
+    ub = (get(b, "画像URL", "image_url", "image") or "").lower()
+    a_wp = "minnano-toreka.com" in ua
+    b_wp = "minnano-toreka.com" in ub
+    if a_wp != b_wp:
+        return a if a_wp else b
+    return a  # 同格なら先勝ち
+
+
+def _dedupe_same_card(cands):
+    """同一カード（同型番/同名レア）の重複画像を1枚に集約。別アート（別型番）は残す。"""
+    seen = {}
+    order = []
+    for c in cands:
+        cid = _card_identity(c)
+        if cid in seen:
+            seen[cid] = _prefer_candidate(seen[cid], c)
+        else:
+            seen[cid] = c
+            order.append(cid)
+    return [seen[cid] for cid in order]
+
+
 def _design_rarity(design_name):
     """賞品名末尾のレア表記を取り出す（無ければ ''）。照合の絞り込みに使う。"""
     m = _RAR_SUFFIX.search(_name_key(design_name))
@@ -405,6 +448,11 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                     warnings.append(
                         f"設計 {i}行目「{design_name}」: 型番{raw_kata}は別カード{len(kcands)}件に該当し賞品名と不一致→要追加扱い")
 
+            # ★同一カードの重複画像を1枚に集約（管理画面は同じカードの画像を多数持つため、
+            #   それらを別アート扱いして要選択に化けるのを防ぐ）。本当に別アート（別型番）だけ残す。
+            if len(cands) > 1:
+                cands = _dedupe_same_card(cands)
+
             if len(cands) == 1:
                 m = cands[0]
                 image_url  = get(m, "画像URL", "image_url", "image", "Image URL-src")
@@ -448,6 +496,11 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
         if not inventory:
             warnings.append(f"設計 {i}行目 型番{key}: 在庫数が未入力")
         # G列カテゴリ：実カードはレアリティ自動。要追加で手動選択したカードのレアリティも採用。
+        # BOX/パック商品は名前/タイトルから判定してカテゴリ=BOX（バッジも未開封）に。
+        if not category and _is_box_like(design_name, title, get(m, "カード名"), get(m, "画像タイトル")):
+            category = "BOX"
+            if not badges:
+                badges = "未開封"
         # どちらも無い賞（演出/ポイント変換/最低保証）だけ default_category にフォールバック。
         category = category or get(d, "レアリティ", "rarity") or default_category
         if not category:
