@@ -111,6 +111,25 @@ def _find_prize_table(wb):
 
 _BOX_KW = ("BOX", "ボックス", "パック", "PACK", "ブースター", "カートン", "未開封")
 
+# 演出/擬似カードの種別 → 管理画面フォルダー（実データで確認: PSA10=鑑定済カード3725枚,
+# BOX/パック=BOX, pt交換/なにかのカード=交換専用）。福袋/なにかAR-HRは要確認のため交換専用に暫定。
+_ENSHUTSU_CATEGORY = {
+    "PSA10": "鑑定済カード",
+    "BOX": "BOX",
+    "パック": "BOX",
+    "ポイント交換": "交換専用",
+    "なにかのカード": "交換専用",
+    "最低保証": "交換専用",
+    "なにかAR/HR": "交換専用",
+    "福袋": "交換専用",
+}
+
+
+def _enshutsu_category(shubetsu):
+    """演出種別からG列フォルダーを決める。未知はNone（→呼び出し側で交換専用フォールバック）。"""
+    from palette_lookup import _norm_shubetsu
+    return _ENSHUTSU_CATEGORY.get(_norm_shubetsu(shubetsu))
+
 
 def _is_box_like(*texts):
     """BOX/パック等の物販商品かを名前/タイトルから判定（→カテゴリBOX・バッジ未開封）。"""
@@ -544,7 +563,8 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                 badges = "未開封"
         category = category or get(d, "レアリティ", "rarity")
         if not category and is_enshutsu:
-            category = default_category      # 演出/pt/最低保証だけ交換専用にフォールバック
+            # 演出は種別ごとの正しいフォルダー（PSA10=鑑定済カード / BOX=BOX / pt=交換専用…）
+            category = _enshutsu_category(eff_shubetsu) or default_category
         if not category:
             warnings.append(f"設計 {i}行目「{design_name}」: カテゴリ(G)が未確定→"
                             f"①でカテゴリ(G)を指定してください（不明なまま出すと管理画面で弾かれます）")
