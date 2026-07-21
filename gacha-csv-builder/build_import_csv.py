@@ -319,6 +319,40 @@ def _dedupe_same_card(cands):
     return [seen[cid] for cid in order]
 
 
+def _master_prefer(a, b):
+    """同一カードが複数ソースにある時、残す1件を選ぶ。DOPA(レア/クリーン画像)＞WP＞レアあり。"""
+    def score(r):
+        s = 0
+        src = (get(r, "source") or "")
+        if src.startswith("DOPA"):
+            s += 4
+        if "minnano-toreka.com" in (get(r, "画像URL", "image_url", "image") or "").lower():
+            s += 2
+        if get(r, "レアリティ", "rarity"):
+            s += 1
+        return s
+    return a if score(a) >= score(b) else b
+
+
+def dedupe_master_rows(rows):
+    """マスター結合時、同一カード（型番＋名前）の二重登録を1件に集約（DOPA優先）。
+    型番が無い行は安全側で残す（同名でも別アートの可能性があるため集約しない）。"""
+    seen, order, out_nok = {}, [], []
+    for r in rows:
+        k = norm_key(get(r, "型番", "kataban", "card_number", "number"))
+        nm = _name_key(get(r, "カード名", "name", "title"))
+        if not k:
+            out_nok.append(r)          # 型番なしはそのまま保持
+            continue
+        cid = (k, nm)
+        if cid in seen:
+            seen[cid] = _master_prefer(seen[cid], r)
+        else:
+            seen[cid] = r
+            order.append(cid)
+    return [seen[cid] for cid in order] + out_nok
+
+
 def _design_rarity(design_name):
     """賞品名末尾のレア表記を取り出す（無ければ ''）。照合の絞り込みに使う。"""
     m = _RAR_SUFFIX.search(_name_key(design_name))

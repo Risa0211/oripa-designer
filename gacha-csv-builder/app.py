@@ -57,12 +57,13 @@ def wp_creds():
 
 @st.cache_data(show_spinner=False)
 def load_master():
-    """①照合用のカード原簿（DOPAポケ＋DOPAワンピ＋管理画面移行分）。型番/名前で賞品を引く。"""
+    """①照合用のカード原簿（DOPAポケ＋DOPAワンピ＋管理画面移行分）。型番/名前で賞品を引く。
+    同一カード（型番＋名前）の二重登録はDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
     for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
         if extra.exists():
             rows = rows + B.read_csv_dict(str(extra))
-    return rows
+    return B.dedupe_master_rows(rows)
 
 
 @st.cache_data(show_spinner="管理画面ダンプ読込中…")
@@ -88,12 +89,13 @@ def load_palette():
 
 @st.cache_data(show_spinner=False)
 def load_store():
-    """保管庫マスター（DOPAポケ + DOPAワンピ + 管理画面移行分）。カード名/型番/URL/媒体id付き。"""
+    """保管庫マスター（DOPAポケ + DOPAワンピ + 管理画面移行分）。カード名/型番/URL/媒体id付き。
+    同一カード（型番＋名前）の二重登録はDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
     for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
         if extra.exists():
             rows = rows + B.read_csv_dict(str(extra))
-    return rows
+    return B.dedupe_master_rows(rows)
 
 
 def parse_design(uploaded):
