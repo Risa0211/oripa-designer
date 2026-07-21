@@ -301,12 +301,22 @@ def render_make(uploaded, category="交換専用"):
             cur = manual.get(row, {})
             cur_cat = cur.get("カテゴリ", "") or cur.get("レアリティ", "")
             gi = (cat_opts.index(cur_cat) + 1) if cur_cat in cat_opts else 0
-            gsel = st.selectbox(f"カテゴリ(G)を指定（未指定なら自動）", ["（自動）"] + cat_opts,
-                                index=gi, key=f"gcat_{row}")
+            gc1, gc2 = st.columns(2)
+            gsel = gc1.selectbox(f"カテゴリ(G)を指定（未指定なら自動）", ["（自動）"] + cat_opts,
+                                 index=gi, key=f"gcat_{row}")
             if gsel != "（自動）":
                 manual.setdefault(row, {})["カテゴリ"] = gsel
             elif "カテゴリ" in cur and cur.get("カテゴリ") not in cat_opts:
                 manual[row].pop("カテゴリ", None)
+            # バッジ(L)：BOX/未開封は「未開封」、鑑定品は「PSA10」等。複数はカンマ。
+            badge_opts = ["（なし）", "未開封", "PSA10", "PSA9", "PSA8", "発送のみ", "シングルカード", "傷あり"]
+            cb = cur.get("バッジ", "")
+            bi = badge_opts.index(cb) if cb in badge_opts else 0
+            bsel = gc2.selectbox("バッジ(L)（BOXは未開封など）", badge_opts, index=bi, key=f"badge_{row}")
+            if bsel != "（なし）":
+                manual.setdefault(row, {})["バッジ"] = bsel
+            elif "バッジ" in cur:
+                manual[row].pop("バッジ", None)
             with st.expander("手動で指定（画像URL / 演出パレット）"):
                 mu = st.text_input("画像URLを直接指定", key=f"url_{row}",
                                    value=manual.get(row, {}).get("画像URL上書き", ""))
