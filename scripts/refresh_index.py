@@ -31,7 +31,7 @@ DISPLAY = [
     ("型番", "card_number", 110, "text"),
     ("種別", "item_type", 80, "item"),
     ("相場", "souba", 120, "price"),
-    ("毎日更新", "daily_check", 80, "flag"),
+    ("更新頻度", "freq", 90, "text"),
     ("備考", "note", 240, "text"),
     ("スニダンURL", "url", 90, "url"),
     ("apparel_id", "apparel_id", 90, "tech"),
@@ -45,23 +45,27 @@ HEADERS = [d[0] for d in DISPLAY]
 USAGE = [
     ["🎴 スニダン価格インデックス ｜ 使い方"],
     [""],
-    ["スニダンにある全ポケカ・ワンピのカード相場を毎朝自動で集めた一覧です。"],
+    ["スニダンにある全ポケカ・ワンピのカード相場を自動で集めた一覧です。"],
     [""],
     ["■ どのタブを見る？"],
     ["   ・「ポケカ」…ポケモンカード / 「ワンピ」…ワンピースカード"],
     [""],
-    ["■ 各タブの見方"],
-    ["   ・上の色ボックス … 最終更新日時と状態(🟢正常/🔴失敗)。毎朝6:20自動更新。"],
-    ["   ・「相場」列 … これがそのカードの採用相場(倍率をかける元)。"],
-    ["        シングル = スニダンPSA10の直近買取価格"],
-    ["        BOX・パック = スニダン表記の下限額（「¥1,000〜」なら¥1,000）"],
-    ["   ・「毎日更新」○ … 相場ありで毎朝再取得する対象。"],
-    ["   ・相場が空欄 … スニダンに取引履歴が無いカード(かなり希少)。備考に明記。"],
-    ["        価値が無いのではなく流通が少なく履歴が無いだけ。履歴が出れば自動で入ります。"],
+    ["■ 相場（そうば）列＝これを見ればOK"],
+    ["   ・そのカードの採用相場です（倍率をかける元）。"],
+    ["   ・シングル … スニダンPSA10の直近買取価格"],
+    ["   ・BOX・パック … スニダン表記の下限額（「¥1,000〜」なら¥1,000）"],
+    ["   ・空欄 … スニダンに取引履歴が無いカード（かなり希少）。備考に明記。"],
+    ["        ※価値が無いのではなく流通が少ないだけ。履歴が出れば自動で入ります。"],
+    [""],
+    ["■ 更新頻度列（どのくらいの頻度で価格を取り直すか）"],
+    ["   ・「毎日」… 相場が¥3,000超の高額カード。毎朝6:20に最新化。"],
+    ["   ・「週1」… それ以外（安いカード＋希少カード）。7日で必ず一巡して取り直し。"],
+    ["        →希少カードも週1で新しい出品/履歴が出ていないかチェックしています（放置しません）。"],
+    ["   ・上の色ボックス … 最終更新日時と状態(🟢正常/🔴失敗)。失敗時はChatwork通知。"],
     [""],
     ["■ やること"],
-    ["   1) 基本は何もしなくてOK。毎朝スニダン相場が自動更新。"],
-    ["   2) ガチャの目玉カードだけ、買取チェッカーで買取額を確認し、相場より高ければそちらを採用(手元判断)。"],
+    ["   1) 基本は何もしなくてOK。価格は自動で更新されます。"],
+    ["   2) ガチャの目玉カードだけ、買取チェッカーで買取額を確認し、相場より高ければそちらを採用（手元判断）。"],
 ]
 
 
@@ -96,11 +100,24 @@ def fetch_min_price(url):
         return 0
 
 
+DAILY_THRESHOLD = 3000  # 相場>¥3,000=毎日 / それ以外=7日巡回
+
+
 def reprice(rows):
-    """相場ありカードを再取得。single=PSA10直近 / それ以外=表記下限(minPrice)。"""
+    """毎日: 高額(相場>¥3,000) + その他全カードを1/7ずつ巡回(希少含む・7日で一巡)。
+    single=PSA10直近 / それ以外=表記下限(minPrice)。"""
     from snkrdunk_client import fetch_recent_price
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    targets = [r for r in rows if r.get("daily_check") == "TRUE"]
+    bucket = datetime.now(JST).timetuple().tm_yday % 7
+
+    def is_target(r):
+        if _int(r.get("souba")) > DAILY_THRESHOLD:
+            return True
+        try:
+            return int(r["apparel_id"]) % 7 == bucket
+        except Exception:
+            return False
+    targets = [r for r in rows if is_target(r)]
 
     def one(r):
         try:
@@ -125,7 +142,7 @@ def recompute(rows):
     for r in rows:
         souba = _int(r.get("psa10_price")) if r["item_type"] == "single" else _int(r.get("min_price"))
         r["souba"] = str(souba) if souba else ""
-        r["daily_check"] = "TRUE" if souba else "FALSE"
+        r["freq"] = "毎日" if souba > DAILY_THRESHOLD else "週1"
         if not souba:
             r["note"] = "取引履歴なし（希少）"
 
@@ -187,12 +204,12 @@ def write_usage(ss):
 def write_tab(ws, rows, status):
     ss = ws.spreadsheet
     ws.clear()
-    daily = sum(1 for r in rows if r["daily_check"] == "TRUE")
+    mainichi = sum(1 for r in rows if r.get("freq") == "毎日")
     icon = "🟢 正常" if status["ok"] else "🔴 失敗"
     top = [
         [f"🎴 {status['label']} ｜ スニダン価格インデックス", "", "", "", f"状態: {icon}"],
         [f"最終更新: {status['ts']}（毎朝 6:20 自動更新）", "", "", "", status.get("detail", "")],
-        [f"総 {len(rows):,}件 ／ 相場あり(毎日更新) {daily:,}件 ／ 空欄=取引履歴なし(希少)", "", "", "", ""],
+        [f"総 {len(rows):,}件 ／ 毎日更新 {mainichi:,}件（相場>¥3,000）／ 週1巡回 {len(rows)-mainichi:,}件", "", "", "", ""],
     ]
     ws.update("A1", top, value_input_option="RAW")
     matrix = build_matrix(rows)
