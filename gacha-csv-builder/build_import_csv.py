@@ -109,6 +109,26 @@ def _find_prize_table(wb):
     return None, None
 
 
+_KANJI_NUM = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5",
+              "六": "6", "七": "7", "八": "8", "九": "9", "十": "10"}
+
+
+def _norm_rank(rank):
+    """賞ランクを管理画面が受け付ける表記に正規化。
+    例: '一等'→'1等' / '２等'→'2等' / 'その他'/'ラストワン'等はそのまま。"""
+    r = unicodedata.normalize("NFKC", str(rank or "")).strip()
+    if not r:
+        return r
+    # 「一等」「十等」等の漢数字＋等 → 算用数字＋等
+    m = re.match(r"^([一二三四五六七八九十]+)等$", r)
+    if m:
+        k = m.group(1)
+        if k in _KANJI_NUM:
+            return _KANJI_NUM[k] + "等"
+        # 十一等など二桁（十X）→ 10+X はまれ。素直に各桁変換は避け、既知のみ変換。
+    return r
+
+
 def _find_header_row(rows):
     """行リスト(list of list/tuple)から、A列に'賞ランク'があるヘッダ行indexを返す。無ければNone。"""
     for i, r in enumerate(rows):
@@ -304,7 +324,7 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
         shubetsu     = get(d, "種別", "演出種別")
 
         # --- 設計側（賞ごと）を先に取得（演出ptの導出に redeem を使う）---
-        rank       = get(d, "ランク", "card_rank", "rank")          # 1等/2等...
+        rank       = _norm_rank(get(d, "ランク", "card_rank", "rank"))  # 一等→1等 等に正規化
         inventory  = get(d, "在庫", "口数", "inventory")
         redeem     = get(d, "還元ポイント", "redemption_points", "redeem")
 
