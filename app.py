@@ -467,37 +467,40 @@ with tab_design:
         else:
             pool = sorted(pool, key=lambda x: -_val_for(x))
         shown = pool[:int(pz_show)]
-        st.caption(f"候補 {len(pool):,} 件中 上位 {len(shown)} 件 ｜ ✅チェックして下のボタンでまとめて追加できます（目玉を一気に）")
-        # チェックして複数まとめて追加（1枚ずつでなく効率化）
-        res_rows = [{
-            "追加": False, "カード名": it.name, "型番": (it.card_no or it.series or ""),
-            "直近取引": _recent(it), "相場": (_souba(it) or None), "区分": it.tab,
-            "スニダン": it.snkrdunk_url,
-        } for it in shown]
-        res_edit = st.data_editor(
-            pd.DataFrame(res_rows), hide_index=True, use_container_width=True, key="pz_search_editor",
-            disabled=["カード名", "型番", "直近取引", "相場", "区分", "スニダン"],
-            column_config={
-                "追加": st.column_config.CheckboxColumn("追加", width="small"),
-                "直近取引": st.column_config.NumberColumn("直近取引", format="¥%d"),
-                "相場": st.column_config.NumberColumn("相場", format="¥%d"),
-                "スニダン": st.column_config.LinkColumn("スニダン", display_text="開く"),
-            },
-        )
-        ab1, ab2 = st.columns([1, 3])
-        _picked_idx = [i for i, v in enumerate(res_edit["追加"].tolist()) if v]
-        if ab1.button(f"➕ チェックした{len(_picked_idx)}件を賞品に追加", type="primary",
-                      disabled=not _picked_idx, use_container_width=True, key="pz_bulk_add"):
-            newrows = []
-            for i in _picked_idx:
-                it = shown[i]
-                newrows.append({"賞ランク": "", "カード名": it.name, "型番": (it.card_no or it.series or ""),
-                                "口数": 1, "実価値/枚": int(_val_for(it)), "送料/件": 500,
-                                "受取方法": METHOD_CHOICE, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False})
-            st.session_state.pz_df = pd.concat(
-                [st.session_state.pz_df, pd.DataFrame(newrows, columns=PZ_COLS)], ignore_index=True)
-            st.rerun()
-        ab2.caption("💡 まず目玉を複数チェックして追加 → 賞ランク/口数を整えて、残りは下の『残りポイント配分ガイド』を見ながら下位賞を足します。")
+        if not shown:
+            st.info("🔍 該当するカードがありません。検索語・カテゴリー・目標相場を変えてみてください。")
+        else:
+            st.caption(f"候補 {len(pool):,} 件中 上位 {len(shown)} 件 ｜ ✅チェックして下のボタンでまとめて追加できます（目玉を一気に）")
+            # チェックして複数まとめて追加（1枚ずつでなく効率化）
+            res_rows = [{
+                "追加": False, "カード名": it.name, "型番": (it.card_no or it.series or ""),
+                "直近取引": _recent(it), "相場": (_souba(it) or None), "区分": it.tab,
+                "スニダン": it.snkrdunk_url,
+            } for it in shown]
+            res_edit = st.data_editor(
+                pd.DataFrame(res_rows), hide_index=True, use_container_width=True, key="pz_search_editor",
+                disabled=["カード名", "型番", "直近取引", "相場", "区分", "スニダン"],
+                column_config={
+                    "追加": st.column_config.CheckboxColumn("追加", width="small"),
+                    "直近取引": st.column_config.NumberColumn("直近取引", format="¥%d"),
+                    "相場": st.column_config.NumberColumn("相場", format="¥%d"),
+                    "スニダン": st.column_config.LinkColumn("スニダン", display_text="開く"),
+                },
+            )
+            ab1, ab2 = st.columns([1, 3])
+            _picked_idx = [i for i, v in enumerate(res_edit["追加"].tolist()) if v] if "追加" in res_edit else []
+            if ab1.button(f"➕ チェックした{len(_picked_idx)}件を賞品に追加", type="primary",
+                          disabled=not _picked_idx, use_container_width=True, key="pz_bulk_add"):
+                newrows = []
+                for i in _picked_idx:
+                    it = shown[i]
+                    newrows.append({"賞ランク": "", "カード名": it.name, "型番": (it.card_no or it.series or ""),
+                                    "口数": 1, "実価値/枚": int(_val_for(it)), "送料/件": 500,
+                                    "受取方法": METHOD_CHOICE, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False})
+                st.session_state.pz_df = pd.concat(
+                    [st.session_state.pz_df, pd.DataFrame(newrows, columns=PZ_COLS)], ignore_index=True)
+                st.rerun()
+            ab2.caption("💡 まず目玉を複数チェックして追加 → 賞ランク/口数を整えて、残りは下の『残りポイント配分ガイド』を見ながら下位賞を足します。")
 
     # ---------- ③ 賞品テーブル（直接編集） ----------
     st.markdown("### ③ 賞品テーブル（直接編集・行の追加/削除OK）")
