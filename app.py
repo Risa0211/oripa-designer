@@ -304,12 +304,11 @@ def _fetch_price_for_url(snk_url, card_name, rarity):
 
 # ---------- メインタブ ----------
 (tab_design, tab_template,
- tab_torecacenter, tab_dopa_list, tab_paid_list, tab_new_list,
+ tab_research,
  tab_products, tab_inventory) = st.tabs([
-    "📝 新規設計",
+    "🎯 ガチャ設計",
     "📋 景品設計（競合コピー）",
-    "🎴 トレカセンター商品一覧", "🎲 DOPA商品一覧",
-    "🎰 有料ガチャ一覧", "🆕 新規ガチャ一覧",
+    "🔎 競合リサーチ",
     "🎰 作成済みガチャ", "🃏 商品一覧"
 ])
 
@@ -1978,8 +1977,14 @@ with tab_template:
                 st.rerun()
 
 
+# ---------- 競合リサーチ（4一覧をサブタブで統合）----------
+with tab_research:
+    st.subheader("🔎 競合リサーチ")
+    st.caption("他社ガチャの参考リサーチ。ソース(トレカセンター/DOPA/有料/新規)を下のサブタブで切り替え。景品設計タブでリライト元に使えます。")
+    _rsub = st.tabs(["🎴 トレカセンター", "🎲 DOPA", "🎰 有料ガチャ(課金限定)", "🆕 新規限定ガチャ"])
+
 # ---------- トレカセンター商品一覧タブ ----------
-with tab_torecacenter:
+with _rsub[0]:
     st.subheader("🎴 トレカセンター商品一覧")
     st.caption(f"リサーチDB完売オリパ {len(cached_references()):,}件。検索→「📋設計する」で景品設計タブに自動転送")
 
@@ -2082,7 +2087,7 @@ with tab_torecacenter:
 
 
 # ---------- DOPA商品一覧タブ ----------
-with tab_dopa_list:
+with _rsub[1]:
     _ldopa = cached_dopa_products  # cached経由
 
     st.subheader("🎲 DOPA商品一覧")
@@ -2274,7 +2279,7 @@ with tab_dopa_list:
 
 
 # ---------- 有料ガチャ一覧タブ ----------
-with tab_paid_list:
+with _rsub[2]:
     from research import (
         PremiumGacha as _PG,
         upsert_premium_gacha as _upg, delete_premium_gacha as _dpg,
@@ -2358,7 +2363,7 @@ with tab_paid_list:
 
 
 # ---------- 新規ガチャ一覧タブ ----------
-with tab_new_list:
+with _rsub[3]:
     from research import (
         NewGacha as _NG,
         upsert_new_gacha as _ung, delete_new_gacha as _dng,
