@@ -412,7 +412,7 @@ with tab_design:
     pz_q = sc1.text_input("カード名で検索", key="pz_search", placeholder="例: リザードン / ルフィ / VSTARユニバース BOX")
     pz_target = sc2.number_input("目標相場(円・近い順)", min_value=0, value=0, step=1000, key="pz_tp")
     pz_show = sc3.number_input("表示件数", min_value=5, max_value=100, value=15, step=5, key="pz_show")
-    pz_valsrc = sc4.radio("実価値に使う価格（自動入力）", ["直近取引(PSA10)", "スニダン最安(表示)"],
+    pz_valsrc = sc4.radio("実価値に使う価格（自動入力）", ["直近取引", "相場"],
                           key="pz_valsrc", help="➕追加時に『実価値/枚』へ自動で入る価格。表に入れた後も手修正できます")
 
     def _recent(it):
@@ -422,7 +422,7 @@ with tab_design:
         return getattr(it, "price_min", 0) or it.price
 
     def _val_for(it):
-        return _min(it) if pz_valsrc.startswith("スニダン最安") else _recent(it)
+        return _min(it) if pz_valsrc == "相場" else _recent(it)
 
     if pz_q or pz_target:
         idx_all = cached_snkrdunk_index()
@@ -434,9 +434,9 @@ with tab_design:
             pool = sorted(pool, key=lambda x: abs(_val_for(x) - pz_target))
         else:
             pool = sorted(pool, key=lambda x: -_val_for(x))
-        st.caption(f"候補 {len(pool):,} 件中 上位 {min(pz_show, len(pool))} 件 ｜ 相場は2系統: 直近取引(PSA10)とスニダン最安(表示)")
+        st.caption(f"候補 {len(pool):,} 件中 上位 {min(pz_show, len(pool))} 件 ｜ 価格2系統: 直近取引 と 相場（スニダン）")
         hc = st.columns([5, 2, 2, 1, 1])
-        hc[0].caption("カード名"); hc[1].caption("直近取引(PSA10)"); hc[2].caption("スニダン最安(表示)")
+        hc[0].caption("カード名"); hc[1].caption("直近取引"); hc[2].caption("相場")
         hc[3].caption("区分"); hc[4].caption("")
         for j, it in enumerate(pool[:int(pz_show)]):
             cc = st.columns([5, 2, 2, 1, 1])
@@ -3087,13 +3087,13 @@ with tab_inventory:
     df_inv = _pd_inv.DataFrame([{
         "カテゴリー": _inv_game(it.tab), "種別": _inv_kind(it.tab), "カード名": it.name,
         "レア": it.grade, "型番": it.card_no,
-        "直近取引(PSA10)": (getattr(it, "price_recent", 0) or it.price),
-        "スニダン最安(表示)": (getattr(it, "price_min", 0) or it.price),
+        "直近取引": (getattr(it, "price_recent", 0) or it.price),
+        "相場": (getattr(it, "price_min", 0) or it.price),
         "スニダン": it.snkrdunk_url,
     } for it in filtered[:CAP]])
     st.dataframe(df_inv, use_container_width=True, hide_index=True, column_config={
-        "直近取引(PSA10)": st.column_config.NumberColumn("直近取引(PSA10)", format="¥%d"),
-        "スニダン最安(表示)": st.column_config.NumberColumn("スニダン最安(表示)", format="¥%d"),
+        "直近取引": st.column_config.NumberColumn("直近取引", format="¥%d"),
+        "相場": st.column_config.NumberColumn("相場", format="¥%d"),
         "スニダン": st.column_config.LinkColumn("スニダン", display_text="開く"),
     })
-    st.caption("💡 相場は毎朝JST6:00に自動更新。**直近取引=PSA10の直近販売／スニダン最安=画面の『¥◯〜』**。設計は『📝 新規設計』でこのカードから積めます。")
+    st.caption("💡 毎朝JST6:00に自動更新。**直近取引=PSA10の直近販売価格／相場=スニダンの相場**。設計は『📝 新規設計』でこのカードから積めます。")
