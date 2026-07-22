@@ -124,31 +124,8 @@ with header_cols[2]:
 
 st.markdown("---")
 
-# ---------- テストモード切替 ----------
-if "test_mode" not in st.session_state:
-    st.session_state.test_mode = False
-
-mode_col1, mode_col2 = st.columns([3, 1])
-with mode_col2:
-    new_mode = st.toggle(
-        "🧪 テストモード",
-        value=st.session_state.test_mode,
-        help="ONにするとテスト用スプシ（ポケモン在庫管理（テスト））に読み書きします。本番在庫は変更されません",
-    )
-    if new_mode != st.session_state.test_mode:
-        st.session_state.test_mode = new_mode
-        st.cache_data.clear()
-        # デザインセッションも初期化（在庫プールが変わるため）
-        st.session_state.pop("design_session", None)
-        st.session_state.pop("suggestions", None)
-        st.rerun()
-
-if st.session_state.test_mode:
-    with mode_col1:
-        st.warning("🧪 **テストモード中** - テスト用スプシに読み書きします。本番在庫には影響しません。")
-else:
-    with mode_col1:
-        st.info("🔴 **本番モード中** - 操作は本番の在庫スプシに反映されます")
+# テストモードは廃止（運営は無在庫運用のため本番固定）。config が本番スプシを返すよう False 固定。
+st.session_state.test_mode = False
 
 
 # ---------- スニダン価格 最終更新バナー (全タブ共通表示) ----------
@@ -451,20 +428,21 @@ with tab_design:
     st.subheader("② 在庫モード")
     mode_cols = st.columns([1, 3])
     with mode_cols[0]:
+        # 運営は無在庫運用のため 無在庫 を既定に（在庫連動は残すが非既定）
         stock_mode_label = st.radio(
             "モード",
-            options=["在庫連動", "無在庫"],
+            options=["無在庫", "在庫連動"],
             horizontal=True,
             label_visibility="collapsed",
-            help="無在庫: 在庫表の数量を無視して全カードから選択可能。保存しても在庫の予約中数量は増えません",
+            help="無在庫（既定）: 全カードから自由に選択可能。在庫連動: 在庫スプシの残数量から選択・引当",
             key="stock_mode_radio",
         )
     stock_mode = "no_stock" if stock_mode_label == "無在庫" else "linked"
     with mode_cols[1]:
         if stock_mode == "no_stock":
-            st.warning("🛒 **無在庫モード**: 全カードから自由に選択可能・在庫スプシの予約中/残数量には影響しません。販売決定後に仕入れる前提。")
+            st.info("🛒 **無在庫モード（既定）**: 全カードから自由に選択・在庫スプシは変更しません。販売決定後に仕入れる前提。")
         else:
-            st.info("📦 **在庫連動モード**: 残数量がある在庫から選択。保存で「予約中」になります。")
+            st.warning("📦 **在庫連動モード**: 残数量がある在庫から選択。保存で「予約中」になります（通常は無在庫でOK）。")
 
     # 無在庫モードのときだけ、スニダン全カード（選択カテゴリー）を候補に含められる
     _cat_word = "ワンピ" if design_category == "ワンピース" else "ポケカ"
@@ -3427,28 +3405,44 @@ with tab_premium:
     st.subheader("🎰 限定ガチャ設計")
     st.caption("DOPA型の限定ガチャ（外れ枠ポイント還元・最低保証・ラストワン賞対応）")
 
+    # カテゴリー
+    pg_cat_cols = st.columns([1, 3])
+    with pg_cat_cols[0]:
+        pg_category = st.radio(
+            "カテゴリー",
+            options=["ポケモン", "ワンピース"], horizontal=True,
+            label_visibility="collapsed", key="pg_category",
+            help="設計するカードの種類。候補カードがポケモン/ワンピースで切り替わります",
+        )
+    with pg_cat_cols[1]:
+        st.caption("🃏 " + ("ワンピースのカードから設計します" if pg_category == "ワンピース" else "ポケモンのカードから設計します"))
+
     pg_col_stock, pg_col_info = st.columns([1, 3])
     with pg_col_stock:
+        # 運営は無在庫運用のため 無在庫 を既定に
         pg_stock_label = st.radio(
             "在庫モード",
-            options=["在庫連動", "無在庫"], horizontal=True,
+            options=["無在庫", "在庫連動"], horizontal=True,
             label_visibility="collapsed",
             key="pg_stock_mode",
         )
     pg_stock_mode = "no_stock" if pg_stock_label == "無在庫" else "linked"
     with pg_col_info:
         if pg_stock_mode == "no_stock":
-            st.warning("🛒 無在庫モード: 全カード選択可・在庫スプシ非更新")
+            st.info("🛒 無在庫モード（既定）: 全カード選択可・在庫スプシ非更新")
         else:
-            st.info("📦 在庫連動モード: 残数量から選択・引当する")
+            st.warning("📦 在庫連動モード: 残数量から選択・引当する")
 
+    _pg_cat_word = "ワンピ" if pg_category == "ワンピース" else "ポケカ"
     pg_include_snk_index = False
     if pg_stock_mode == "no_stock":
         pg_include_snk_index = st.checkbox(
-            "🃏 スニダン全カード（ポケカ＋ワンピ・シングル/BOX/パック）も候補に含める",
+            f"🃏 スニダン全カード（{_pg_cat_word}・シングル/BOX/パック）も候補に含める",
             value=True, key="pg_include_snk_index",
             help="在庫スプシに無いカードも、スニダン相場付きで景品候補に選べます（無在庫販売前提）",
         )
+    elif pg_category == "ワンピース":
+        st.warning("⚠️ ワンピースの在庫はありません。在庫モードを『無在庫』にしてください。")
 
     st.markdown("### ① 販売パラメータ")
     pc1, pc2, pc3, pc4 = st.columns(4)
@@ -3486,10 +3480,12 @@ with tab_premium:
 
     pg_base_cols = st.columns([2, 3, 2])
     with pg_base_cols[0]:
+        # key 管理の widget に value= を併用しない（プリセット反映が効かなくなるため）
+        if "pg_base_markup_input" not in st.session_state:
+            st.session_state["pg_base_markup_input"] = 30.0
         pg_base_markup = st.number_input(
             "商品全体ベース上乗せ率（%）",
             min_value=-1.0, max_value=200.0, step=5.0,
-            value=float(st.session_state.get("pg_base_markup_input", 30.0)),
             key="pg_base_markup_input",
             help="`-1`で価格帯別ルール、`50`で全等1.5倍",
         )
@@ -3550,7 +3546,11 @@ with tab_premium:
         tname = cc[0].text_input(f"name_{i}", value=default[0], label_visibility="collapsed", key=f"pg_tname_{i}")
         tcount = cc[1].number_input(f"count_{i}", min_value=0, value=default[1], step=1, label_visibility="collapsed", key=f"pg_tcount_{i}")
         tprice = cc[2].number_input(f"price_{i}", min_value=0, value=default[2], step=1000, label_visibility="collapsed", key=f"pg_tprice_{i}")
-        tmarkup = cc[3].number_input(f"markup_{i}", min_value=-1.0, max_value=200.0, value=float(default[3]), step=1.0, label_visibility="collapsed", key=f"pg_tmarkup_{i}")
+        # key 管理の widget に value= を併用しない（プリセット/自動反映が効かなくなるため）
+        _pg_mk_key = f"pg_tmarkup_{i}"
+        if _pg_mk_key not in st.session_state:
+            st.session_state[_pg_mk_key] = float(default[3])
+        tmarkup = cc[3].number_input(f"markup_{i}", min_value=-1.0, max_value=200.0, step=1.0, label_visibility="collapsed", key=_pg_mk_key)
         if tname and tcount > 0:
             from designer import TierSpec
             pg_card_tiers.append(TierSpec(name=tname, count=tcount, target_price=tprice, markup_rate_pct=tmarkup))
@@ -3675,6 +3675,12 @@ with tab_premium:
             pg_inventory = None
             if pg_stock_mode == "no_stock" and pg_include_snk_index:
                 pg_inventory = _safe_load(load_all_inventory) + cached_snkrdunk_index()
+            # カテゴリーで候補を絞る（ワンピ=ワンピタブのみ / ポケモン=ワンピ以外）
+            if pg_inventory is not None:
+                if pg_category == "ワンピース":
+                    pg_inventory = [it for it in pg_inventory if it.tab.startswith("ワンピ")]
+                else:
+                    pg_inventory = [it for it in pg_inventory if not it.tab.startswith("ワンピ")]
             result_pg = design_premium(spec_pg, inventory=pg_inventory, reference=pg_selected_ref)
         tier_selections_pg = {
             tr.name: [(it.tab, it.row_idx) for it in tr.selected]
