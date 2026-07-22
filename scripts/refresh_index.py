@@ -1,12 +1,16 @@
-"""スニダン価格インデックスを専用スプレッドシートへ書き込む(相場=PSA10直近/BOX下限)。
+"""スニダン価格インデックスを専用スプレッドシートへ書き込む。
 
 タブ: 使い方 / ポケカ / ワンピ
-相場(souba): シングル=PSA10直近買取価格 / BOX・パック等=スニダン表記の下限額(minPrice)
-空欄(履歴なし)は備考に「取引履歴なし（希少）」。全カードを残す。
-毎日更新: 相場ありのカードを毎朝再取得(--reprice)。
+2つの価格列(スニダンのカードページと同じ2指標):
+  直近取引価格(souba)  = 直近に「売れた」価格(成約)。シングル=PSA10直近成約。
+  相場(souba_ask)      = 今「出ている」出品の最安値(現在値)。
+                         シングル=PSA10グレードの出品最安 / BOX・パック=表記の下限額(minPrice)。
+両方空欄 → 備考「取引履歴なし（希少）」。全カードを残す。
+更新頻度/並び順は souba_sort(=両者の高い方)で判定。
+毎日更新: souba_sort>¥3,000 + 残りは1/7ずつ巡回(--reprice)。
 
 実行: python3 scripts/refresh_index.py            # ロードのみ
-      python3 scripts/refresh_index.py --reprice  # 日次(相場再取得)
+      python3 scripts/refresh_index.py --reprice  # 日次(価格再取得)
 """
 from __future__ import annotations
 import argparse, csv, os, sys, time
@@ -30,7 +34,8 @@ DISPLAY = [
     ("レア", "rarity", 70, "text"),
     ("型番", "card_number", 110, "text"),
     ("種別", "item_type", 80, "item"),
-    ("相場", "souba", 120, "price"),
+    ("直近取引価格", "souba", 120, "price"),
+    ("相場", "souba_ask", 120, "price"),
     ("更新頻度", "freq", 90, "text"),
     ("備考", "note", 240, "text"),
     ("スニダンURL", "url", 90, "url"),
@@ -39,6 +44,8 @@ DISPLAY = [
     ("product_number", "product_number", 120, "tech"),
     ("psa10_price", "psa10_price", 90, "tech"),
     ("min_price", "min_price", 90, "tech"),
+    ("ask_price", "ask_price", 90, "tech"),
+    ("souba_sort", "souba_sort", 90, "tech"),
 ]
 HEADERS = [d[0] for d in DISPLAY]
 
@@ -50,15 +57,20 @@ USAGE = [
     ["■ どのタブを見る？"],
     ["   ・「ポケカ」…ポケモンカード / 「ワンピ」…ワンピースカード"],
     [""],
-    ["■ 相場（そうば）列＝これを見ればOK"],
-    ["   ・そのカードの採用相場です（倍率をかける元）。"],
-    ["   ・シングル … スニダンPSA10の直近買取価格"],
-    ["   ・BOX・パック … スニダン表記の下限額（「¥1,000〜」なら¥1,000）"],
-    ["   ・空欄 … スニダンに取引履歴が無いカード（かなり希少）。備考に明記。"],
-    ["        ※価値が無いのではなく流通が少ないだけ。履歴が出れば自動で入ります。"],
+    ["■ 価格は2列あります（スニダンのカードページと同じ2つの数字）"],
+    ["   ●「直近取引価格」… 直近に “売れた” 価格（成約）"],
+    ["        ・シングル … スニダンPSA10の直近成約価格"],
+    ["        ・BOX/パック … この列は空欄（成約は追っていません）"],
+    ["   ●「相場」… 今 “出ている” 出品の最安値（リアルタイムの売り希望）"],
+    ["        ・シングル … PSA10グレードの現在の出品最安（例「¥14,980〜」の14,980）"],
+    ["        ・BOX/パック … スニダン表記の下限額（「¥1,000〜」なら¥1,000）"],
+    ["   ※相場＝“売り希望の下限”なので、成約（直近取引価格）より高めに出ることがあります。"],
+    ["     両方を見比べて判断してください。相場が空欄＝そのカードは今PSA10の出品ゼロ。"],
+    ["   ※両方とも空欄 … スニダンに取引も出品も無いカード（かなり希少）。備考に明記。"],
+    ["        価値が無いのではなく流通が少ないだけ。動きが出れば自動で入ります。"],
     [""],
     ["■ 更新頻度列（どのくらいの頻度で価格を取り直すか）"],
-    ["   ・「毎日」… 相場が¥3,000超の高額カード。毎朝6:20に最新化。"],
+    ["   ・「毎日」… 価格（直近取引か相場の高い方）が¥3,000超の高額カード。毎朝6:20に最新化。"],
     ["   ・「週1」… それ以外（安いカード＋希少カード）。7日で必ず一巡して取り直し。"],
     ["        →希少カードも週1で新しい出品/履歴が出ていないかチェックしています（放置しません）。"],
     ["   ・上の色ボックス … 最終更新日時と状態(🟢正常/🔴失敗)。失敗時はChatwork通知。"],
@@ -66,7 +78,7 @@ USAGE = [
     ["■ 検索・絞り込み（閲覧のままでOK・データは変わりません）"],
     ["   ・検索 … Ctrl+F（Macは⌘+F）でカード名・型番を検索。"],
     ["   ・プリセット … 各タブ「データ → フィルタ表示」から選ぶだけ:"],
-    ["        「相場が高い順」「毎日更新(高額)だけ」「相場あり(空欄を除く)」"],
+    ["        「価格が高い順」「毎日更新(高額)だけ」「価格あり(空欄を除く)」"],
     ["   ・自由に絞る … 見出しの▼ボタン、または「データ → フィルタ表示 → 新規作成」。"],
     ["        ※フィルタ表示は自分の画面だけ。他の人の見え方は変わりません。"],
     [""],
@@ -111,14 +123,15 @@ DAILY_THRESHOLD = 3000  # 相場>¥3,000=毎日 / それ以外=7日巡回
 
 
 def reprice(rows):
-    """毎日: 高額(相場>¥3,000) + その他全カードを1/7ずつ巡回(希少含む・7日で一巡)。
-    single=PSA10直近 / それ以外=表記下限(minPrice)。"""
-    from snkrdunk_client import fetch_recent_price
+    """毎日: 高額(souba_sort>¥3,000) + その他全カードを1/7ずつ巡回(希少含む・7日で一巡)。
+    single → 直近取引価格(PSA10直近成約)と相場(PSA10出品最安)の両方を再取得。
+    それ以外 → 相場=表記下限(minPrice)。"""
+    from snkrdunk_client import fetch_recent_price, fetch_psa10_ask
     from concurrent.futures import ThreadPoolExecutor, as_completed
     bucket = datetime.now(JST).timetuple().tm_yday % 7
 
     def is_target(r):
-        if _int(r.get("souba")) > DAILY_THRESHOLD:
+        if _int(r.get("souba_sort")) > DAILY_THRESHOLD:
             return True
         try:
             return int(r["apparel_id"]) % 7 == bucket
@@ -127,30 +140,43 @@ def reprice(rows):
     targets = [r for r in rows if is_target(r)]
 
     def one(r):
+        upd = {}
         try:
             if r["item_type"] == "single":
                 price, _ = fetch_recent_price(r["url"], grade="PSA10", is_pack=False, item_name=r["name"])
-                return r, "psa10_price", price
+                if price:
+                    upd["psa10_price"] = str(price)          # 直近取引価格(成約)
+                ask = fetch_psa10_ask(r["url"])              # 相場(PSA10出品最安)
+                if ask is not None:                          # None=取得失敗はstale保持
+                    upd["ask_price"] = str(ask) if ask else ""  # 0=出品ゼロは空欄化
             else:
-                return r, "min_price", fetch_min_price(r["url"])
+                mp = fetch_min_price(r["url"])               # 相場(表記下限)
+                if mp:
+                    upd["min_price"] = str(mp)
         except Exception:
-            return r, None, None
+            pass
+        return r, upd
     ok = 0
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=5) as ex:
         for fut in as_completed([ex.submit(one, r) for r in targets]):
-            r, key, price = fut.result()
-            if key and price:
-                r[key] = str(price); ok += 1
-            time.sleep(0.15)
+            r, upd = fut.result()
+            if upd:
+                r.update(upd); ok += 1
+            time.sleep(0.12)
     return len(targets), ok
 
 
 def recompute(rows):
     for r in rows:
-        souba = _int(r.get("psa10_price")) if r["item_type"] == "single" else _int(r.get("min_price"))
+        single = r["item_type"] == "single"
+        souba = _int(r.get("psa10_price")) if single else 0        # 直近取引価格(成約)
+        ask = _int(r.get("ask_price")) if single else _int(r.get("min_price"))  # 相場(出品)
+        hi = max(souba, ask)
         r["souba"] = str(souba) if souba else ""
-        r["freq"] = "毎日" if souba > DAILY_THRESHOLD else "週1"
-        if not souba:
+        r["souba_ask"] = str(ask) if ask else ""
+        r["souba_sort"] = str(hi) if hi else ""
+        r["freq"] = "毎日" if hi > DAILY_THRESHOLD else "週1"
+        if not hi:
             r["note"] = "取引履歴なし（希少）"
 
 
@@ -211,14 +237,17 @@ def write_usage(ss):
 VISIBLE_COLS = sum(1 for d in DISPLAY if d[3] != "tech")  # 表示列数
 SOUBA_COL = next(i for i, d in enumerate(DISPLAY) if d[1] == "souba")
 FREQ_COL = next(i for i, d in enumerate(DISPLAY) if d[1] == "freq")
+SORT_COL = next(i for i, d in enumerate(DISPLAY) if d[1] == "souba_sort")  # 並び/絞込キー(直近取引と相場の高い方・非表示列)
 
 
 def setup_filters(ss, ws, nrows):
-    """閲覧者向けプリセット: 見出しにフィルタ▼ + フィルタ表示(相場順/毎日のみ/空欄除く)。"""
+    """閲覧者向けプリセット: 見出しにフィルタ▼ + フィルタ表示(価格順/毎日のみ/空欄除く)。
+    並び・絞込は souba_sort(直近取引と相場の高い方・非表示列)を基準にする。"""
     sid = ws.id
+    # フィルタ範囲は非表示のsouba_sort列まで含める(sort/criteriaがその列を参照するため)
     rng = {"sheetId": sid, "startRowIndex": HEADER_ROW - 1, "endRowIndex": HEADER_ROW + nrows,
-           "startColumnIndex": 0, "endColumnIndex": VISIBLE_COLS}
-    sort_souba = [{"dimensionIndex": SOUBA_COL, "sortOrder": "DESCENDING"}]
+           "startColumnIndex": 0, "endColumnIndex": SORT_COL + 1}
+    sort_souba = [{"dimensionIndex": SORT_COL, "sortOrder": "DESCENDING"}]
     # 既存フィルタ表示/基本フィルタを削除(重複防止)
     dels = []
     try:
@@ -236,11 +265,11 @@ def setup_filters(ss, ws, nrows):
         pass
     adds = [
         {"setBasicFilter": {"filter": {"range": dict(rng)}}},
-        {"addFilterView": {"filter": {"title": "相場が高い順", "range": dict(rng), "sortSpecs": sort_souba}}},
+        {"addFilterView": {"filter": {"title": "価格が高い順", "range": dict(rng), "sortSpecs": sort_souba}}},
         {"addFilterView": {"filter": {"title": "毎日更新(高額)だけ", "range": dict(rng),
                                       "criteria": {str(FREQ_COL): {"hiddenValues": ["週1"]}}, "sortSpecs": sort_souba}}},
-        {"addFilterView": {"filter": {"title": "相場あり(空欄を除く)", "range": dict(rng),
-                                      "criteria": {str(SOUBA_COL): {"condition": {"type": "NOT_BLANK"}}}, "sortSpecs": sort_souba}}},
+        {"addFilterView": {"filter": {"title": "価格あり(空欄を除く)", "range": dict(rng),
+                                      "criteria": {str(SORT_COL): {"condition": {"type": "NOT_BLANK"}}}, "sortSpecs": sort_souba}}},
     ]
     try:
         ss.batch_update({"requests": adds})
@@ -256,7 +285,7 @@ def write_tab(ws, rows, status):
     top = [
         [f"🎴 {status['label']} ｜ スニダン価格インデックス", "", "", "", f"状態: {icon}"],
         [f"最終更新: {status['ts']}（毎朝 6:20 自動更新）", "", "", "", status.get("detail", "")],
-        [f"総 {len(rows):,}件 ／ 毎日更新 {mainichi:,}件（相場>¥3,000）／ 週1巡回 {len(rows)-mainichi:,}件", "", "", "", ""],
+        [f"総 {len(rows):,}件 ／ 毎日更新 {mainichi:,}件（価格>¥3,000）／ 週1巡回 {len(rows)-mainichi:,}件", "", "", "", ""],
     ]
     ws.update("A1", top, value_input_option="RAW")
     matrix = build_matrix(rows)
@@ -283,9 +312,10 @@ def main():
             ws = ss.add_worksheet(title=tab, rows=len(rows) + 10, cols=len(HEADERS) + 2)
         detail = "ロードのみ"; ok_flag = True
         try:
+            recompute(rows)  # CSV baselineから souba_sort等を先に確定(repriceの高額判定に必要)
             if args.reprice:
-                tg, ok = reprice(rows); detail = f"相場再取得 {ok}/{tg}"
-            recompute(rows)
+                tg, ok = reprice(rows); detail = f"価格再取得 {ok}/{tg}"
+            recompute(rows)  # 再取得分を反映
         except Exception as e:
             ok_flag = False; overall_ok = False; detail = str(e)[:80]
             recompute(rows)

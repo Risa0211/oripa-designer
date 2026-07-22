@@ -12,7 +12,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import List, Optional
+import math
 import re
+
+
+def round_half_up(x: float) -> int:
+    """ExcelのROUND(x,0)と同じ四捨五入（0.5は絶対値の大きい側へ）。
+    Pythonの組込 round() は銀行家丸め（0.5→偶数側）でスプシとズレるため自前実装。"""
+    try:
+        x = float(x)
+    except (ValueError, TypeError):
+        return 0
+    return int(math.floor(x + 0.5)) if x >= 0 else int(math.ceil(x - 0.5))
+
 
 METHOD_SHIP = "発送限定"     # ptに変換できない。見せ場(100%超)はここで作る
 METHOD_CHOICE = "選択制"     # 発送 or pt変換をお客様が選べる
@@ -44,12 +56,9 @@ class PrizeRow:
     def display_pt_per(self) -> int:
         """表示PT/枚 = 直接指定 or 実価値×上乗せ倍率。"""
         if self.display_pt_direct not in (None, ""):
-            try:
-                return int(round(float(self.display_pt_direct)))
-            except (ValueError, TypeError):
-                return 0
+            return round_half_up(self.display_pt_direct)
         if self.markup and self.markup > 0:
-            return int(round(self.real_value * self.markup))
+            return round_half_up(self.real_value * self.markup)  # 実価値×倍率＝スプシと同じ四捨五入
         return 0
 
     @property

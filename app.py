@@ -507,6 +507,23 @@ with tab_design:
     )
     res = compute(meta, rows)
 
+    # ---------- サイドバー: 設計サマリー（スクロールしても常時見える）----------
+    with st.sidebar:
+        _vmark = {"OK": "🟢 OK 公開可", "注意": "🟡 注意（公開可）", "NG": "🔴 NG 公開不可"}[res.verdict]
+        st.markdown("### 📊 設計サマリー")
+        st.caption(f"**{pz_title or '（無題）'}**　単価{unit_price:,}pt×{total_tickets:,}口")
+        st.markdown(f"**{_vmark}**")
+        st.metric("pt還元率", f"{res.coin_return:.1%}")
+        st.metric("実利益率", f"{res.real_profit_rate:.1%}")
+        st.metric(f"アド確率(≧{ad_threshold:,}pt)", f"1/{res.ad_Y:.0f}" if res.ad_Y else "-")
+        st.metric("S2 全員pt(最悪)", f"¥{res.s2:,}")
+        st.metric("最低保証(pt)", f"{res.min_guarantee:,}")
+        _cnt_ok = "✅" if res.count_sum == total_tickets else "⚠️"
+        st.caption(f"{_cnt_ok} 口数 {res.count_sum:,} / {total_tickets:,}")
+        st.caption(f"末広がりEV {res.effective_pt_ev:.0%}（1.0以上NG）")
+        st.divider()
+        st.caption("💡 下でカード/口数を編集すると即反映。ここは固定表示なのでスクロールしても見えます。")
+
     # ---------- 各賞のライブ内訳 ----------
     disp = []
     for p in rows:

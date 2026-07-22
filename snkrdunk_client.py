@@ -28,6 +28,34 @@ def _normalize_grade(grade: str) -> str:
     return g.upper()
 
 
+def fetch_psa10_ask(url: str) -> Optional[int]:
+    """カードページの「相場」= PSA10グレードの現在の出品最安値を取得。
+    スニダンのカードページ(HTML/SSR)に埋め込まれた状態別condition配列から
+    filterConditionId="psa_10" の usedMinPrice(=そのグレードの出品最安)を抜く。
+    JSON APIには無いのでHTMLをパースする。
+    戻り値: int(出品最安) / 0(PSA10出品ゼロ=hasListing:false) / None(取得失敗・stale保持用)
+    """
+    aid = extract_apparel_id(url)
+    if not aid:
+        return None
+    try:
+        r = requests.get(f"https://snkrdunk.com/apparels/{aid}",
+                         headers={"User-Agent": HEADERS["User-Agent"], "Accept": "text/html"},
+                         timeout=25)
+        if r.status_code != 200:
+            return None
+        html = r.text
+        m = re.search(r'"filterConditionId":"psa_10","usedMinPrice":(\d+),"text":"PSA10","hasListing":true', html)
+        if m:
+            return int(m.group(1))
+        # psa_10 は存在するが hasListing:false → 出品ゼロ = 0(空欄化)
+        if '"filterConditionId":"psa_10"' in html:
+            return 0
+        return None
+    except requests.RequestException:
+        return None
+
+
 def fetch_recent_price(snkrdunk_url: str, grade: str = "", is_pack: bool = False, item_name: str = "") -> Tuple[Optional[int], str]:
     """
     snkrdunk URLから価格取得。
