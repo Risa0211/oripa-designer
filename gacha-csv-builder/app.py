@@ -58,14 +58,15 @@ def wp_creds():
 
 @st.cache_data(show_spinner=False)
 def load_master():
-    """①照合用のカード原簿（サイトから引っ張った綺麗な画像＝DOPAポケ＋DOPAワンピのみ）。
-    元々サイトにあった管理画面の画像(master_db_admin)は重く粗いので照合には載せない。
-    管理画面のカードは「要追加」で card_db_export から必要な分だけ都度検索・移行できる。
-    同一カード（型番＋名前）の二重登録はDOPA優先で1件に集約。"""
+    """①照合用のカード原簿（DOPA綺麗 ＋ DOPAに無い管理画面カード）。
+    軽量化のため、DOPAに綺麗版があるカードの管理画面(粗い)重複はツールに載せない
+    （保管庫の画像自体は消さない）。DOPAに無いカードの管理画面画像は残す＝足りなくならない。
+    その後、同一カード（型番＋名前）の残り重複もDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
-    if ONEPIECE_CSV.exists():
-        rows = rows + B.read_csv_dict(str(ONEPIECE_CSV))
-    return B.dedupe_master_rows(rows)
+    for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
+        if extra.exists():
+            rows = rows + B.read_csv_dict(str(extra))
+    return B.dedupe_master_rows(B.drop_admin_dupes_of_clean(rows))
 
 
 @st.cache_data(show_spinner="管理画面ダンプ読込中…")
@@ -93,13 +94,14 @@ def load_palette():
 
 @st.cache_data(show_spinner=False)
 def load_store():
-    """保管庫マスター（サイトから引っ張った綺麗な画像＝DOPAポケ + DOPAワンピのみ）。
-    元々サイトにあった管理画面移行分(master_db_admin)は保管庫から削除したので載せない。
-    カード名/型番/URL/媒体id付き。同一カード（型番＋名前）はDOPA優先で1件に集約。"""
+    """保管庫マスター（DOPA綺麗 ＋ DOPAに無い管理画面カード）。カード名/型番/URL/媒体id付き。
+    DOPAに綺麗版があるカードの管理画面(粗い)重複はツールに載せない＝軽量化（保管庫は消さない）。
+    その後、同一カード（型番＋名前）の残り重複もDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
-    if ONEPIECE_CSV.exists():
-        rows = rows + B.read_csv_dict(str(ONEPIECE_CSV))
-    return B.dedupe_master_rows(rows)
+    for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
+        if extra.exists():
+            rows = rows + B.read_csv_dict(str(extra))
+    return B.dedupe_master_rows(B.drop_admin_dupes_of_clean(rows))
 
 
 def parse_design(uploaded):
@@ -215,7 +217,7 @@ if LOGO.exists():
 st.title("ガチャ登録CSVビルダー")
 with st.sidebar:
     st.subheader("状態")
-    st.markdown(f"保管庫(DOPA): **{len(master_rows):,}**　演出パレット: **{len(pal_opts)}**")
+    st.markdown(f"照合カード（綺麗な画像優先）: **{len(master_rows):,}**　演出パレット: **{len(pal_opts)}**")
     st.markdown(("画像の追加/編集/削除: **有効**" if can_write
                  else "画像の追加/編集/削除: **停止中**（Secretsに WP_USER / WP_APP_PASS を設定すると有効）"))
 
