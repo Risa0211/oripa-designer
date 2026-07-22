@@ -24,6 +24,7 @@ import palette_lookup
 import storehouse as SH
 import wp_client as WP
 import wp_admin as WPA
+import gacha_api as G   # WPプラグイン経由（Xserver国外IP制限を回避してアップ/検索/編集/削除）
 from auth import check_password
 
 HERE = Path(__file__).parent
@@ -129,8 +130,69 @@ def palette_options(palette):
 master_rows = load_master()
 palette = load_palette()
 pal_opts = palette_options(palette)
+def _load_gacha_api_env():
+    """受け口の設定を Streamlit Secrets → 環境変数 の順で読み、gacha_api が拾えるよう os.environ に載せる。
+    （Streamlit Cloud の Secrets は os.environ に自動で入らないため）。"""
+    for k in ("GACHA_API_URL", "GACHA_API_TOKEN"):
+        v = ""
+        try:
+            v = str(st.secrets.get(k, ""))
+        except Exception:
+            v = ""
+        v = v or os.environ.get(k, "")
+        if v:
+            os.environ[k] = v
+
+
+_load_gacha_api_env()
 WP_USER, WP_PASS = wp_creds()
-can_write = bool(WP_USER and WP_PASS)
+# 書き込みは「プラグイン受け口(G)が有効」or「WP直REST認証あり」で可能。
+# 受け口経由なら海外(Streamlit Cloud)からでも通る＝本命の書き込み手段。
+can_write = G.enabled() or bool(WP_USER and WP_PASS)
+
+
+def sh_upload(filename, data, title):
+    """保管庫へ画像追加。受け口(G)優先→無ければWP直REST。戻り値 (id, url)。"""
+    if G.enabled():
+        return G.upload(filename, data, title)
+    return WP.upload_media(filename, data, title, user=WP_USER, app_pass=WP_PASS)
+
+
+def sh_migrate(src_url, filename, title):
+    """外部URL(業者S3等)の画像を取得して保管庫へ追加。受け口優先。戻り値 (id, url)。"""
+    data = WP._req(src_url, timeout=60)
+    return sh_upload(filename, data, title)
+
+
+def sh_search(query, per_page=40):
+    """保管庫をライブ検索。受け口優先→無ければWP直REST。戻り値 [{"id","title","url","alt"}]。"""
+    if G.enabled():
+        try:
+            return G.search(query, per_page=per_page)
+        except Exception:
+            return []
+    try:
+        return WP.search_media(query, user=WP_USER, app_pass=WP_PASS, per_page=per_page)
+    except Exception:
+        return []
+
+
+def sh_update(media_id, title):
+    if G.enabled():
+        return G.update_meta(media_id, title)
+    return WPA.update_meta(media_id, title=title, user=WP_USER, app_pass=WP_PASS)
+
+
+def sh_replace(old_id, filename, data, title):
+    if G.enabled():
+        return G.replace(old_id, filename, data, title)
+    return WPA.replace_media(old_id, filename, data, title, user=WP_USER, app_pass=WP_PASS)
+
+
+def sh_delete(media_id):
+    if G.enabled():
+        return G.delete(media_id)
+    return WPA.delete_media(media_id, user=WP_USER, app_pass=WP_PASS)
 
 # セッション状態
 st.session_state.setdefault("picks", {})       # row → 型番（要選択の確定）
@@ -167,8 +229,7 @@ def resolve_image_url(row, src_url, filename, title):
         return st.session_state["migrated"][src_url]
     if can_write:
         try:
-            _, wp_url = WP.migrate_from_url(src_url, filename, title,
-                                            user=WP_USER, app_pass=WP_PASS)
+            _, wp_url = sh_migrate(src_url, filename, title)
             st.session_state["migrated"][src_url] = wp_url
             return wp_url
         except Exception as e:
@@ -197,19 +258,25 @@ def show_img(url):
     st.markdown(img_tag(url), unsafe_allow_html=True)
 
 
+def upload_fn(kata, rar, data, ext=".webp"):
+    """アップ画像のファイル名を『型番-レア-内容ハッシュ』のASCII一意名にする。
+    カード名が日本語だとASCII変換で消えて 'add.webp' 等になり衝突する問題を回避。"""
+    import hashlib
+    h = hashlib.md5(data).hexdigest()[:8]
+    fn = SH.san_filename(kata or "", rar or "", h, ext=ext)
+    return fn
+
+
 tab_make, tab_view, tab_add = st.tabs(
     ["① ガチャCSV作成", "② 保管庫（検索・コピー・編集）", "③ 画像を追加"])
 
 
 def wp_live_search(query, limit=40):
     """WPメディアをライブ検索して store 形式で返す（新着アップ分の同期）。
-    Xserverの国外IP制限でWPが読めない環境では例外→空リストで安全にフォールバック。"""
+    受け口(G)経由なら海外からも読める。ダメなら空リストで安全にフォールバック。"""
     if not query:
         return []
-    try:
-        hits = WP.search_media(query, user=WP_USER, app_pass=WP_PASS, per_page=limit)
-    except Exception:
-        return []
+    hits = sh_search(query, per_page=limit)
     out = []
     for m in hits:
         nm, rar, kata = parse_card_title(m.get("title", ""))
@@ -378,10 +445,10 @@ def render_make(uploaded, category="交換専用"):
                         st.error("画像追加にはログイン(WP_USER/WP_APP_PASS)が必要です。")
                     else:
                         ext = os.path.splitext(up.name)[1] or ".png"
-                        fn = SH.san_filename(name, "add", ext=ext)
+                        fn = upload_fn(cur.get("型番", ""), cur.get("レアリティ", ""),
+                                       up.getvalue(), ext=ext)
                         try:
-                            _, nu = WP.upload_media(fn, up.getvalue(), name,
-                                                    user=WP_USER, app_pass=WP_PASS)
+                            _, nu = sh_upload(fn, up.getvalue(), name)
                             manual.setdefault(row, {})["画像URL上書き"] = nu
                             st.success("保管庫に追加してこの賞に設定しました。")
                             st.rerun()
@@ -476,24 +543,23 @@ def card_cell(h):
 
             if st.button("名前などを保存", key=f"save_{mid}"):
                 try:
-                    WPA.update_meta(mid, title=_title(), user=WP_USER, app_pass=WP_PASS)
+                    sh_update(mid, _title())
                     st.success("保存しました")
                 except Exception as e:
                     st.error(f"保存に失敗: {e}")
             rep = st.file_uploader("画像を差し替え", type=["png", "jpg", "jpeg", "webp"], key=f"rep_{mid}")
             if rep is not None and st.button("この画像に差し替え", key=f"repbtn_{mid}"):
                 ext = os.path.splitext(rep.name)[1] or ".png"
-                fn = SH.san_filename(n_kata, n_name, "rep", ext=ext)
+                fn = upload_fn(n_kata, n_rar, rep.getvalue(), ext=ext)
                 try:
-                    _, nu = WPA.replace_media(mid, fn, rep.getvalue(), _title(),
-                                              user=WP_USER, app_pass=WP_PASS)
+                    _, nu = sh_replace(mid, fn, rep.getvalue(), _title())
                     st.success("差し替えました（URLが変わります）"); st.code(nu)
                 except Exception as e:
                     st.error(f"差し替えに失敗: {e}")
             if st.checkbox("削除を確認", key=f"delchk_{mid}") and \
                st.button("完全に削除", key=f"delbtn_{mid}"):
                 try:
-                    WPA.delete_media(mid, user=WP_USER, app_pass=WP_PASS)
+                    sh_delete(mid)
                     st.success("削除しました")
                 except Exception as e:
                     st.error(f"削除に失敗: {e}")
@@ -542,10 +608,9 @@ with tab_add:
         if a_kata.strip():
             title += f"[{a_kata.strip()}]"
         ext = os.path.splitext(up_img.name)[1] or ".png"
-        fn = SH.san_filename(a_kata.strip(), a_name.strip(), "add", ext=ext)
+        fn = upload_fn(a_kata.strip(), a_rar.strip(), up_img.getvalue(), ext=ext)
         try:
-            _, url = WP.upload_media(fn, up_img.getvalue(), title,
-                                     user=WP_USER, app_pass=WP_PASS)
+            _, url = sh_upload(fn, up_img.getvalue(), title)
             st.success("保管庫に追加しました。")
             st.code(url)
             show_img(url)
