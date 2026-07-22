@@ -614,9 +614,14 @@ with tab_design:
     _EDIT_COLS = ["賞ランク", "カード名", "型番", "口数", "実価値/枚", "送料/件", "受取方法", "上乗せ倍率", "表示PT直接(任意)"]
     _new = edited[[c for c in _EDIT_COLS if c in edited.columns]].copy()
     _new["除外"] = False
-    _new = _new[PZ_COLS].reset_index(drop=True)
-    if not _new.equals(st.session_state.pz_df):
-        st.session_state.pz_df = _new
+    _new = _sort_pz(_new[PZ_COLS]).reset_index(drop=True)
+
+    def _sig(df):  # 値ベースの比較（dtype差で無限ループしないよう文字列化）
+        return df.fillna("").astype(str).values.tolist()
+    _changed = _sig(_new) != _sig(st.session_state.pz_df.reset_index(drop=True))
+    st.session_state.pz_df = _new
+    if _changed:
+        st.rerun()  # 編集を即時反映（計算列・並び順・還元率をすぐ更新）
 
     rows = _df_to_rows(st.session_state.pz_df)
     meta = DesignMeta(
@@ -686,6 +691,13 @@ with tab_design:
             m6.metric("確率ゴール", "未設定", help="基本情報の『🎯確率ゴール』で任意設定。出現率は下の表で確認")
         m7.metric("最低保証(pt)", f"{res.min_guarantee:,}")
         m8.metric("表示PT合計", f"¥{res.sum_display_pt:,}")
+        if res.coin_return > 2.0:
+            st.error(
+                f"⚠️ 顧客還元率が **{res.coin_return:.0%}** と高すぎます（計算は正常）。"
+                f"**売上（単価 {unit_price:,}pt × 総口数 {total_tickets:,} ＝ ¥{res.revenue:,}）に対して賞品が高額すぎ**です。"
+                "① 基本情報で **単価か総口数を上げる**（例：目玉が¥1,700万なら売上は数千万規模が必要）か、"
+                "賞品の **実価値/上乗せ倍率/口数を下げて**ください。"
+            )
         if goal_label:
             (st.success if goal_ok else st.warning)(f"{goal_label}：{goal_value} → {'🟢 達成' if goal_ok else '🔴 未達（枚数/構成を調整）'}")
 
@@ -2012,514 +2024,526 @@ with tab_template:
 # ---------- 競合リサーチ（4一覧をサブタブで統合）----------
 with tab_research:
     st.subheader("🔎 競合リサーチ")
-    st.caption("他社ガチャの参考リサーチ。ソース(トレカセンター/DOPA/有料/新規)を下のサブタブで切り替え。景品設計タブでリライト元に使えます。")
-    _rsub = st.tabs(["🎴 トレカセンター", "🎲 DOPA", "🎰 有料ガチャ(課金限定)", "🆕 新規限定ガチャ"])
-
-# ---------- トレカセンター商品一覧タブ ----------
-with _rsub[0]:
-    st.subheader("🎴 トレカセンター商品一覧")
-    st.caption(f"リサーチDB完売オリパ {len(cached_references()):,}件。検索→「📋設計する」で景品設計タブに自動転送")
-
-    # 最新情報取得ボタン
-    sync_col = st.columns([2, 1, 4])
-    with sync_col[0]:
-        tc_sync_btn = st.button("🔄 トレカセンター販売中の最新を取得",
-                                 help="japan-toreca.com APIから現在販売中の商品を取得。既存DBにないものを追加します")
-    with sync_col[1]:
-        tc_sync_cat = st.selectbox("カテゴリ", ["pokemon", "onepiece", "yugioh", "hobby", "ws_tcg", "mtg", "duel_masters", "popmart"],
-                                    key="tc_sync_cat")
-    if tc_sync_btn:
-        with st.spinner(f"トレカセンター {tc_sync_cat} 取込中..."):
-            try:
-                from torecacenter_scraper import sync_to_research_db
-                result = sync_to_research_db(category=tc_sync_cat, verbose=False)
-                cached_references.clear()
-                cached_new_gachas.clear()
-                # 結果を session_state に保存して再描画後も表示
-                st.session_state["_tc_sync_result"] = result
-                st.rerun()
-            except Exception as e:
-                st.error(f"取込エラー: {e}")
-
-    # 同期結果表示 (session_stateから)
-    tc_result = st.session_state.get("_tc_sync_result")
-    if tc_result:
-        st.success(
-            f"✅ 取得 {tc_result['fetched']}件 / **{tc_result['added']}件 新規追加** "
-            f"/ うち 🆕新規限定 {tc_result.get('new_gacha_added', 0)}件 自動振り分け"
-        )
-        items = tc_result.get("added_items", [])
-        if items:
-            with st.expander(f"📋 追加された {len(items)}件 一覧", expanded=True):
-                df_added = pd.DataFrame([{
-                    "No": x["no"], "タイトル": x["title"],
-                    "単価(coin)": x["price"], "総口数": x["total_tickets"],
-                    "残数": x.get("left_cards", 0),
-                    "URL": x["url"], "タグ": x.get("tags", ""),
-                } for x in items])
-                st.dataframe(df_added, use_container_width=True, hide_index=True,
-                             column_config={"URL": st.column_config.LinkColumn("URL")})
-        if st.button("× 結果を閉じる", key="tc_close_result"):
-            st.session_state.pop("_tc_sync_result", None)
+    _research_on = st.session_state.get("research_on", False)
+    if not _research_on:
+        st.info("トレセン/DOPA等の競合一覧は件数が多く重いので、**必要な時だけ読み込みます**。読み込まない間はツール全体が軽くなります。")
+        if st.button("🔎 競合リサーチを読み込む", type="primary", key="pz_load_research"):
+            st.session_state.research_on = True
             st.rerun()
-
-    refs_all = cached_references()
-    f_cols = st.columns([3, 1, 1, 1])
-    with f_cols[0]:
-        tc_search = st.text_input("🔍 タイトル / No.", key="tc_search",
-                                   placeholder="例: ピカチュウ、3532、JACKPONCHO")
-    with f_cols[1]:
-        tc_min_price = st.number_input("単価下限(pt)", min_value=0, value=0, step=100, key="tc_min_price")
-    with f_cols[2]:
-        tc_max_price = st.number_input("単価上限(pt)", min_value=0, value=0, step=100,
-                                        key="tc_max_price", help="0=制限なし")
-    with f_cols[3]:
-        tc_limit = st.number_input("表示上限", min_value=20, max_value=2000, value=100, step=50, key="tc_limit")
-
-    filtered_refs = refs_all
-    if tc_search:
-        s = tc_search.strip().lower()
-        filtered_refs = [r for r in filtered_refs if s in r.title.lower() or s in str(r.no)]
-    if tc_min_price > 0:
-        filtered_refs = [r for r in filtered_refs if r.price_per_coin >= tc_min_price]
-    if tc_max_price > 0:
-        filtered_refs = [r for r in filtered_refs if r.price_per_coin <= tc_max_price]
-
-    st.markdown(f"**{len(filtered_refs):,}件** / 全{len(refs_all):,}件 (上位{min(tc_limit, len(filtered_refs))}件表示)")
-
-    if filtered_refs:
-        view_refs = filtered_refs[:int(tc_limit)]
-        df_tc = pd.DataFrame([{
-            "No": r.no, "タイトル": r.title,
-            "単価(coin)": r.price_per_coin,
-            "総口数": r.total_tickets,
-            "完売日": r.sold_date,
-            "URL": r.url,
-            "タグ": r.tags,
-        } for r in view_refs])
-
-        st.caption("⬇️ **行をクリックして選択** → 下に転送ボタンが表示されます")
-        ev = st.dataframe(
-            df_tc, use_container_width=True, hide_index=True,
-            on_select="rerun", selection_mode="single-row",
-            column_config={"URL": st.column_config.LinkColumn("URL")},
-            key="tc_table",
-        )
-        sel_rows = (ev.selection or {}).get("rows", [])
-        if sel_rows:
-            sel = view_refs[sel_rows[0]]
-            sa, sb = st.columns([4, 2])
-            with sa:
-                st.success(f"選択中: No.{sel.no}｜{sel.title}（¥{sel.price_per_coin:,}×{sel.total_tickets:,}口）")
-            with sb:
-                if st.button("📋 景品設計に転送", type="primary", key="tc_to_template_quick",
-                              use_container_width=True):
-                    st.session_state["_jump_to_template_no"] = str(sel.no)
-                    st.toast(f"📋 景品設計タブで「📥 読み込み」を押してください (No.{sel.no} セット済)")
-
-
-# ---------- DOPA商品一覧タブ ----------
-with _rsub[1]:
-    _ldopa = cached_dopa_products  # cached経由
-
-    st.subheader("🎲 DOPA商品一覧")
-    st.caption("DOPAの全商品（参考データベース）。「📋 景品設計」タブから選んで設計に流用できます")
-
-    sync_cols = st.columns([2, 1, 4])
-    with sync_cols[0]:
-        sync_btn = st.button("🔄 DOPAから最新一覧を取込",
-                              help="DOPAから現在表示中の全件を取得")
-    if sync_btn:
-        with st.spinner("DOPAから取込中..."):
-            try:
-                from dopa_scraper import sync_dopa_to_sheets
-                result = sync_dopa_to_sheets(category="pokemon", sleep_sec=0.3, verbose=False)
-                cached_dopa_products.clear()
-                cached_premium_gachas.clear()
-                cached_new_gachas.clear()
-                st.session_state["_dopa_sync_result"] = result
-                st.rerun()
-            except Exception as e:
-                st.error(f"DOPA取込エラー: {e}")
-
-    # 同期結果表示
-    dopa_result = st.session_state.get("_dopa_sync_result")
-    if dopa_result:
-        items = dopa_result.get("added_items", [])
-        added_new = sum(1 for x in items if x.get("is_new"))
-        added_paid = sum(1 for x in items if x.get("is_paid"))
-        st.success(
-            f"✅ 取得 {dopa_result['fetched']}件 / 全DOPA商品 {dopa_result['dopa_products']}件\n\n"
-            f"**{dopa_result.get('added', 0)}件 新規追加** "
-            f"(うち 🆕新規限定 {added_new}件 / 🎰有料 {added_paid}件)\n\n"
-            f"📊 DB全体: 🆕新規限定 {dopa_result['new_gachas']}件 / 🎰有料 {dopa_result['premium_gachas']}件"
-        )
-        if items:
-            with st.expander(f"📋 追加された {len(items)}件 一覧", expanded=True):
-                df_added = pd.DataFrame([{
-                    "商品ID": x["product_id"], "タイトル": x["title"],
-                    "単価(pt)": x["price"], "総口数": x["total_tickets"],
-                    "残口数": x["remaining"],
-                    "🆕新規限定": "○" if x.get("is_new") else "",
-                    "🎰有料限定": "○" if x.get("is_paid") else "",
-                    "URL": x["url"],
-                } for x in items])
-                st.dataframe(df_added, use_container_width=True, hide_index=True,
-                             column_config={"URL": st.column_config.LinkColumn("URL")})
-        else:
-            st.info("既存DBと差分なし(新商品リリースなし)")
-        if st.button("× 結果を閉じる", key="dopa_close_result"):
-            st.session_state.pop("_dopa_sync_result", None)
-            st.rerun()
-    try:
-        dopa_items = _ldopa()
-    except Exception as e:
-        st.error(f"読み込みエラー: {e}")
-        dopa_items = []
-
-    if not dopa_items:
-        st.info("まだ取込なし。上の「🔄 DOPAから最新一覧を取込」を押してください")
+        _rsub = [None, None, None, None]
     else:
-        # フィルタ
-        f_cols = st.columns([2, 1, 1, 1])
-        with f_cols[0]:
-            search = st.text_input("🔍 タイトル検索", key="dopa_search")
-        with f_cols[1]:
-            f_new = st.checkbox("新規限定のみ", key="dopa_f_new")
-        with f_cols[2]:
-            f_paid = st.checkbox("有料(課金条件付き)のみ", key="dopa_f_paid")
-        with f_cols[3]:
-            f_last_one = st.checkbox("ラストワン有のみ", key="dopa_f_last")
+        st.caption("ソース(トレカセンター/DOPA/有料/新規)をサブタブで切替。景品設計タブでリライト元に使えます。")
+        if st.button("✖ 閉じて軽くする", key="pz_close_research"):
+            st.session_state.research_on = False
+            st.rerun()
+        _rsub = st.tabs(["🎴 トレカセンター", "🎲 DOPA", "🎰 有料ガチャ(課金限定)", "🆕 新規限定ガチャ"])
 
-        filtered = dopa_items
-        if search:
-            s = search.strip().lower()
-            filtered = [g for g in filtered if s in g.title.lower() or s in g.product_id.lower()]
-        if f_new:
-            filtered = [g for g in filtered if g.is_new_gacha]
-        if f_paid:
-            filtered = [g for g in filtered if g.is_paid_gacha]
-        if f_last_one:
-            filtered = [g for g in filtered if g.has_last_one]
+if _research_on:
+    # ---------- トレカセンター商品一覧タブ ----------
+    with _rsub[0]:
+        st.subheader("🎴 トレカセンター商品一覧")
+        st.caption(f"リサーチDB完売オリパ {len(cached_references()):,}件。検索→「📋設計する」で景品設計タブに自動転送")
 
-        st.markdown(f"**{len(filtered):,}件 / 全{len(dopa_items):,}件**")
-        df = pd.DataFrame([{
-            "商品ID": g.product_id, "タイトル": g.title,
-            "単価(pt)": g.price, "総口数": g.total_tickets, "残口数": g.remaining,
-            "ラストワン": "○" if g.has_last_one else "",
-            "最低保証pt": g.min_point,
-            "期限(日)": g.limit_day or "",
-            "制限数量": g.limit_quantity or "",
-            "新規限定": "○" if g.is_new_gacha else "",
-            "有料限定": "○" if g.is_paid_gacha else "",
-            "URL": g.url,
-        } for g in filtered])
-        st.caption("⬇️ **行をクリックして選択** → 下に転送ボタンが表示されます。**新規限定/有料限定の○は編集可** (📝表示モード切替)")
-
-        # 編集モード切替
-        edit_mode = st.toggle("🔧 振り分け編集モード", key="dopa_edit_mode",
-                               help="ONにすると新規限定/有料限定をチェックボックスで編集できる")
-
-        if edit_mode:
-            edit_df = df.copy()
-            edit_df["🆕新規限定_bool"] = edit_df["新規限定"] == "○"
-            edit_df["🎰有料限定_bool"] = edit_df["有料限定"] == "○"
-            shown = edit_df[["商品ID", "タイトル", "単価(pt)", "総口数", "残口数",
-                             "🆕新規限定_bool", "🎰有料限定_bool", "URL"]]
-            edited = st.data_editor(
-                shown, use_container_width=True, hide_index=True,
-                column_config={
-                    "🆕新規限定_bool": st.column_config.CheckboxColumn("🆕新規限定"),
-                    "🎰有料限定_bool": st.column_config.CheckboxColumn("🎰有料限定"),
-                    "URL": st.column_config.LinkColumn("URL"),
-                    "商品ID": st.column_config.TextColumn(disabled=True),
-                    "タイトル": st.column_config.TextColumn(disabled=True),
-                    "単価(pt)": st.column_config.NumberColumn(disabled=True),
-                    "総口数": st.column_config.NumberColumn(disabled=True),
-                    "残口数": st.column_config.NumberColumn(disabled=True),
-                },
-                key="dopa_editor",
-            )
-            if st.button("💾 振り分けを保存", type="primary", key="dopa_save_classification"):
-                # filtered とインデックス対応で更新
-                from research import DopaProduct, bulk_upsert_dopa_products, NewGacha, PremiumGacha
-                from research import bulk_upsert_new_gachas, bulk_upsert_premium_gachas
-                today = datetime.now().strftime("%Y-%m-%d")
-                updated_products = []
-                add_new_gachas = []
-                add_paid_gachas = []
-                for i, row in edited.iterrows():
-                    orig = next((g for g in filtered if g.product_id == row["商品ID"]), None)
-                    if not orig:
-                        continue
-                    is_new = bool(row["🆕新規限定_bool"])
-                    is_paid = bool(row["🎰有料限定_bool"])
-                    if orig.is_new_gacha == is_new and orig.is_paid_gacha == is_paid:
-                        continue
-                    orig.is_new_gacha = is_new
-                    orig.is_paid_gacha = is_paid
-                    updated_products.append(orig)
-                    if is_new:
-                        add_new_gachas.append(NewGacha(
-                            no=orig.product_id, site="DOPA", title=orig.title, url=orig.url,
-                            price=orig.price, total_tickets=orig.total_tickets,
-                            new_period="手動指定", registered_at=today,
-                            note="手動振り分け", updated_at="",
-                        ))
-                    if is_paid:
-                        add_paid_gachas.append(PremiumGacha(
-                            product_id=orig.product_id, site="DOPA", title=orig.title, url=orig.url,
-                            price=orig.price, total_tickets=orig.total_tickets,
-                            card_types=0, charge_amount=0,
-                            note="手動振り分け", updated_at="",
-                        ))
-                if updated_products:
-                    bulk_upsert_dopa_products(updated_products)
-                    if add_new_gachas:
-                        bulk_upsert_new_gachas(add_new_gachas)
-                        cached_new_gachas.clear()
-                    if add_paid_gachas:
-                        bulk_upsert_premium_gachas(add_paid_gachas)
-                        cached_premium_gachas.clear()
-                    cached_dopa_products.clear()
-                    st.success(f"✅ {len(updated_products)}件の振り分けを保存しました")
+        # 最新情報取得ボタン
+        sync_col = st.columns([2, 1, 4])
+        with sync_col[0]:
+            tc_sync_btn = st.button("🔄 トレカセンター販売中の最新を取得",
+                                     help="japan-toreca.com APIから現在販売中の商品を取得。既存DBにないものを追加します")
+        with sync_col[1]:
+            tc_sync_cat = st.selectbox("カテゴリ", ["pokemon", "onepiece", "yugioh", "hobby", "ws_tcg", "mtg", "duel_masters", "popmart"],
+                                        key="tc_sync_cat")
+        if tc_sync_btn:
+            with st.spinner(f"トレカセンター {tc_sync_cat} 取込中..."):
+                try:
+                    from torecacenter_scraper import sync_to_research_db
+                    result = sync_to_research_db(category=tc_sync_cat, verbose=False)
+                    cached_references.clear()
+                    cached_new_gachas.clear()
+                    # 結果を session_state に保存して再描画後も表示
+                    st.session_state["_tc_sync_result"] = result
                     st.rerun()
-                else:
-                    st.info("変更なし")
-        else:
-            ev_d = st.dataframe(
-                df, use_container_width=True, hide_index=True,
+                except Exception as e:
+                    st.error(f"取込エラー: {e}")
+
+        # 同期結果表示 (session_stateから)
+        tc_result = st.session_state.get("_tc_sync_result")
+        if tc_result:
+            st.success(
+                f"✅ 取得 {tc_result['fetched']}件 / **{tc_result['added']}件 新規追加** "
+                f"/ うち 🆕新規限定 {tc_result.get('new_gacha_added', 0)}件 自動振り分け"
+            )
+            items = tc_result.get("added_items", [])
+            if items:
+                with st.expander(f"📋 追加された {len(items)}件 一覧", expanded=True):
+                    df_added = pd.DataFrame([{
+                        "No": x["no"], "タイトル": x["title"],
+                        "単価(coin)": x["price"], "総口数": x["total_tickets"],
+                        "残数": x.get("left_cards", 0),
+                        "URL": x["url"], "タグ": x.get("tags", ""),
+                    } for x in items])
+                    st.dataframe(df_added, use_container_width=True, hide_index=True,
+                                 column_config={"URL": st.column_config.LinkColumn("URL")})
+            if st.button("× 結果を閉じる", key="tc_close_result"):
+                st.session_state.pop("_tc_sync_result", None)
+                st.rerun()
+
+        refs_all = cached_references()
+        f_cols = st.columns([3, 1, 1, 1])
+        with f_cols[0]:
+            tc_search = st.text_input("🔍 タイトル / No.", key="tc_search",
+                                       placeholder="例: ピカチュウ、3532、JACKPONCHO")
+        with f_cols[1]:
+            tc_min_price = st.number_input("単価下限(pt)", min_value=0, value=0, step=100, key="tc_min_price")
+        with f_cols[2]:
+            tc_max_price = st.number_input("単価上限(pt)", min_value=0, value=0, step=100,
+                                            key="tc_max_price", help="0=制限なし")
+        with f_cols[3]:
+            tc_limit = st.number_input("表示上限", min_value=20, max_value=2000, value=100, step=50, key="tc_limit")
+
+        filtered_refs = refs_all
+        if tc_search:
+            s = tc_search.strip().lower()
+            filtered_refs = [r for r in filtered_refs if s in r.title.lower() or s in str(r.no)]
+        if tc_min_price > 0:
+            filtered_refs = [r for r in filtered_refs if r.price_per_coin >= tc_min_price]
+        if tc_max_price > 0:
+            filtered_refs = [r for r in filtered_refs if r.price_per_coin <= tc_max_price]
+
+        st.markdown(f"**{len(filtered_refs):,}件** / 全{len(refs_all):,}件 (上位{min(tc_limit, len(filtered_refs))}件表示)")
+
+        if filtered_refs:
+            view_refs = filtered_refs[:int(tc_limit)]
+            df_tc = pd.DataFrame([{
+                "No": r.no, "タイトル": r.title,
+                "単価(coin)": r.price_per_coin,
+                "総口数": r.total_tickets,
+                "完売日": r.sold_date,
+                "URL": r.url,
+                "タグ": r.tags,
+            } for r in view_refs])
+
+            st.caption("⬇️ **行をクリックして選択** → 下に転送ボタンが表示されます")
+            ev = st.dataframe(
+                df_tc, use_container_width=True, hide_index=True,
                 on_select="rerun", selection_mode="single-row",
-                column_config={
-                    "URL": st.column_config.LinkColumn("URL"),
-                    "単価(pt)": st.column_config.NumberColumn(format="%d pt"),
-                    "残口数": st.column_config.NumberColumn(format="%d"),
-                },
-                key="dopa_table",
+                column_config={"URL": st.column_config.LinkColumn("URL")},
+                key="tc_table",
             )
-            sel_rows_d = (ev_d.selection or {}).get("rows", [])
-            if sel_rows_d:
-                sel_d = filtered[sel_rows_d[0]]
-                ca, cb = st.columns([4, 2])
-                with ca:
-                    st.success(f"選択中: {sel_d.product_id}｜{sel_d.title}（{sel_d.price}pt×{sel_d.total_tickets:,}・残{sel_d.remaining:,}）")
-                with cb:
-                    if st.button("📋 景品設計に転送", type="primary", key="dopa_to_template_quick",
+            sel_rows = (ev.selection or {}).get("rows", [])
+            if sel_rows:
+                sel = view_refs[sel_rows[0]]
+                sa, sb = st.columns([4, 2])
+                with sa:
+                    st.success(f"選択中: No.{sel.no}｜{sel.title}（¥{sel.price_per_coin:,}×{sel.total_tickets:,}口）")
+                with sb:
+                    if st.button("📋 景品設計に転送", type="primary", key="tc_to_template_quick",
                                   use_container_width=True):
-                        st.session_state["_jump_to_template_dopa_id"] = sel_d.product_id
-                        st.toast(f"📋 景品設計タブで「🎲 DOPA商品から」セレクトしてください ({sel_d.title[:30]})")
+                        st.session_state["_jump_to_template_no"] = str(sel.no)
+                        st.toast(f"📋 景品設計タブで「📥 読み込み」を押してください (No.{sel.no} セット済)")
 
 
-# ---------- 有料ガチャ一覧タブ ----------
-with _rsub[2]:
-    from research import (
-        PremiumGacha as _PG,
-        upsert_premium_gacha as _upg, delete_premium_gacha as _dpg,
-    )
-    _lpg = cached_premium_gachas
-    from datetime import datetime as _dt2
+    # ---------- DOPA商品一覧タブ ----------
+    with _rsub[1]:
+        _ldopa = cached_dopa_products  # cached経由
 
-    st.subheader("🎰 有料ガチャ一覧")
-    st.caption("**○○円課金した人だけ引ける限定ガチャ**を管理（通常のpt消費型は対象外）。「📋 景品設計」タブから選択して設計に使えます")
-    st.info("💡 **自動取得は「🎲 DOPA商品一覧」タブ**の🔄ボタンで実行（DOPAの課金条件付き商品が自動で振り分けられます）。下のフォームは手動追加用")
+        st.subheader("🎲 DOPA商品一覧")
+        st.caption("DOPAの全商品（参考データベース）。「📋 景品設計」タブから選んで設計に流用できます")
 
-    try:
-        items = _lpg()
-    except Exception as e:
-        st.error(f"読み込みエラー: {e}")
-        items = []
+        sync_cols = st.columns([2, 1, 4])
+        with sync_cols[0]:
+            sync_btn = st.button("🔄 DOPAから最新一覧を取込",
+                                  help="DOPAから現在表示中の全件を取得")
+        if sync_btn:
+            with st.spinner("DOPAから取込中..."):
+                try:
+                    from dopa_scraper import sync_dopa_to_sheets
+                    result = sync_dopa_to_sheets(category="pokemon", sleep_sec=0.3, verbose=False)
+                    cached_dopa_products.clear()
+                    cached_premium_gachas.clear()
+                    cached_new_gachas.clear()
+                    st.session_state["_dopa_sync_result"] = result
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"DOPA取込エラー: {e}")
 
-    # 表示
-    if items:
-        df = pd.DataFrame([{
-            "商品ID": g.product_id, "サイト": g.site, "タイトル": g.title,
-            "単価(円)": g.price, "総口数": g.total_tickets, "カード種数": g.card_types,
-            "引く権利の事前課金額(円)": g.charge_amount,
-            "URL": g.url, "備考": g.note, "更新日時": g.updated_at,
-        } for g in items])
-        st.dataframe(df, use_container_width=True, hide_index=True,
-                     column_config={"URL": st.column_config.LinkColumn("URL")})
-    else:
-        st.info("まだ登録なし。下のフォームから追加してください。\n\n例: 「5,000円以上課金者限定 SR確定オリパ」のような **課金条件付き** のガチャを登録")
-
-    st.markdown("---")
-    st.markdown("##### ➕ 新規追加 / 更新")
-    with st.form("paid_add_form", clear_on_submit=False):
-        cols = st.columns([2, 1, 3])
-        with cols[0]:
-            pf_id = st.text_input("商品ID(任意、空なら自動生成)", placeholder="例: DOPA-555")
-        with cols[1]:
-            pf_site = st.selectbox("サイト", ["DOPA", "DOKKAN", "EXTRECA", "JTC", "その他"])
-        with cols[2]:
-            pf_title = st.text_input("タイトル *", placeholder="例: 激100連祭")
-        cols2 = st.columns([1, 1, 1, 1])
-        with cols2[0]:
-            pf_price = st.number_input("単価(円) *", min_value=0, step=100)
-        with cols2[1]:
-            pf_total = st.number_input("総口数 *", min_value=0, step=1)
-        with cols2[2]:
-            pf_card_types = st.number_input("カード種数", min_value=0, step=1)
-        with cols2[3]:
-            pf_charge = st.number_input("引く権利の事前課金額(円)", min_value=0, step=1000,
-                                        help="○○円課金したユーザーだけ引ける条件の事前課金額。設計時に売上加算")
-        pf_url = st.text_input("商品URL", placeholder="https://...")
-        pf_note = st.text_area("備考", height=60)
-
-        submitted = st.form_submit_button("💾 保存", type="primary")
-        if submitted:
-            if not pf_title or pf_price <= 0 or pf_total <= 0:
-                st.error("タイトル・単価・総口数は必須です")
-            else:
-                pid = pf_id.strip() or f"{pf_site}-{_dt2.now().strftime('%Y%m%d%H%M%S')}"
-                cached_premium_gachas.clear()
-                _upg(_PG(
-                    product_id=pid, site=pf_site, title=pf_title, url=pf_url,
-                    price=int(pf_price), total_tickets=int(pf_total),
-                    card_types=int(pf_card_types), charge_amount=int(pf_charge),
-                    note=pf_note, updated_at="",
-                ))
-                st.success(f"✅ 保存しました: {pid}")
-                st.rerun()
-
-    if items:
-        st.markdown("##### 🗑️ 削除")
-        del_cols = st.columns([3, 1])
-        with del_cols[0]:
-            del_id = st.selectbox("削除する商品", [g.product_id for g in items], key="paid_del_pick")
-        with del_cols[1]:
-            if st.button("削除", key="paid_del_btn"):
-                cached_premium_gachas.clear()
-                _dpg(del_id)
-                st.success(f"削除しました: {del_id}")
-                st.rerun()
-
-
-# ---------- 新規ガチャ一覧タブ ----------
-with _rsub[3]:
-    from research import (
-        NewGacha as _NG,
-        upsert_new_gacha as _ung, delete_new_gacha as _dng,
-    )
-    _lng = cached_new_gachas
-
-    st.subheader("🆕 新規ガチャ一覧（トレカセンター登録後X日限定など）")
-    st.caption("新規限定オリパを管理。「📋 景品設計」タブから選択して設計に使えます")
-    st.info("💡 **自動取得は「🎴 トレカセンター商品一覧」「🎲 DOPA商品一覧」の🔄ボタン**で実行（タイトル判定で新規限定が自動振り分け）。下のフォームは手動追加用")
-
-    # トレカセンター自動候補スキャン
-    auto_scan = st.checkbox("🔍 トレカセンター8770件からも新規限定っぽい商品を表示", value=True, key="new_scan_tc")
-
-    try:
-        items_n = _lng()
-    except Exception as e:
-        st.error(f"読み込みエラー: {e}")
-        items_n = []
-
-    # トレカセンター自動候補抽出
-    tc_candidates = []
-    if auto_scan:
-        try:
-            from dopa_scraper import detect_new_gacha_period
-            tc_refs = cached_references()
-            for r in tc_refs:
-                period = detect_new_gacha_period(r.title)
-                if period:
-                    tc_candidates.append({
-                        "No": r.no, "サイト": "トレカセンター", "タイトル": r.title,
-                        "単価(coin)": r.price_per_coin, "総口数": r.total_tickets,
-                        "新規限定期間": period, "完売日": r.sold_date,
-                        "URL": r.url,
-                    })
-        except Exception:
-            pass
-        if tc_candidates:
-            st.markdown(f"##### 🎴 トレカセンター 自動候補 {len(tc_candidates)}件")
-            df_tc = pd.DataFrame(tc_candidates)
-            st.dataframe(df_tc, use_container_width=True, hide_index=True,
-                         column_config={"URL": st.column_config.LinkColumn("URL")})
-            # 一括登録ボタン
-            if st.button(f"💾 トレカセンター候補 {len(tc_candidates)}件をDBに登録", key="tc_new_bulk_save"):
-                from research import bulk_upsert_new_gachas
-                today = datetime.now().strftime("%Y-%m-%d")
-                new_gachas = [_NG(
-                    no=str(c["No"]), site="トレカセンター", title=c["タイトル"], url=c["URL"],
-                    price=int(c["単価(coin)"] or 0), total_tickets=int(c["総口数"] or 0),
-                    new_period=c["新規限定期間"], registered_at=today,
-                    note="自動候補(トレカセンター タイトル判定)", updated_at="",
-                ) for c in tc_candidates]
-                bulk_upsert_new_gachas(new_gachas)
-                cached_new_gachas.clear()
-                st.success(f"✅ {len(new_gachas)}件をDB登録")
-                st.rerun()
-            st.markdown("---")
-
-    if items_n:
-        df = pd.DataFrame([{
-            "No": g.no, "サイト": g.site, "タイトル": g.title,
-            "単価(円)": g.price, "総口数": g.total_tickets,
-            "新規限定期間": g.new_period, "登録日": g.registered_at,
-            "URL": g.url, "備考": g.note, "更新日時": g.updated_at,
-        } for g in items_n])
-        st.dataframe(df, use_container_width=True, hide_index=True,
-                     column_config={"URL": st.column_config.LinkColumn("URL")})
-    else:
-        st.info("まだ登録なし。下のフォームから追加してください")
-
-    st.markdown("---")
-    st.markdown("##### ➕ 新規追加 / 更新")
-    with st.form("new_add_form", clear_on_submit=False):
-        cols = st.columns([1, 1, 3])
-        with cols[0]:
-            nf_no = st.text_input("商品No. *", placeholder="例: 7401")
-        with cols[1]:
-            nf_site = st.selectbox("サイト", ["トレカセンター", "DOPA", "その他"], key="nf_site")
-        with cols[2]:
-            nf_title = st.text_input("タイトル *", placeholder="例: 新規限定オリパ")
-        cols2 = st.columns([1, 1, 1, 1])
-        with cols2[0]:
-            nf_price = st.number_input("単価(円) *", min_value=0, step=100, key="nf_price")
-        with cols2[1]:
-            nf_total = st.number_input("総口数 *", min_value=0, step=1, key="nf_total")
-        with cols2[2]:
-            nf_period = st.text_input("新規限定期間", placeholder="例: 登録後7日", key="nf_period")
-        with cols2[3]:
-            nf_reg = st.date_input("登録日", value=None, key="nf_reg")
-        nf_url = st.text_input("商品URL", placeholder="https://japan-toreca.com/oripa/pokemon/...", key="nf_url")
-        nf_note = st.text_area("備考", height=60, key="nf_note")
-
-        submitted = st.form_submit_button("💾 保存", type="primary")
-        if submitted:
-            if not nf_no or not nf_title or nf_price <= 0 or nf_total <= 0:
-                st.error("No・タイトル・単価・総口数は必須です")
-            else:
-                cached_new_gachas.clear()
-                _ung(_NG(
-                    no=nf_no.strip(), site=nf_site, title=nf_title, url=nf_url,
-                    price=int(nf_price), total_tickets=int(nf_total),
-                    new_period=nf_period, registered_at=str(nf_reg) if nf_reg else "",
-                    note=nf_note, updated_at="",
-                ))
-                st.success(f"✅ 保存しました: {nf_no}")
-                st.rerun()
-
-    if items_n:
-        st.markdown("##### 🗑️ 削除")
-        del_cols = st.columns([3, 1])
-        with del_cols[0]:
-            del_key = st.selectbox(
-                "削除する商品",
-                [f"{g.no}｜{g.site}｜{g.title}" for g in items_n],
-                key="new_del_pick",
+        # 同期結果表示
+        dopa_result = st.session_state.get("_dopa_sync_result")
+        if dopa_result:
+            items = dopa_result.get("added_items", [])
+            added_new = sum(1 for x in items if x.get("is_new"))
+            added_paid = sum(1 for x in items if x.get("is_paid"))
+            st.success(
+                f"✅ 取得 {dopa_result['fetched']}件 / 全DOPA商品 {dopa_result['dopa_products']}件\n\n"
+                f"**{dopa_result.get('added', 0)}件 新規追加** "
+                f"(うち 🆕新規限定 {added_new}件 / 🎰有料 {added_paid}件)\n\n"
+                f"📊 DB全体: 🆕新規限定 {dopa_result['new_gachas']}件 / 🎰有料 {dopa_result['premium_gachas']}件"
             )
-            # 選択値から No と site を抽出
-            sel_idx = [f"{g.no}｜{g.site}｜{g.title}" for g in items_n].index(del_key)
-            sel_g = items_n[sel_idx]
-        with del_cols[1]:
-            if st.button("削除", key="new_del_btn"):
-                cached_new_gachas.clear()
-                _dng(sel_g.no, sel_g.site)
-                st.success(f"削除しました: {sel_g.no}")
+            if items:
+                with st.expander(f"📋 追加された {len(items)}件 一覧", expanded=True):
+                    df_added = pd.DataFrame([{
+                        "商品ID": x["product_id"], "タイトル": x["title"],
+                        "単価(pt)": x["price"], "総口数": x["total_tickets"],
+                        "残口数": x["remaining"],
+                        "🆕新規限定": "○" if x.get("is_new") else "",
+                        "🎰有料限定": "○" if x.get("is_paid") else "",
+                        "URL": x["url"],
+                    } for x in items])
+                    st.dataframe(df_added, use_container_width=True, hide_index=True,
+                                 column_config={"URL": st.column_config.LinkColumn("URL")})
+            else:
+                st.info("既存DBと差分なし(新商品リリースなし)")
+            if st.button("× 結果を閉じる", key="dopa_close_result"):
+                st.session_state.pop("_dopa_sync_result", None)
                 st.rerun()
+        try:
+            dopa_items = _ldopa()
+        except Exception as e:
+            st.error(f"読み込みエラー: {e}")
+            dopa_items = []
+
+        if not dopa_items:
+            st.info("まだ取込なし。上の「🔄 DOPAから最新一覧を取込」を押してください")
+        else:
+            # フィルタ
+            f_cols = st.columns([2, 1, 1, 1])
+            with f_cols[0]:
+                search = st.text_input("🔍 タイトル検索", key="dopa_search")
+            with f_cols[1]:
+                f_new = st.checkbox("新規限定のみ", key="dopa_f_new")
+            with f_cols[2]:
+                f_paid = st.checkbox("有料(課金条件付き)のみ", key="dopa_f_paid")
+            with f_cols[3]:
+                f_last_one = st.checkbox("ラストワン有のみ", key="dopa_f_last")
+
+            filtered = dopa_items
+            if search:
+                s = search.strip().lower()
+                filtered = [g for g in filtered if s in g.title.lower() or s in g.product_id.lower()]
+            if f_new:
+                filtered = [g for g in filtered if g.is_new_gacha]
+            if f_paid:
+                filtered = [g for g in filtered if g.is_paid_gacha]
+            if f_last_one:
+                filtered = [g for g in filtered if g.has_last_one]
+
+            st.markdown(f"**{len(filtered):,}件 / 全{len(dopa_items):,}件**")
+            df = pd.DataFrame([{
+                "商品ID": g.product_id, "タイトル": g.title,
+                "単価(pt)": g.price, "総口数": g.total_tickets, "残口数": g.remaining,
+                "ラストワン": "○" if g.has_last_one else "",
+                "最低保証pt": g.min_point,
+                "期限(日)": g.limit_day or "",
+                "制限数量": g.limit_quantity or "",
+                "新規限定": "○" if g.is_new_gacha else "",
+                "有料限定": "○" if g.is_paid_gacha else "",
+                "URL": g.url,
+            } for g in filtered])
+            st.caption("⬇️ **行をクリックして選択** → 下に転送ボタンが表示されます。**新規限定/有料限定の○は編集可** (📝表示モード切替)")
+
+            # 編集モード切替
+            edit_mode = st.toggle("🔧 振り分け編集モード", key="dopa_edit_mode",
+                                   help="ONにすると新規限定/有料限定をチェックボックスで編集できる")
+
+            if edit_mode:
+                edit_df = df.copy()
+                edit_df["🆕新規限定_bool"] = edit_df["新規限定"] == "○"
+                edit_df["🎰有料限定_bool"] = edit_df["有料限定"] == "○"
+                shown = edit_df[["商品ID", "タイトル", "単価(pt)", "総口数", "残口数",
+                                 "🆕新規限定_bool", "🎰有料限定_bool", "URL"]]
+                edited = st.data_editor(
+                    shown, use_container_width=True, hide_index=True,
+                    column_config={
+                        "🆕新規限定_bool": st.column_config.CheckboxColumn("🆕新規限定"),
+                        "🎰有料限定_bool": st.column_config.CheckboxColumn("🎰有料限定"),
+                        "URL": st.column_config.LinkColumn("URL"),
+                        "商品ID": st.column_config.TextColumn(disabled=True),
+                        "タイトル": st.column_config.TextColumn(disabled=True),
+                        "単価(pt)": st.column_config.NumberColumn(disabled=True),
+                        "総口数": st.column_config.NumberColumn(disabled=True),
+                        "残口数": st.column_config.NumberColumn(disabled=True),
+                    },
+                    key="dopa_editor",
+                )
+                if st.button("💾 振り分けを保存", type="primary", key="dopa_save_classification"):
+                    # filtered とインデックス対応で更新
+                    from research import DopaProduct, bulk_upsert_dopa_products, NewGacha, PremiumGacha
+                    from research import bulk_upsert_new_gachas, bulk_upsert_premium_gachas
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    updated_products = []
+                    add_new_gachas = []
+                    add_paid_gachas = []
+                    for i, row in edited.iterrows():
+                        orig = next((g for g in filtered if g.product_id == row["商品ID"]), None)
+                        if not orig:
+                            continue
+                        is_new = bool(row["🆕新規限定_bool"])
+                        is_paid = bool(row["🎰有料限定_bool"])
+                        if orig.is_new_gacha == is_new and orig.is_paid_gacha == is_paid:
+                            continue
+                        orig.is_new_gacha = is_new
+                        orig.is_paid_gacha = is_paid
+                        updated_products.append(orig)
+                        if is_new:
+                            add_new_gachas.append(NewGacha(
+                                no=orig.product_id, site="DOPA", title=orig.title, url=orig.url,
+                                price=orig.price, total_tickets=orig.total_tickets,
+                                new_period="手動指定", registered_at=today,
+                                note="手動振り分け", updated_at="",
+                            ))
+                        if is_paid:
+                            add_paid_gachas.append(PremiumGacha(
+                                product_id=orig.product_id, site="DOPA", title=orig.title, url=orig.url,
+                                price=orig.price, total_tickets=orig.total_tickets,
+                                card_types=0, charge_amount=0,
+                                note="手動振り分け", updated_at="",
+                            ))
+                    if updated_products:
+                        bulk_upsert_dopa_products(updated_products)
+                        if add_new_gachas:
+                            bulk_upsert_new_gachas(add_new_gachas)
+                            cached_new_gachas.clear()
+                        if add_paid_gachas:
+                            bulk_upsert_premium_gachas(add_paid_gachas)
+                            cached_premium_gachas.clear()
+                        cached_dopa_products.clear()
+                        st.success(f"✅ {len(updated_products)}件の振り分けを保存しました")
+                        st.rerun()
+                    else:
+                        st.info("変更なし")
+            else:
+                ev_d = st.dataframe(
+                    df, use_container_width=True, hide_index=True,
+                    on_select="rerun", selection_mode="single-row",
+                    column_config={
+                        "URL": st.column_config.LinkColumn("URL"),
+                        "単価(pt)": st.column_config.NumberColumn(format="%d pt"),
+                        "残口数": st.column_config.NumberColumn(format="%d"),
+                    },
+                    key="dopa_table",
+                )
+                sel_rows_d = (ev_d.selection or {}).get("rows", [])
+                if sel_rows_d:
+                    sel_d = filtered[sel_rows_d[0]]
+                    ca, cb = st.columns([4, 2])
+                    with ca:
+                        st.success(f"選択中: {sel_d.product_id}｜{sel_d.title}（{sel_d.price}pt×{sel_d.total_tickets:,}・残{sel_d.remaining:,}）")
+                    with cb:
+                        if st.button("📋 景品設計に転送", type="primary", key="dopa_to_template_quick",
+                                      use_container_width=True):
+                            st.session_state["_jump_to_template_dopa_id"] = sel_d.product_id
+                            st.toast(f"📋 景品設計タブで「🎲 DOPA商品から」セレクトしてください ({sel_d.title[:30]})")
+
+
+    # ---------- 有料ガチャ一覧タブ ----------
+    with _rsub[2]:
+        from research import (
+            PremiumGacha as _PG,
+            upsert_premium_gacha as _upg, delete_premium_gacha as _dpg,
+        )
+        _lpg = cached_premium_gachas
+        from datetime import datetime as _dt2
+
+        st.subheader("🎰 有料ガチャ一覧")
+        st.caption("**○○円課金した人だけ引ける限定ガチャ**を管理（通常のpt消費型は対象外）。「📋 景品設計」タブから選択して設計に使えます")
+        st.info("💡 **自動取得は「🎲 DOPA商品一覧」タブ**の🔄ボタンで実行（DOPAの課金条件付き商品が自動で振り分けられます）。下のフォームは手動追加用")
+
+        try:
+            items = _lpg()
+        except Exception as e:
+            st.error(f"読み込みエラー: {e}")
+            items = []
+
+        # 表示
+        if items:
+            df = pd.DataFrame([{
+                "商品ID": g.product_id, "サイト": g.site, "タイトル": g.title,
+                "単価(円)": g.price, "総口数": g.total_tickets, "カード種数": g.card_types,
+                "引く権利の事前課金額(円)": g.charge_amount,
+                "URL": g.url, "備考": g.note, "更新日時": g.updated_at,
+            } for g in items])
+            st.dataframe(df, use_container_width=True, hide_index=True,
+                         column_config={"URL": st.column_config.LinkColumn("URL")})
+        else:
+            st.info("まだ登録なし。下のフォームから追加してください。\n\n例: 「5,000円以上課金者限定 SR確定オリパ」のような **課金条件付き** のガチャを登録")
+
+        st.markdown("---")
+        st.markdown("##### ➕ 新規追加 / 更新")
+        with st.form("paid_add_form", clear_on_submit=False):
+            cols = st.columns([2, 1, 3])
+            with cols[0]:
+                pf_id = st.text_input("商品ID(任意、空なら自動生成)", placeholder="例: DOPA-555")
+            with cols[1]:
+                pf_site = st.selectbox("サイト", ["DOPA", "DOKKAN", "EXTRECA", "JTC", "その他"])
+            with cols[2]:
+                pf_title = st.text_input("タイトル *", placeholder="例: 激100連祭")
+            cols2 = st.columns([1, 1, 1, 1])
+            with cols2[0]:
+                pf_price = st.number_input("単価(円) *", min_value=0, step=100)
+            with cols2[1]:
+                pf_total = st.number_input("総口数 *", min_value=0, step=1)
+            with cols2[2]:
+                pf_card_types = st.number_input("カード種数", min_value=0, step=1)
+            with cols2[3]:
+                pf_charge = st.number_input("引く権利の事前課金額(円)", min_value=0, step=1000,
+                                            help="○○円課金したユーザーだけ引ける条件の事前課金額。設計時に売上加算")
+            pf_url = st.text_input("商品URL", placeholder="https://...")
+            pf_note = st.text_area("備考", height=60)
+
+            submitted = st.form_submit_button("💾 保存", type="primary")
+            if submitted:
+                if not pf_title or pf_price <= 0 or pf_total <= 0:
+                    st.error("タイトル・単価・総口数は必須です")
+                else:
+                    pid = pf_id.strip() or f"{pf_site}-{_dt2.now().strftime('%Y%m%d%H%M%S')}"
+                    cached_premium_gachas.clear()
+                    _upg(_PG(
+                        product_id=pid, site=pf_site, title=pf_title, url=pf_url,
+                        price=int(pf_price), total_tickets=int(pf_total),
+                        card_types=int(pf_card_types), charge_amount=int(pf_charge),
+                        note=pf_note, updated_at="",
+                    ))
+                    st.success(f"✅ 保存しました: {pid}")
+                    st.rerun()
+
+        if items:
+            st.markdown("##### 🗑️ 削除")
+            del_cols = st.columns([3, 1])
+            with del_cols[0]:
+                del_id = st.selectbox("削除する商品", [g.product_id for g in items], key="paid_del_pick")
+            with del_cols[1]:
+                if st.button("削除", key="paid_del_btn"):
+                    cached_premium_gachas.clear()
+                    _dpg(del_id)
+                    st.success(f"削除しました: {del_id}")
+                    st.rerun()
+
+
+    # ---------- 新規ガチャ一覧タブ ----------
+    with _rsub[3]:
+        from research import (
+            NewGacha as _NG,
+            upsert_new_gacha as _ung, delete_new_gacha as _dng,
+        )
+        _lng = cached_new_gachas
+
+        st.subheader("🆕 新規ガチャ一覧（トレカセンター登録後X日限定など）")
+        st.caption("新規限定オリパを管理。「📋 景品設計」タブから選択して設計に使えます")
+        st.info("💡 **自動取得は「🎴 トレカセンター商品一覧」「🎲 DOPA商品一覧」の🔄ボタン**で実行（タイトル判定で新規限定が自動振り分け）。下のフォームは手動追加用")
+
+        # トレカセンター自動候補スキャン
+        auto_scan = st.checkbox("🔍 トレカセンター8770件からも新規限定っぽい商品を表示", value=True, key="new_scan_tc")
+
+        try:
+            items_n = _lng()
+        except Exception as e:
+            st.error(f"読み込みエラー: {e}")
+            items_n = []
+
+        # トレカセンター自動候補抽出
+        tc_candidates = []
+        if auto_scan:
+            try:
+                from dopa_scraper import detect_new_gacha_period
+                tc_refs = cached_references()
+                for r in tc_refs:
+                    period = detect_new_gacha_period(r.title)
+                    if period:
+                        tc_candidates.append({
+                            "No": r.no, "サイト": "トレカセンター", "タイトル": r.title,
+                            "単価(coin)": r.price_per_coin, "総口数": r.total_tickets,
+                            "新規限定期間": period, "完売日": r.sold_date,
+                            "URL": r.url,
+                        })
+            except Exception:
+                pass
+            if tc_candidates:
+                st.markdown(f"##### 🎴 トレカセンター 自動候補 {len(tc_candidates)}件")
+                df_tc = pd.DataFrame(tc_candidates)
+                st.dataframe(df_tc, use_container_width=True, hide_index=True,
+                             column_config={"URL": st.column_config.LinkColumn("URL")})
+                # 一括登録ボタン
+                if st.button(f"💾 トレカセンター候補 {len(tc_candidates)}件をDBに登録", key="tc_new_bulk_save"):
+                    from research import bulk_upsert_new_gachas
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    new_gachas = [_NG(
+                        no=str(c["No"]), site="トレカセンター", title=c["タイトル"], url=c["URL"],
+                        price=int(c["単価(coin)"] or 0), total_tickets=int(c["総口数"] or 0),
+                        new_period=c["新規限定期間"], registered_at=today,
+                        note="自動候補(トレカセンター タイトル判定)", updated_at="",
+                    ) for c in tc_candidates]
+                    bulk_upsert_new_gachas(new_gachas)
+                    cached_new_gachas.clear()
+                    st.success(f"✅ {len(new_gachas)}件をDB登録")
+                    st.rerun()
+                st.markdown("---")
+
+        if items_n:
+            df = pd.DataFrame([{
+                "No": g.no, "サイト": g.site, "タイトル": g.title,
+                "単価(円)": g.price, "総口数": g.total_tickets,
+                "新規限定期間": g.new_period, "登録日": g.registered_at,
+                "URL": g.url, "備考": g.note, "更新日時": g.updated_at,
+            } for g in items_n])
+            st.dataframe(df, use_container_width=True, hide_index=True,
+                         column_config={"URL": st.column_config.LinkColumn("URL")})
+        else:
+            st.info("まだ登録なし。下のフォームから追加してください")
+
+        st.markdown("---")
+        st.markdown("##### ➕ 新規追加 / 更新")
+        with st.form("new_add_form", clear_on_submit=False):
+            cols = st.columns([1, 1, 3])
+            with cols[0]:
+                nf_no = st.text_input("商品No. *", placeholder="例: 7401")
+            with cols[1]:
+                nf_site = st.selectbox("サイト", ["トレカセンター", "DOPA", "その他"], key="nf_site")
+            with cols[2]:
+                nf_title = st.text_input("タイトル *", placeholder="例: 新規限定オリパ")
+            cols2 = st.columns([1, 1, 1, 1])
+            with cols2[0]:
+                nf_price = st.number_input("単価(円) *", min_value=0, step=100, key="nf_price")
+            with cols2[1]:
+                nf_total = st.number_input("総口数 *", min_value=0, step=1, key="nf_total")
+            with cols2[2]:
+                nf_period = st.text_input("新規限定期間", placeholder="例: 登録後7日", key="nf_period")
+            with cols2[3]:
+                nf_reg = st.date_input("登録日", value=None, key="nf_reg")
+            nf_url = st.text_input("商品URL", placeholder="https://japan-toreca.com/oripa/pokemon/...", key="nf_url")
+            nf_note = st.text_area("備考", height=60, key="nf_note")
+
+            submitted = st.form_submit_button("💾 保存", type="primary")
+            if submitted:
+                if not nf_no or not nf_title or nf_price <= 0 or nf_total <= 0:
+                    st.error("No・タイトル・単価・総口数は必須です")
+                else:
+                    cached_new_gachas.clear()
+                    _ung(_NG(
+                        no=nf_no.strip(), site=nf_site, title=nf_title, url=nf_url,
+                        price=int(nf_price), total_tickets=int(nf_total),
+                        new_period=nf_period, registered_at=str(nf_reg) if nf_reg else "",
+                        note=nf_note, updated_at="",
+                    ))
+                    st.success(f"✅ 保存しました: {nf_no}")
+                    st.rerun()
+
+        if items_n:
+            st.markdown("##### 🗑️ 削除")
+            del_cols = st.columns([3, 1])
+            with del_cols[0]:
+                del_key = st.selectbox(
+                    "削除する商品",
+                    [f"{g.no}｜{g.site}｜{g.title}" for g in items_n],
+                    key="new_del_pick",
+                )
+                # 選択値から No と site を抽出
+                sel_idx = [f"{g.no}｜{g.site}｜{g.title}" for g in items_n].index(del_key)
+                sel_g = items_n[sel_idx]
+            with del_cols[1]:
+                if st.button("削除", key="new_del_btn"):
+                    cached_new_gachas.clear()
+                    _dng(sel_g.no, sel_g.site)
+                    st.success(f"削除しました: {sel_g.no}")
+                    st.rerun()
 
 
 # ---------- 商品一覧タブ ----------
