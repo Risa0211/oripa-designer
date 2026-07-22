@@ -409,510 +409,237 @@ with st.sidebar:
 
 
 with tab_design:
-    st.subheader("① カテゴリー（ポケモン / ワンピース）")
-    cat_cols = st.columns([1, 3])
-    with cat_cols[0]:
-        design_category = st.radio(
-            "カテゴリー",
-            options=["ポケモン", "ワンピース"],
-            horizontal=True, label_visibility="collapsed",
-            key="design_category",
-            help="設計するカードの種類。候補カード（スニダン全カード）がポケモン/ワンピースで切り替わります",
-        )
-    with cat_cols[1]:
-        if design_category == "ワンピース":
-            st.info("🏴‍☠️ **ワンピース**: 候補はスニダンのワンピカードのみ（在庫スプシはポケモン専用のため『無在庫』でお使いください）")
-        else:
-            st.info("⚡ **ポケモン**: 在庫スプシ＋スニダンのポケカが候補になります")
-
-    st.subheader("② 在庫モード")
-    mode_cols = st.columns([1, 3])
-    with mode_cols[0]:
-        # 運営は無在庫運用のため 無在庫 を既定に（在庫連動は残すが非既定）
-        stock_mode_label = st.radio(
-            "モード",
-            options=["無在庫", "在庫連動"],
-            horizontal=True,
-            label_visibility="collapsed",
-            help="無在庫（既定）: 全カードから自由に選択可能。在庫連動: 在庫スプシの残数量から選択・引当",
-            key="stock_mode_radio",
-        )
-    stock_mode = "no_stock" if stock_mode_label == "無在庫" else "linked"
-    with mode_cols[1]:
-        if stock_mode == "no_stock":
-            st.info("🛒 **無在庫モード（既定）**: 全カードから自由に選択・在庫スプシは変更しません。販売決定後に仕入れる前提。")
-        else:
-            st.warning("📦 **在庫連動モード**: 残数量がある在庫から選択。保存で「予約中」になります（通常は無在庫でOK）。")
-
-    # 無在庫モードのときだけ、スニダン全カード（選択カテゴリー）を候補に含められる
-    _cat_word = "ワンピ" if design_category == "ワンピース" else "ポケカ"
-    include_snk_index = False
-    if stock_mode == "no_stock":
-        include_snk_index = st.checkbox(
-            f"🃏 スニダン全カード（{_cat_word}・シングル/BOX/パック）も候補に含める",
-            value=True, key="design_include_snk_index",
-            help="在庫スプシに無いカードも、スニダン相場付きで景品候補に選べます（無在庫販売前提）",
-        )
-    elif design_category == "ワンピース":
-        st.warning("⚠️ ワンピースの在庫はスプシにありません。上の在庫モードを『無在庫』にするとスニダンのワンピカードから選べます。")
-
-    st.subheader("③ 販売パラメータ")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        total_tickets = st.number_input("総口数", min_value=1, value=selected_ref.total_tickets or 1000, step=100)
-    with c2:
-        price_per_spin = st.number_input("1回価格（円）", min_value=1, value=selected_ref.price_per_coin or 500, step=100)
-    with c3:
-        profit_rate = st.number_input("目標粗利率（%）", min_value=0.0, max_value=100.0, value=30.0, step=1.0)
-    with c4:
-        return_rate = 100.0 - profit_rate
-        st.metric("還元率（=100-粗利率）", f"{return_rate:.1f}%")
-
-    total_revenue = total_tickets * price_per_spin
-    st.info(f"💰 総売上: ¥{total_revenue:,} ／ 原価予算: ¥{int(total_revenue * return_rate / 100):,}")
-
-    st.subheader("④ モードを選ぶ")
-    mode = st.radio(
-        "入力方式",
-        options=["X", "Y"],
-        format_func=lambda x: "案X: 1枚あたり目標相場を直接指定" if x == "X" else "案Y: 還元率＋等級配分比率から自動計算",
-        horizontal=True,
+    import pandas as pd
+    from puzzle_designer import (
+        PrizeRow, DesignMeta, compute, apply_ladder,
+        LADDER_LEAN_TOP, LADDER_HEAVY_TOP, to_import_rows, IMPORT_HEADERS,
+        METHODS, METHOD_SHIP, METHOD_CHOICE, METHOD_PT,
     )
 
-    st.subheader("⑤ 等構成")
-    # 参考競合の等を初期値にする
-    default_tiers = list(selected_ref.tiers.keys()) or ["1等", "2等", "3等"]
-    selected_tier_names = st.multiselect("含める等", options=TIER_COLS, default=default_tiers)
-
-    tier_specs: list[TierSpec] = []
-    if selected_tier_names:
-        # --- 商品全体ベース上乗せ率＋プリセット ---
-        st.markdown("**🎯 商品全体の上乗せ率設定**")
-
-        # プリセットを先に読込（コールバックで参照するため）
-        from markup import load_presets, save_preset, MarkupPreset
-        presets = load_presets()
-        preset_names = ["（プリセットを選択）"] + [p.name for p in presets]
-
-        def _apply_preset_main():
-            pick = st.session_state.get("preset_pick", "")
-            if pick == "（プリセットを選択）" or not pick:
-                return
-            preset = next((p for p in presets if p.name == pick), None)
-            if not preset:
-                return
-            # コールバックはwidget render前に実行されるのでsession_stateを安全に変更可
-            st.session_state["base_markup_rate_input"] = preset.base_rate
-            for tname, rate in preset.tier_rates.items():
-                st.session_state[f"markup_{tname}"] = rate
-            st.session_state["_applied_preset_msg"] = f"✅ プリセット「{preset.name}」を適用"
-
-        base_cols = st.columns([2, 3, 2])
-        with base_cols[0]:
-            # key で管理する widget に value= を併用すると自動提案/プリセットの反映が
-            # 効かなくなる（Streamlit のアンチパターン）。初期値は setdefault で一度だけ設定。
-            if "base_markup_rate_input" not in st.session_state:
-                st.session_state["base_markup_rate_input"] = 50.0
-            base_markup_rate = st.number_input(
-                "商品全体ベース上乗せ率（%）",
-                min_value=-1.0, max_value=200.0, step=5.0,
-                key="base_markup_rate_input",
-                help="`-1`で価格帯別ルール、`50`で全等1.5倍、`0`で上乗せなし。等別の値が指定されればそちらが優先",
-            )
-        with base_cols[1]:
-            preset_pick = st.selectbox(
-                "プリセット",
-                options=preset_names,
-                key="preset_pick",
-                help="保存済みのプリセットから上乗せ率を一括ロード",
-            )
-        with base_cols[2]:
-            st.button(
-                "✅ プリセット適用",
-                disabled=(preset_pick == "（プリセットを選択）"),
-                use_container_width=True,
-                key="apply_preset_btn",
-                on_click=_apply_preset_main,
-            )
-
-        if st.session_state.get("_applied_preset_msg"):
-            st.success(st.session_state.pop("_applied_preset_msg"))
-
-        st.markdown("---")
-        st.markdown("**各等の設定**")
-
-        # 等別上乗せ率の自動提案ボタン
-        suggest_col1, suggest_col2 = st.columns([1, 5])
-        with suggest_col1:
-            suggest_markup_btn = st.button(
-                "💡 上乗せ率を自動提案",
-                help="各等の目標相場に応じて、価格帯別ルールから上乗せ率を自動入力。手動でも上書き可能",
-                key="suggest_markup",
-            )
-
-        cols_header = st.columns([1, 1, 2, 1.5, 2])
-        cols_header[0].markdown("**等級**")
-        cols_header[1].markdown("**当たり数**")
-        if mode == "X":
-            cols_header[2].markdown("**1枚あたり目標相場（円）**")
-        else:
-            cols_header[2].markdown("**原価配分比率（%）**")
-        cols_header[3].markdown("**上乗せ率（%）**")
-        cols_header[4].markdown("**参考**")
-
-        default_prices = {"1等": 200000, "2等": 50000, "3等": 15000, "4等": 5000, "5等": 2000, "6等": 1000, "7等": 500, "キリ番": 10000, "ラストワン": 100000}
-        default_ratios = {"1等": 25, "2等": 25, "3等": 20, "4等": 15, "5等": 8, "6等": 4, "7等": 2, "キリ番": 1, "ラストワン": 0}
-
-        # 自動提案ボタン押下時: 各等の目標相場から推奨率を計算してセッションに保存
-        if suggest_markup_btn:
-            from markup import load_markup_bands, suggest_tier_rate
-            bands = load_markup_bands(force=True)
-            for tname in selected_tier_names:
-                target = st.session_state.get(f"price_{tname}", default_prices.get(tname, 10000))
-                rate = suggest_tier_rate(int(target or 0), bands)
-                st.session_state[f"markup_{tname}"] = float(rate)
-            st.rerun()
-
-        for tname in selected_tier_names:
-            ref_text = selected_ref.tiers.get(tname, "")
-            default_count = count_cards_in_tier(ref_text) or 1
-            row = st.columns([1, 1, 2, 1.5, 2])
-            row[0].markdown(f"**{tname}**")
-            cnt = row[1].number_input(
-                f"count_{tname}", min_value=0, value=default_count, step=1,
-                label_visibility="collapsed", key=f"count_{tname}",
-            )
-            if mode == "X":
-                price_each = row[2].number_input(
-                    f"price_{tname}", min_value=0, value=default_prices.get(tname, 10000), step=1000,
-                    label_visibility="collapsed", key=f"price_{tname}",
-                )
-                tier_target = price_each
-            else:
-                ratio = row[2].number_input(
-                    f"ratio_{tname}", min_value=0.0, max_value=100.0,
-                    value=float(default_ratios.get(tname, 10)), step=1.0,
-                    label_visibility="collapsed", key=f"ratio_{tname}",
-                )
-                tier_target = 0
-            # 上乗せ率（等別、空欄なら-1=価格帯ルール）
-            # key 管理の widget に value= を併用しない（自動提案/プリセットが効かなくなるため）。
-            markup_key = f"markup_{tname}"
-            if markup_key not in st.session_state:
-                st.session_state[markup_key] = -1.0
-            markup_rate = row[3].number_input(
-                f"markup_input_{tname}",
-                min_value=-1.0, max_value=200.0, step=1.0,
-                label_visibility="collapsed",
-                key=markup_key,
-                help="-1のままなら価格帯別ルールを使用。0以上を入れると等別の値を使う",
-            )
-            if mode == "X":
-                tier_specs.append(TierSpec(name=tname, count=cnt, target_price=tier_target, markup_rate_pct=markup_rate))
-            else:
-                tier_specs.append(TierSpec(name=tname, count=cnt, budget_ratio=ratio, markup_rate_pct=markup_rate))
-            row[4].caption(ref_text[:60] + ("…" if len(ref_text) > 60 else ""))
-
-        st.caption("💡 上乗せ率: `-1` = 価格帯別ルール（⚙️タブ）を自動適用 / `0以上` = 等別に指定した値を適用")
-
-    # モードY の場合: 合計比率チェック
-    if mode == "Y" and tier_specs:
-        total_ratio = sum(t.budget_ratio for t in tier_specs)
-        if abs(total_ratio - 100) > 0.01:
-            st.warning(f"⚠ 配分比率合計: {total_ratio:.1f}%（100%になるよう調整推奨）")
-
-    st.subheader("⑥ 商品情報")
-    title = st.text_input("商品タイトル", value=f"{selected_ref.title}参考オリパ")
-    note = st.text_area("メモ（任意）", height=80)
-
-    st.markdown("---")
-
-    # セッション状態
-    if "design_session" not in st.session_state:
-        st.session_state.design_session = None
-
-    st.markdown(
-        "👇 **まず下のボタンを押すと**、各等にカードが自動で割り当てられ、"
-        "その下に **カードの追加（➕）・削除（❌）・上乗せ率の編集** ができる画面が出ます。"
+    st.subheader("🎯 自分で設計（パズル型・設計シート準拠）")
+    st.caption(
+        "単価×総口数＝売上。目玉から積んで、コイン還元率・実利益率・総上乗せ率・アド確率(1/Y)・"
+        "末広がり判定がライブで出ます。スプシの『ガチャ設計シート』と同じ計算＋自動判定です。"
     )
-    c_left, c_mid, c_right = st.columns([2, 1, 2])
-    with c_left:
-        preview_btn = st.button("🚀 カードを割り当てて編集する", type="primary", use_container_width=True)
-    with c_mid:
-        reset_btn = st.button("♻ 割当てし直す", use_container_width=True, disabled=st.session_state.design_session is None)
-    with c_right:
-        reserve_btn = st.button("💾 この内容で保存", type="secondary", use_container_width=True, disabled=st.session_state.design_session is None)
 
-    def build_spec():
-        return DesignSpec(
-            title=title, reference_no=selected_ref.no,
-            reference_title=selected_ref.title, mode=mode,
-            total_tickets=total_tickets, price_per_spin=price_per_spin,
-            target_profit_rate=profit_rate / 100,
-            target_return_rate=return_rate / 100,
-            tiers=tier_specs, note=note,
-            stock_mode=stock_mode,
-            base_markup_rate=base_markup_rate,
-        )
+    # 賞品テーブルの列定義
+    PZ_COLS = ["賞ランク", "カード名", "型番", "口数", "実価値/枚", "送料/件",
+               "受取方法", "上乗せ倍率", "表示PT直接(任意)", "除外"]
 
-    if preview_btn or reset_btn:
-        if not tier_specs or all(t.count == 0 for t in tier_specs):
-            st.error("当たり数が全て0です")
+    def _pz_default_df():
+        return pd.DataFrame([
+            {"賞ランク": "1等", "カード名": "", "型番": "", "口数": 1, "実価値/枚": 0,
+             "送料/件": 500, "受取方法": METHOD_SHIP, "上乗せ倍率": 2.0, "表示PT直接(任意)": None, "除外": False},
+            {"賞ランク": "その他", "カード名": "1pt交換専用", "型番": "", "口数": 100, "実価値/枚": 1,
+             "送料/件": 0, "受取方法": METHOD_PT, "上乗せ倍率": 1.0, "表示PT直接(任意)": 1, "除外": False},
+        ], columns=PZ_COLS)
+
+    if "pz_df" not in st.session_state:
+        st.session_state.pz_df = _pz_default_df()
+
+    def _df_to_rows(df):
+        rows = []
+        for _, x in df.iterrows():
+            try:
+                direct = x.get("表示PT直接(任意)")
+                direct = None if pd.isna(direct) or direct in ("", None) else int(float(direct))
+            except (ValueError, TypeError):
+                direct = None
+            def _i(v, d=0):
+                try:
+                    return int(float(v)) if not pd.isna(v) else d
+                except (ValueError, TypeError):
+                    return d
+            def _f(v, d=0.0):
+                try:
+                    return float(v) if not pd.isna(v) else d
+                except (ValueError, TypeError):
+                    return d
+            rows.append(PrizeRow(
+                rank=str(x.get("賞ランク", "") or ""), name=str(x.get("カード名", "") or ""),
+                model_no=str(x.get("型番", "") or ""), count=_i(x.get("口数")),
+                real_value=_i(x.get("実価値/枚")), shipping=_i(x.get("送料/件")),
+                method=str(x.get("受取方法", METHOD_CHOICE) or METHOD_CHOICE),
+                markup=_f(x.get("上乗せ倍率")), display_pt_direct=direct,
+                exclude=bool(x.get("除外", False)),
+            ))
+        return rows
+
+    # ---------- ① 基本情報 ----------
+    st.markdown("### ① 基本情報")
+    cat = st.radio("カテゴリー", ["ポケモン", "ワンピース"], horizontal=True, key="pz_cat")
+    b1, b2, b3, b4 = st.columns(4)
+    pz_title = b1.text_input("ガチャタイトル", key="pz_title", placeholder="例: 1/319の天門を開け!")
+    unit_price = b2.number_input("単価(pt/口・1pt=1円)", min_value=1, value=500, step=1, key="pz_unit")
+    total_tickets = b3.number_input("総口数", min_value=1, value=5000, step=100, key="pz_total")
+    revenue = unit_price * total_tickets
+    b4.metric("総売上(円)", f"¥{revenue:,}")
+    b5, b6, b7, b8 = st.columns(4)
+    cost_rate = b5.number_input("pt実質原価率", min_value=0.0, max_value=1.0, value=0.72, step=0.01, key="pz_cr",
+                                help="1ptを商品で消化する実コスト。既定0.72")
+    external = b6.number_input("外部付与見込み(売上比)", min_value=0.0, max_value=0.5, value=0.02, step=0.01, key="pz_ext",
+                               help="クーポン/紹介pt等ガチャ外で配るpt。迷ったら0.02")
+    limit_day = b7.text_input("購入上限 口/日", value="300", key="pz_ld")
+    limit_total = b8.text_input("購入上限 口/累計", value="1000", key="pz_lt")
+    b9, b10, b11 = st.columns(3)
+    allow_loss = b9.number_input("許容損失ライン(円・マイナス)", value=-3000000, step=100000, key="pz_al")
+    progress = b10.number_input("想定進捗率(売れ止まり)", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key="pz_pg")
+    ad_threshold = b11.number_input("アド確率のしきい値 X(pt以上)", min_value=0, value=5500, step=500, key="pz_adx",
+                                    help="このpt以上の当たりを『アド』とみなし 1/Y を計算(例:1BOX相当¥5,500)")
+
+    # ---------- ② カードを探して追加 ----------
+    st.markdown("### ② カードを探して賞品に追加（スニダン相場から価格で選ぶ）")
+    sc1, sc2, sc3 = st.columns([3, 2, 2])
+    pz_q = sc1.text_input("カード名で検索", key="pz_search", placeholder="例: リザードン / ルフィ / VSTARユニバース BOX")
+    pz_target = sc2.number_input("目標相場(円・近い順)", min_value=0, value=0, step=1000, key="pz_tp")
+    pz_show = sc3.number_input("表示件数", min_value=5, max_value=100, value=15, step=5, key="pz_show")
+    if pz_q or pz_target:
+        idx_all = cached_snkrdunk_index()
+        pool = [it for it in idx_all if (it.tab.startswith("ワンピ") if cat == "ワンピース" else not it.tab.startswith("ワンピ"))]
+        if pz_q:
+            _q = pz_q.lower()
+            pool = [it for it in pool if _q in (it.name or "").lower() or _q in (it.series or "").lower()]
+        if pz_target > 0:
+            pool = sorted(pool, key=lambda x: abs(x.price - pz_target))
         else:
-            spec = build_spec()
-            with st.spinner("在庫を読込中..."):
-                design_inventory = None
-                if stock_mode == "no_stock" and include_snk_index:
-                    design_inventory = _safe_load(load_all_inventory) + cached_snkrdunk_index()
-                # カテゴリーで候補を絞る（ワンピ=ワンピタブのみ / ポケモン=ワンピ以外）
-                if design_inventory is not None:
-                    if design_category == "ワンピース":
-                        design_inventory = [it for it in design_inventory if it.tab.startswith("ワンピ")]
-                    else:
-                        design_inventory = [it for it in design_inventory if not it.tab.startswith("ワンピ")]
-                result = design(spec, inventory=design_inventory, reference=selected_ref)
-            # session に保存: tier_selections は (tab, row_idx) のリスト
-            tier_selections = {
-                tr.name: [(it.tab, it.row_idx) for it in tr.selected]
-                for tr in result.tier_results
-            }
-            st.session_state.design_session = {
-                "spec": spec,
-                "tier_selections": tier_selections,
-                "ref": selected_ref,
-                "inventory": result.all_inventory,
-            }
+            pool = sorted(pool, key=lambda x: -x.price)
+        st.caption(f"候補 {len(pool):,} 件中 上位 {min(pz_show, len(pool))} 件")
+        for j, it in enumerate(pool[:int(pz_show)]):
+            cc = st.columns([5, 2, 2, 1])
+            _nm = f"[{it.name}]({it.snkrdunk_url})" if getattr(it, "snkrdunk_url", "") else it.name
+            cc[0].markdown(f"{_nm} `{it.series or ''}`")
+            cc[1].markdown(f"¥{it.price:,}")
+            cc[2].markdown(f"[{it.tab}]")
+            if cc[3].button("➕ 追加", key=f"pz_add_{j}_{it.row_idx}"):
+                newrow = {"賞ランク": "", "カード名": it.name, "型番": (it.card_no or it.series or ""),
+                          "口数": 1, "実価値/枚": int(it.price), "送料/件": 500,
+                          "受取方法": METHOD_CHOICE, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False}
+                st.session_state.pz_df = pd.concat(
+                    [st.session_state.pz_df, pd.DataFrame([newrow], columns=PZ_COLS)], ignore_index=True)
+                st.rerun()
 
-    session = st.session_state.design_session
-    if session:
-        # 最新パラメータでspec更新（ユーザーが上のフォーム値を変えた場合の反映）
-        live_spec = build_spec()
-        # tier_selections は等名ベースなので、フォームの等構成変更にも追従
-        for t in live_spec.tiers:
-            session["tier_selections"].setdefault(t.name, [])
-        # 不要な等を削除
-        valid_names = {t.name for t in live_spec.tiers}
-        session["tier_selections"] = {k: v for k, v in session["tier_selections"].items() if k in valid_names}
-        session["spec"] = live_spec
+    # ---------- ③ 賞品テーブル（直接編集） ----------
+    st.markdown("### ③ 賞品テーブル（直接編集・行の追加/削除OK）")
+    lc1, lc2, lc3, lc4 = st.columns(4)
+    if lc1.button("倍率ラダー: 上位薄(1.3/1.5/1.7/2.0)", key="pz_ladder_lean", use_container_width=True):
+        rows = _df_to_rows(st.session_state.pz_df)
+        apply_ladder(rows, LADDER_LEAN_TOP)
+        for i, r in enumerate(rows):
+            st.session_state.pz_df.iat[i, PZ_COLS.index("上乗せ倍率")] = r.markup
+        st.rerun()
+    if lc2.button("倍率ラダー: 上位厚(2.0/1.7/1.5/1.3)", key="pz_ladder_heavy", use_container_width=True):
+        rows = _df_to_rows(st.session_state.pz_df)
+        apply_ladder(rows, LADDER_HEAVY_TOP)
+        for i, r in enumerate(rows):
+            st.session_state.pz_df.iat[i, PZ_COLS.index("上乗せ倍率")] = r.markup
+        st.rerun()
+    if lc3.button("最低保証＝単価にそろえる", key="pz_floor_unit", use_container_width=True,
+                  help="pt限定/floor行の表示PT直接を単価に合わせる（トレセン級お得）"):
+        for i in range(len(st.session_state.pz_df)):
+            if st.session_state.pz_df.iat[i, PZ_COLS.index("受取方法")] == METHOD_PT:
+                st.session_state.pz_df.iat[i, PZ_COLS.index("表示PT直接(任意)")] = int(unit_price)
+        st.rerun()
+    if lc4.button("テーブルをリセット", key="pz_reset", use_container_width=True):
+        st.session_state.pz_df = _pz_default_df()
+        st.rerun()
 
-        result = build_result_from_selections(
-            live_spec, session["tier_selections"], session["inventory"], reference=session["ref"],
-        )
+    edited = st.data_editor(
+        st.session_state.pz_df, num_rows="dynamic", use_container_width=True, key="pz_editor",
+        column_config={
+            "賞ランク": st.column_config.TextColumn("賞ランク", width="small"),
+            "カード名": st.column_config.TextColumn("カード名", width="medium"),
+            "型番": st.column_config.TextColumn("型番", width="small"),
+            "口数": st.column_config.NumberColumn("口数", min_value=0, step=1, width="small"),
+            "実価値/枚": st.column_config.NumberColumn("実価値/枚", min_value=0, step=100, format="%d"),
+            "送料/件": st.column_config.NumberColumn("送料/件", min_value=0, step=100, format="%d"),
+            "受取方法": st.column_config.SelectboxColumn("受取方法", options=METHODS, width="small"),
+            "上乗せ倍率": st.column_config.NumberColumn("上乗せ倍率", min_value=0.0, step=0.1, format="%.2f"),
+            "表示PT直接(任意)": st.column_config.NumberColumn("表示PT直接(任意)", min_value=0, step=1, format="%d"),
+            "除外": st.column_config.CheckboxColumn("除外", width="small"),
+        },
+    )
+    # 編集を session に反映
+    if not edited.equals(st.session_state.pz_df):
+        st.session_state.pz_df = edited.reset_index(drop=True)
 
-        # --- 総合サマリ ---
-        c1, c2, c3 = st.columns(3)
-        c1.metric("売上（円）", f"¥{result.total_revenue:,}")
-        c2.metric("仕入れ合計", f"¥{result.total_cost:,}", help="仕入れ価格未入力のカードは相場で代用")
-        c3.metric("粗利", f"¥{result.gross_profit:,}", delta=f"{result.actual_profit_rate:.1%}")
+    rows = _df_to_rows(edited)
+    meta = DesignMeta(
+        title=pz_title, unit_price=int(unit_price), total_tickets=int(total_tickets),
+        cost_rate=float(cost_rate), external_grant=float(external),
+        allow_loss_line=int(allow_loss), assumed_progress=float(progress),
+        limit_per_day=limit_day, limit_total=limit_total, ad_threshold_pt=int(ad_threshold),
+    )
+    res = compute(meta, rows)
 
-        c4, c5, c6 = st.columns(3)
-        c4.metric(
-            "顧客還元率", f"{result.customer_return_rate:.1%}",
-            help="顧客が見る還元率（コイン額面ベース）= コイン合計 / 売上",
-        )
-        c5.metric(
-            "実還元率", f"{result.real_return_rate:.1%}",
-            help="運営の本当の還元率 = 仕入れ合計 / 売上",
-        )
-        c6.metric(
-            "上乗せ差分", f"{(result.customer_return_rate - result.real_return_rate)*100:+.1f}pt",
-            help="顧客還元率と実還元率の差。コイン上乗せによる見せかけの還元率増分",
-        )
+    # ---------- 各賞のライブ内訳 ----------
+    disp = []
+    for p in rows:
+        if not (p.name.strip() or p.count):
+            continue
+        disp.append({
+            "賞": p.rank, "カード名": p.name, "口数": p.count,
+            "出現率": (f"{p.count/total_tickets:.3%}" if total_tickets else "-"),
+            "1/X": (f"1/{total_tickets/p.count:.0f}" if p.count else "-"),
+            "表示PT/枚": p.display_pt_per, "表示PT合計": p.display_pt_total,
+            "実価値/枚": p.real_value, "実価値合計": p.real_value_total,
+            "受取方法": p.method, "除外": "✓" if p.exclude else "",
+        })
+    if disp:
+        st.dataframe(pd.DataFrame(disp), use_container_width=True, hide_index=True)
 
-        # --- 最悪ケース試算（当選者が全員ポイント還元を選んだ場合）---
-        st.markdown("###### 🛡️ 最悪ケース試算（当選者が全員ポイント還元を選んだ想定）")
-        worst_cost = result.total_coin_value
-        worst_profit = result.total_revenue - worst_cost
-        worst_rate = (worst_profit / result.total_revenue) if result.total_revenue else 0
-        w1, w2, w3 = st.columns(3)
-        w1.metric(
-            "弊社コスト（最悪ケース）", f"¥{worst_cost:,}",
-            help="全カードがポイント還元された場合に払い戻すコイン額面合計（相場×上乗せ）。実際に現物発送されればコストは仕入れ合計まで下がる",
-        )
-        w2.metric(
-            "最悪ケース粗利", f"¥{worst_profit:,}", delta=f"{worst_rate:.1%}",
-            delta_color="normal" if worst_profit >= 0 else "inverse",
-            help="売上 − コイン額面合計。全員がポイント還元を選んでも残る利益（下振れの底）",
-        )
-        w3.metric(
-            "最悪ケース還元率", f"{result.customer_return_rate:.1%}",
-            help="=顧客還元率（コイン額面合計 / 売上）。100%を超えると最悪時は赤字",
-        )
-        if worst_profit < 0:
-            st.error(f"⚠️ 最悪ケースで赤字（¥{worst_profit:,}）。上乗せ率が高すぎるか、現物発送前提でないと成立しません。")
+    # ---------- ④ 計算結果 ----------
+    st.markdown("### ④ 計算結果（設計シートのヘッダと同じ）")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("総売上(円)", f"¥{res.revenue:,}")
+    m2.metric("◆ コイン還元率", f"{res.coin_return:.2%}", help="表示PT合計 ÷ 売上（バナーの◯%）")
+    m3.metric("◆ 実利益率", f"{res.real_profit_rate:.2%}", help="1 − 実価値合計 ÷ 売上")
+    m4.metric("◆ 総上乗せ率", f"{res.total_markup:.2%}", help="表示PT合計 ÷ 実価値合計")
+    m5, m6, m7, m8 = st.columns(4)
+    m5.metric(f"アド確率(≧{ad_threshold:,}pt)", (f"1/{res.ad_Y:.0f}" if res.ad_Y else "-"),
+              help="表示PTがXpt以上の口数から算出。1/319等")
+    m6.metric("最低保証(pt)", f"{res.min_guarantee:,}")
+    m7.metric("表示PT合計", f"¥{res.sum_display_pt:,}")
+    m8.metric("実価値合計", f"¥{res.sum_real_value:,}")
 
-        with st.expander("📊 詳細な金額内訳"):
-            st.markdown(f"""
-| 項目 | 金額 |
-|---|---|
-| 売上（円・1コイン=1円換算） | ¥{result.total_revenue:,} |
-| カード相場合計 | ¥{result.total_market:,} |
-| カードコイン額面合計（相場×上乗せ） | ¥{result.total_coin_value:,} |
-| カード仕入れ合計（実コスト） | ¥{result.total_cost:,} |
-| **粗利（売上 − 仕入れ）** | **¥{result.gross_profit:,}** |
-""")
+    st.markdown("#### 🛡️ 損益シナリオ（完売時）")
+    s1c, s2c, s3c, s4c = st.columns(4)
+    s1c.metric("S1 全員発送", f"¥{res.s1:,}")
+    s2c.metric("S2 全員pt(額面最悪)", f"¥{res.s2:,}", delta=("赤字" if res.s2 < 0 else "黒字"),
+               delta_color=("inverse" if res.s2 < 0 else "normal"))
+    s3c.metric("S3 全員pt(実質原価×" + f"{cost_rate:.2f})", f"¥{res.s3:,}",
+               delta=("赤字" if res.s3 < 0 else "黒字"), delta_color=("inverse" if res.s3 < 0 else "normal"))
+    s4c.metric("最大損失(S1〜S3最悪)", f"¥{res.max_loss:,}")
+    st.caption(f"実効pt建てEV（末広がり指標）= pt建てEV {res.pt_ev:.1%} ＋ 外部付与 {external:.0%} = **{res.effective_pt_ev:.1%}**（1.0以上でNG）")
 
-        # --- 警告 ---
-        from warnings_gen import group_by_category, severity_counts, CATEGORY_LABELS, SEV_CRITICAL, SEV_WARNING, SEV_INFO
-        warns = result.warnings
-        if warns:
-            sev_c = severity_counts(warns)
-            badge = []
-            if sev_c.get(SEV_CRITICAL): badge.append(f"🔴 {sev_c[SEV_CRITICAL]}")
-            if sev_c.get(SEV_WARNING): badge.append(f"🟡 {sev_c[SEV_WARNING]}")
-            if sev_c.get(SEV_INFO): badge.append(f"🔵 {sev_c[SEV_INFO]}")
-            has_critical = sev_c.get(SEV_CRITICAL, 0) > 0
-            with st.expander(f"⚠ 警告・提案 {'  '.join(badge)}", expanded=has_critical):
-                groups = group_by_category(warns)
-                for cat_key, cat_warns in groups.items():
-                    st.markdown(f"### {CATEGORY_LABELS.get(cat_key, cat_key)}")
-                    for w in cat_warns:
-                        container = {SEV_CRITICAL: st.error, SEV_WARNING: st.warning}.get(w.severity, st.info)
-                        msg = f"**{w.icon} {w.title}**"
-                        if w.detail: msg += f"\n\n{w.detail}"
-                        if w.suggestion: msg += f"\n\n💡 {w.suggestion}"
-                        container(msg)
+    # ---------- ⑤ 自動判定 ----------
+    st.markdown("### ⑤ 自動判定（OK公開可 まで直す）")
+    v = res.verdict
+    if v == "NG":
+        st.error("■ 総合判定：**NG 公開不可** — 下の赤を直してください")
+    elif v == "注意":
+        st.warning("■ 総合判定：**注意（公開可）** — 内容を確認して判断")
+    else:
+        st.success("■ 総合判定：**OK 公開可**")
+    for c in res.checks:
+        icon = {"OK": "🟢", "注意": "🟡", "NG": "🔴"}[c.status]
+        line = f"{icon} **{c.label}**" + (f" — {c.detail}" if c.detail else "")
+        (st.error if c.status == "NG" else st.warning if c.status == "注意" else st.caption)(line)
 
-        # --- 各等の編集UI ---
-        st.markdown("### 各等の構成（手動で追加・削除できます）")
-        all_inv = session["inventory"]
-        # 区分フィルタの選択肢は候補プールに実在するタブから動的に生成
-        # （在庫: PSA10/BOX ＋ スニダン: ポケカ/ポケカBOX/ワンピ… を自動包含）
-        all_tab_options = sorted({it.tab for it in all_inv})
-
-        # 現在どの (tab, row_idx) が他の等で使われているか把握（同じ設計内での重複回避）
-        used_in_design = set()
-        for keys in session["tier_selections"].values():
-            for k in keys:
-                used_in_design.add(k)
-
-        for tspec in live_spec.tiers:
-            tname = tspec.name
-            current_keys = session["tier_selections"].get(tname, [])
-            current_items = []
-            inv_by_key = {(it.tab, it.row_idx): it for it in all_inv}
-            for k in current_keys:
-                it = inv_by_key.get(k)
-                if it:
-                    current_items.append(it)
-
-            avg = sum(it.price for it in current_items) // len(current_items) if current_items else 0
-            dev_badge = ""
-            if current_items and tspec.target_price > 0:
-                dev = avg / tspec.target_price - 1
-                dev_badge = (
-                    f" 🔴{dev:+.0%}" if abs(dev) >= 0.3
-                    else f" 🟡{dev:+.0%}" if abs(dev) >= 0.1
-                    else f" 🟢{dev:+.0%}"
-                )
-
-            header = (
-                f"{tname}｜目標¥{tspec.target_price:,} × {tspec.count}枚｜"
-                f"選定{len(current_items)}枚"
-                + (f" 平均¥{avg:,}" if avg else "")
-                + dev_badge
-                + (f" ⚠不足{tspec.count - len(current_items)}枚" if len(current_items) < tspec.count else "")
-                + (f" ⚠超過{len(current_items) - tspec.count}枚" if len(current_items) > tspec.count else "")
-            )
-            with st.expander(header, expanded=True):
-                # --- 現在選定中のカード（削除ボタン付）---
-                if current_items:
-                    st.markdown("**現在の選定**")
-                    for i, it in enumerate(current_items):
-                        cols = st.columns([5, 2, 2, 1])
-                        cols[0].markdown(f"{it.name} `{it.series or ''}`")
-                        cols[1].markdown(f"¥{it.price:,}")
-                        dev_per = (it.price / tspec.target_price - 1) if tspec.target_price else 0
-                        cols[2].markdown(f"{dev_per:+.0%}" if tspec.target_price else "-")
-                        if cols[3].button("❌ 外す", key=f"rm_{tname}_{i}"):
-                            st.session_state.design_session["tier_selections"][tname].pop(i)
-                            st.rerun()
-                else:
-                    st.info("まだカードが選ばれていません。下の候補から追加してください。")
-
-                # --- 代替候補 ---
-                st.markdown("**📋 候補カードから選ぶ**（➕で追加・上の❌で外す＝入れ替え）")
-                # 目標に近い順でソート
-                target = tspec.target_price
-                # 無在庫モードは全カード、在庫モードは残数量ありのみ
-                if live_spec.stock_mode == "no_stock":
-                    available = [
-                        it for it in all_inv
-                        if (it.tab, it.row_idx) not in used_in_design
-                    ]
-                else:
-                    available = [
-                        it for it in all_inv
-                        if it.available_qty > 0 and (it.tab, it.row_idx) not in used_in_design
-                    ]
-                if target > 0:
-                    available = sorted(available, key=lambda x: abs(x.price - target))
-                else:
-                    available = sorted(available, key=lambda x: -x.price)
-
-                # 価格帯フィルタ
-                fcol1, fcol2, fcol3 = st.columns(3)
-                with fcol1:
-                    price_range = st.select_slider(
-                        "目標からの乖離",
-                        options=["±10%", "±25%", "±50%", "全て"],
-                        value="±25%" if target > 0 else "全て",
-                        key=f"range_{tname}",
-                    )
-                with fcol2:
-                    filter_tab = st.multiselect(
-                        "区分", options=all_tab_options,
-                        default=all_tab_options, key=f"tabf_{tname}",
-                    )
-                with fcol3:
-                    max_show = st.number_input(
-                        "表示件数", min_value=5, max_value=200, value=20, step=5, key=f"show_{tname}",
-                    )
-                # スニダン全カードを含めると候補が数千件になるため名前検索を用意
-                name_q = st.text_input(
-                    "🔍 カード名で絞り込み", key=f"nameq_{tname}",
-                    placeholder="例: リザードン / ルフィ / VSTARユニバース BOX",
-                ).strip()
-
-                # 適用フィルタ
-                filtered_candidates = [it for it in available if it.tab in filter_tab]
-                if name_q:
-                    _nq = name_q.lower()
-                    filtered_candidates = [
-                        it for it in filtered_candidates
-                        if _nq in (it.name or "").lower() or _nq in (it.series or "").lower()
-                    ]
-                if target > 0 and price_range != "全て":
-                    tol = {"±10%": 0.10, "±25%": 0.25, "±50%": 0.50}[price_range]
-                    filtered_candidates = [
-                        it for it in filtered_candidates
-                        if (1 - tol) * target <= it.price <= (1 + tol) * target
-                    ]
-
-                st.caption(f"候補 {len(filtered_candidates)} 件中、上位 {min(max_show, len(filtered_candidates))} 件を表示")
-
-                for j, it in enumerate(filtered_candidates[:max_show]):
-                    cols = st.columns([4, 2, 2, 1, 1])
-                    _nm = f"[{it.name}]({it.snkrdunk_url})" if getattr(it, "snkrdunk_url", "") else it.name
-                    cols[0].markdown(f"{_nm} `{it.series or ''}`")
-                    cols[1].markdown(f"¥{it.price:,}")
-                    dev_per = (it.price / target - 1) if target else 0
-                    cols[2].markdown(f"{dev_per:+.0%}" if target else "-")
-                    cols[3].markdown(f"[{it.tab}]")
-                    if cols[4].button("➕ 追加", key=f"add_{tname}_{j}_{it.row_idx}"):
-                        st.session_state.design_session["tier_selections"][tname].append((it.tab, it.row_idx))
-                        st.rerun()
-
-        # --- 保存 ---
-        if reserve_btn:
-            if result.total_cost == 0:
-                st.error("カードが1枚も選ばれていません")
-            else:
-                with st.spinner("保存中..."):
-                    pid = save_reservation(result)
-                st.success(f"✅ 予約中として保存しました: **{pid}**")
-                st.session_state.design_session = None
-                st.balloons()
+    # ---------- ⑥ 書き出し ----------
+    st.markdown("### ⑥ 書き出し")
+    import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(IMPORT_HEADERS)
+    for r_ in to_import_rows(rows):
+        w.writerow(r_)
+    st.download_button(
+        "📥 管理画面取込CSVを書き出す", data=buf.getvalue().encode("utf-8-sig"),
+        file_name=f"{(pz_title or 'gacha').replace('/', '_')}_import.csv", mime="text/csv",
+        help="Price=実価値/枚・Redemption Points=表示PT/枚・Inventory=口数。画像URLは登録時に追加",
+    )
+    st.caption("💡 リライト（トレセン以外のサイト）: ②で似たカードを検索して積むか、③のテーブルに賞・カード・口数を直接手入力してください。URL登録は不要です。")
 
 
 # ---------- 景品設計タブ（競合コピー型） ----------
