@@ -343,6 +343,21 @@ with tab_design:
     if "pz_df" not in st.session_state:
         st.session_state.pz_df = _pz_default_df()
 
+    # 賞ランク順（1等→2等…→その他→ラストワン）で常に並べる
+    _RANK_ORDER = {"1等": 1, "2等": 2, "3等": 3, "4等": 4, "5等": 5, "6等": 6, "7等": 7,
+                   "8等": 8, "9等": 9, "10等": 10, "キリ番": 20, "その他": 50, "ラストワン": 99}
+
+    def _rank_key(v):
+        return _RANK_ORDER.get(str(v or "").strip(), 40)  # 未知ランクは「その他」の手前
+
+    def _sort_pz(df):
+        if df is None or len(df) == 0:
+            return df
+        d = df.copy()
+        d["_k"] = d["賞ランク"].map(_rank_key)
+        d = d.sort_values("_k", kind="stable").drop(columns="_k").reset_index(drop=True)
+        return d
+
     def _df_to_rows(df):
         rows = []
         for _, x in df.iterrows():
@@ -438,12 +453,16 @@ with tab_design:
     pz_result = st.container()
 
     # ---------- ② カードを探して追加 ----------
-    st.markdown("### ② カードを探して賞品に追加（スニダン相場から価格で選ぶ）")
-    sc1, sc2, sc3, sc4 = st.columns([3, 2, 2, 2])
-    pz_q = sc1.text_input("カード名で検索", key="pz_search", placeholder="例: リザードン / ルフィ / VSTARユニバース BOX")
+    st.markdown("### ② 賞ごとにカードを選ぶ（スニダン相場から価格で選ぶ）")
+    sc0, sc1, sc2 = st.columns([2, 3, 2])
+    _RANK_CHOICES = ["1等", "2等", "3等", "4等", "5等", "その他", "ラストワン"]
+    pz_add_rank = sc0.selectbox("① 追加先の賞", _RANK_CHOICES, key="pz_add_rank",
+                                help="この賞にカードを追加します。1等→2等…と賞ごとに選んでいくと分かりやすいです")
+    pz_q = sc1.text_input("② カード名で検索", key="pz_search", placeholder="例: リザードン / ルフィ / VSTARユニバース BOX")
     pz_target = sc2.number_input("目標相場(円・近い順)", min_value=0, value=0, step=1000, key="pz_tp")
+    sc3, sc4 = st.columns([2, 3])
     pz_show = sc3.number_input("表示件数", min_value=5, max_value=100, value=15, step=5, key="pz_show")
-    pz_valsrc = sc4.radio("実価値に使う価格（自動入力）", ["直近取引", "相場"],
+    pz_valsrc = sc4.radio("実価値に使う価格（自動入力）", ["直近取引", "相場"], horizontal=True,
                           key="pz_valsrc", help="➕追加時に『実価値/枚』へ自動で入る価格。表に入れた後も手修正できます")
 
     def _recent(it):
@@ -487,20 +506,22 @@ with tab_design:
                     "スニダン": st.column_config.LinkColumn("スニダン", display_text="開く"),
                 },
             )
-            ab1, ab2 = st.columns([1, 3])
+            ab1, ab2 = st.columns([1.4, 3])
             _picked_idx = [i for i, v in enumerate(res_edit["追加"].tolist()) if v] if "追加" in res_edit else []
-            if ab1.button(f"➕ チェックした{len(_picked_idx)}件を賞品に追加", type="primary",
+            # 1等/2等は現物発送(発送限定)、その他/ラストワンは選択制を既定に
+            _method_for = METHOD_SHIP if pz_add_rank in ("1等", "2等") else METHOD_CHOICE
+            if ab1.button(f"➕ チェックした{len(_picked_idx)}件を「{pz_add_rank}」に追加", type="primary",
                           disabled=not _picked_idx, use_container_width=True, key="pz_bulk_add"):
                 newrows = []
                 for i in _picked_idx:
                     it = shown[i]
-                    newrows.append({"賞ランク": "", "カード名": it.name, "型番": (it.card_no or it.series or ""),
+                    newrows.append({"賞ランク": pz_add_rank, "カード名": it.name, "型番": (it.card_no or it.series or ""),
                                     "口数": 1, "実価値/枚": int(_val_for(it)), "送料/件": 500,
-                                    "受取方法": METHOD_CHOICE, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False})
-                st.session_state.pz_df = pd.concat(
-                    [st.session_state.pz_df, pd.DataFrame(newrows, columns=PZ_COLS)], ignore_index=True)
+                                    "受取方法": _method_for, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False})
+                st.session_state.pz_df = _sort_pz(pd.concat(
+                    [st.session_state.pz_df, pd.DataFrame(newrows, columns=PZ_COLS)], ignore_index=True))
                 st.rerun()
-            ab2.caption("💡 まず目玉を複数チェックして追加 → 賞ランク/口数を整えて、残りは下の『残りポイント配分ガイド』を見ながら下位賞を足します。")
+            ab2.caption("💡 賞（1等→2等→…）を選んでカードをチェック→追加。追加したカードはその賞の位置に並びます。")
 
     # ---------- ③ 賞品テーブル（直接編集） ----------
     st.markdown("### ③ 賞品テーブル（直接編集・行の追加/削除OK）")
@@ -531,7 +552,7 @@ with tab_design:
                   help="最後の1口に確定で当たる賞。賞ランク=ラストワン・1口の行を追加。カード名は②検索/テーブルで入れてください"):
         _nr = {"賞ランク": "ラストワン", "カード名": "", "型番": "", "口数": 1, "実価値/枚": 0,
                "送料/件": 500, "受取方法": METHOD_SHIP, "上乗せ倍率": 2.0, "表示PT直接(任意)": None, "除外": False}
-        st.session_state.pz_df = pd.concat([st.session_state.pz_df, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True)
+        st.session_state.pz_df = _sort_pz(pd.concat([st.session_state.pz_df, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True))
         st.rerun()
     if lc6.button("🧩 残り口数を交換専用で埋める", key="pz_fill_remain", use_container_width=True,
                   help="総口数−現在の口数 を『pt限定(交換専用)・表示PT=単価』1行で埋める。目玉を積んだ後の外れ枠に便利"):
@@ -549,31 +570,55 @@ with tab_design:
         if _rem > 0:
             _nr = {"賞ランク": "その他", "カード名": "交換専用", "型番": "", "口数": _rem, "実価値/枚": 1,
                    "送料/件": 0, "受取方法": METHOD_PT, "上乗せ倍率": 0.0, "表示PT直接(任意)": int(unit_price), "除外": False}
-            st.session_state.pz_df = pd.concat([st.session_state.pz_df, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True)
+            st.session_state.pz_df = _sort_pz(pd.concat([st.session_state.pz_df, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True))
             st.rerun()
         else:
             st.toast(f"残り口数がありません（現在 {_cur:,} / 総口数 {int(total_tickets):,}）")
 
+    st.caption("行を消すには左端で行を選んで 🗑（またはDelete）。賞ランクは常に順番に並びます。灰色の列（出現率・表示PT・合計）は自動計算です。")
+    # 常に賞ランク順に整列
+    st.session_state.pz_df = _sort_pz(st.session_state.pz_df)
+    # 計算列を付けて1つの表に統合（灰色=自動計算・編集不可）
+    _rw = _df_to_rows(st.session_state.pz_df)
+    _disp = st.session_state.pz_df.drop(columns=["除外"], errors="ignore").copy()
+    _disp["出現率"] = [(f"{p.count/total_tickets:.3%}" if (total_tickets and p.count) else "") for p in _rw]
+    _disp["1/X"] = [(f"1/{total_tickets/p.count:.0f}" if p.count else "") for p in _rw]
+    _disp["表示PT/枚"] = [p.display_pt_per for p in _rw]
+    _disp["表示PT合計"] = [p.display_pt_total for p in _rw]
+    _disp["実価値合計"] = [p.real_value_total for p in _rw]
+    _ORDER = ["賞ランク", "カード名", "型番", "口数", "出現率", "1/X", "受取方法",
+              "実価値/枚", "上乗せ倍率", "表示PT直接(任意)", "表示PT/枚", "表示PT合計", "実価値合計", "送料/件"]
+    _disp = _disp[[c for c in _ORDER if c in _disp.columns]]
+    _CALC = ["出現率", "1/X", "表示PT/枚", "表示PT合計", "実価値合計"]
     edited = st.data_editor(
-        st.session_state.pz_df, num_rows="dynamic", use_container_width=True, key="pz_editor",
+        _disp, num_rows="dynamic", use_container_width=True, key="pz_editor",
+        disabled=_CALC,
         column_config={
             "賞ランク": st.column_config.TextColumn("賞ランク", width="small"),
             "カード名": st.column_config.TextColumn("カード名", width="medium"),
             "型番": st.column_config.TextColumn("型番", width="small"),
             "口数": st.column_config.NumberColumn("口数", min_value=0, step=1, width="small"),
-            "実価値/枚": st.column_config.NumberColumn("実価値/枚", min_value=0, step=100, format="%d"),
-            "送料/件": st.column_config.NumberColumn("送料/件", min_value=0, step=100, format="%d"),
+            "出現率": st.column_config.TextColumn("出現率", width="small"),
+            "1/X": st.column_config.TextColumn("1/X", width="small"),
             "受取方法": st.column_config.SelectboxColumn("受取方法", options=METHODS, width="small"),
+            "実価値/枚": st.column_config.NumberColumn("実価値/枚", min_value=0, step=100, format="%d"),
             "上乗せ倍率": st.column_config.NumberColumn("上乗せ倍率", min_value=0.0, step=0.1, format="%.2f"),
-            "表示PT直接(任意)": st.column_config.NumberColumn("表示PT直接(任意)", min_value=0, step=1, format="%d"),
-            "除外": st.column_config.CheckboxColumn("除外", width="small"),
+            "表示PT直接(任意)": st.column_config.NumberColumn("表示PT直接", min_value=0, step=1, format="%d"),
+            "表示PT/枚": st.column_config.NumberColumn("表示PT/枚", format="%d"),
+            "表示PT合計": st.column_config.NumberColumn("表示PT合計", format="%d"),
+            "実価値合計": st.column_config.NumberColumn("実価値合計", format="%d"),
+            "送料/件": st.column_config.NumberColumn("送料/件", min_value=0, step=100, format="%d"),
         },
     )
-    # 編集を session に反映
-    if not edited.equals(st.session_state.pz_df):
-        st.session_state.pz_df = edited.reset_index(drop=True)
+    # 編集を session に反映（計算列は捨て、編集列だけ・元の列順に戻す）
+    _EDIT_COLS = ["賞ランク", "カード名", "型番", "口数", "実価値/枚", "送料/件", "受取方法", "上乗せ倍率", "表示PT直接(任意)"]
+    _new = edited[[c for c in _EDIT_COLS if c in edited.columns]].copy()
+    _new["除外"] = False
+    _new = _new[PZ_COLS].reset_index(drop=True)
+    if not _new.equals(st.session_state.pz_df):
+        st.session_state.pz_df = _new
 
-    rows = _df_to_rows(edited)
+    rows = _df_to_rows(st.session_state.pz_df)
     meta = DesignMeta(
         title=pz_title, unit_price=int(unit_price), total_tickets=int(total_tickets),
         cost_rate=float(cost_rate), external_grant=float(external),
@@ -621,22 +666,6 @@ with tab_design:
         st.caption(f"末広がりEV {res.effective_pt_ev:.0%}（1.0以上NG）")
         st.divider()
         st.caption("💡 下でカード/口数を編集すると即反映。ここは固定表示なのでスクロールしても見えます。")
-
-    # ---------- 各賞のライブ内訳 ----------
-    disp = []
-    for p in rows:
-        if not (p.name.strip() or p.count):
-            continue
-        disp.append({
-            "賞": p.rank, "カード名": p.name, "口数": p.count,
-            "出現率": (f"{p.count/total_tickets:.3%}" if total_tickets else "-"),
-            "1/X": (f"1/{total_tickets/p.count:.0f}" if p.count else "-"),
-            "表示PT/枚": p.display_pt_per, "表示PT合計": p.display_pt_total,
-            "実価値/枚": p.real_value, "実価値合計": p.real_value_total,
-            "受取方法": p.method, "除外": "✓" if p.exclude else "",
-        })
-    if disp:
-        st.dataframe(pd.DataFrame(disp), use_container_width=True, hide_index=True)
 
     with pz_result:
         # ---------- ④ 計算結果 ----------
