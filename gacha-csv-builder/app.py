@@ -19,7 +19,7 @@ from pathlib import Path
 
 import streamlit as st
 
-import build_import_csv as B
+import build_import_csv as B   # redeploy marker 2026-07-23b（モジュール再読込のためフル再起動を促す）
 import palette_lookup
 import storehouse as SH
 import wp_client as WP
