@@ -719,6 +719,28 @@ with tab_design:
             help="顧客還元率と実還元率の差。コイン上乗せによる見せかけの還元率増分",
         )
 
+        # --- 最悪ケース試算（当選者が全員ポイント還元を選んだ場合）---
+        st.markdown("###### 🛡️ 最悪ケース試算（当選者が全員ポイント還元を選んだ想定）")
+        worst_cost = result.total_coin_value
+        worst_profit = result.total_revenue - worst_cost
+        worst_rate = (worst_profit / result.total_revenue) if result.total_revenue else 0
+        w1, w2, w3 = st.columns(3)
+        w1.metric(
+            "弊社コスト（最悪ケース）", f"¥{worst_cost:,}",
+            help="全カードがポイント還元された場合に払い戻すコイン額面合計（相場×上乗せ）。実際に現物発送されればコストは仕入れ合計まで下がる",
+        )
+        w2.metric(
+            "最悪ケース粗利", f"¥{worst_profit:,}", delta=f"{worst_rate:.1%}",
+            delta_color="normal" if worst_profit >= 0 else "inverse",
+            help="売上 − コイン額面合計。全員がポイント還元を選んでも残る利益（下振れの底）",
+        )
+        w3.metric(
+            "最悪ケース還元率", f"{result.customer_return_rate:.1%}",
+            help="=顧客還元率（コイン額面合計 / 売上）。100%を超えると最悪時は赤字",
+        )
+        if worst_profit < 0:
+            st.error(f"⚠️ 最悪ケースで赤字（¥{worst_profit:,}）。上乗せ率が高すぎるか、現物発送前提でないと成立しません。")
+
         with st.expander("📊 詳細な金額内訳"):
             st.markdown(f"""
 | 項目 | 金額 |
@@ -3727,6 +3749,28 @@ with tab_premium:
                    help="運営の本当の還元率（カード仕入れ + ポイント実コスト）")
         rc6.metric("コイン上乗せ差分",
                    f"{(result_pg.customer_return_rate - result_pg.real_return_rate)*100:+.1f}pt")
+
+        # --- 最悪ケース試算（当選者が全員ポイント還元＋外れptも全額面で払戻す想定）---
+        st.markdown("###### 🛡️ 最悪ケース試算（全員ポイント還元・外れptも額面満額で払戻す想定）")
+        pg_worst_cost = result_pg.total_coin_value  # コイン額面(カード) + ポイント額面(満額)
+        pg_worst_profit = result_pg.total_revenue - pg_worst_cost
+        pg_worst_rate = (pg_worst_profit / result_pg.total_revenue) if result_pg.total_revenue else 0
+        pw1, pw2, pw3 = st.columns(3)
+        pw1.metric(
+            "弊社コスト（最悪ケース）", f"¥{pg_worst_cost:,}",
+            help="カードのコイン額面 + 外れポイント額面（実コスト率を掛けない満額）。全員がpt還元・満額払戻しした場合の上限コスト",
+        )
+        pw2.metric(
+            "最悪ケース粗利", f"¥{pg_worst_profit:,}", delta=f"{pg_worst_rate:.1%}",
+            delta_color="normal" if pg_worst_profit >= 0 else "inverse",
+            help="売上 − コイン額面合計。下振れの底の利益",
+        )
+        pw3.metric(
+            "最悪ケース還元率", f"{result_pg.customer_return_rate:.1%}",
+            help="=顧客還元率。100%を超えると最悪時は赤字",
+        )
+        if pg_worst_profit < 0:
+            st.error(f"⚠️ 最悪ケースで赤字（¥{pg_worst_profit:,}）。ポイント実コスト率を過信せず、上乗せ率/最低保証ptを見直してください。")
 
         with st.expander("📊 詳細内訳"):
             st.markdown(f"""
