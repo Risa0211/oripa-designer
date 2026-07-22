@@ -215,14 +215,6 @@ def compute(meta: DesignMeta, rows: List[PrizeRow]) -> DesignResult:
         else:
             checks.append(Check("実効pt建てEV(末広がり)", "OK", f"{r.effective_pt_ev:.1%}"))
 
-    # 最大損失 vs 許容ライン
-    if rev:
-        if r.max_loss < meta.allow_loss_line:
-            checks.append(Check("最大損失 vs 許容ライン", "NG",
-                                f"最大損失 ¥{r.max_loss:,} < 許容 ¥{meta.allow_loss_line:,}"))
-        else:
-            checks.append(Check("最大損失 vs 許容ライン", "OK", f"最大損失 ¥{r.max_loss:,}（許容内）"))
-
     # 途中終了リスク（上位賞先出し・想定進捗）
     if rev and meta.total_tickets:
         upper_real = sum(p.real_value_total + p.count * p.shipping

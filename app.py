@@ -381,18 +381,12 @@ with tab_design:
     total_tickets = b3.number_input("総口数", min_value=1, value=5000, step=100, key="pz_total")
     revenue = unit_price * total_tickets
     b4.metric("総売上(円)", f"¥{revenue:,}")
-    b5, b6, b7, b8 = st.columns(4)
-    cost_rate = b5.number_input("pt実質原価率", min_value=0.0, max_value=1.0, value=0.72, step=0.01, key="pz_cr",
-                                help="1ptを商品で消化する実コスト。既定0.72")
-    external = b6.number_input("外部付与見込み(売上比)", min_value=0.0, max_value=0.5, value=0.02, step=0.01, key="pz_ext",
-                               help="クーポン/紹介pt等ガチャ外で配るpt。迷ったら0.02")
-    limit_day = b7.text_input("購入上限 口/日", value="300", key="pz_ld")
-    limit_total = b8.text_input("購入上限 口/累計", value="1000", key="pz_lt")
-    b9, b10, b11 = st.columns(3)
-    allow_loss = b9.number_input("許容損失ライン(円・マイナス)", value=-3000000, step=100000, key="pz_al")
-    progress = b10.number_input("想定進捗率(売れ止まり)", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key="pz_pg")
-    ad_threshold = b11.number_input("アド確率のしきい値 X(pt以上)", min_value=0, value=5500, step=500, key="pz_adx",
-                                    help="このpt以上の当たりを『アド』とみなし 1/Y を計算(例:1BOX相当¥5,500)")
+    # 自分で決める項目（購入上限・アド確率しきい値・課金額）
+    b5, b6, b7 = st.columns(3)
+    limit_day = b5.text_input("購入上限 口/日", value="300", key="pz_ld")
+    limit_total = b6.text_input("購入上限 口/累計", value="1000", key="pz_lt")
+    ad_threshold = b7.number_input("アド確率のしきい値 X(pt以上)", min_value=0, value=5500, step=500, key="pz_adx",
+                                   help="このpt以上の当たりを『アド』とみなし 1/Y を計算(例:1BOX相当¥5,500)")
     # 課金ガチャ用: 引く権利(課金額)。★売上には含めない(別勘定)
     bc1, bc2, bc3 = st.columns(3)
     charge_amount = bc1.number_input("引く権利(課金額・円/回)", min_value=0, value=0, step=1000, key="pz_charge",
@@ -401,6 +395,16 @@ with tab_design:
                help="課金分の参考値。売上には含めない")
     if charge_amount > 0:
         bc3.info("💰 課金ガチャ: 課金分は売上に非算入。S2(額面最悪)のマイナスはこの課金回収で吸収されます。")
+
+    # 前提値（社内の経験値・通常は触らない）は畳んでおく
+    with st.expander("⚙️ 詳細設定（前提値・通常は既定のままでOK）"):
+        d1, d2, d3 = st.columns(3)
+        cost_rate = d1.number_input("pt実質原価率", min_value=0.0, max_value=1.0, value=0.72, step=0.01, key="pz_cr",
+                                    help="1ptを商品で消化する実コスト(社内経験値)。実利益率・S3の計算に使用。既定0.72")
+        external = d2.number_input("外部付与見込み(売上比)", min_value=0.0, max_value=0.5, value=0.02, step=0.01, key="pz_ext",
+                                   help="クーポン/紹介pt等ガチャ外で配るpt。末広がり判定に使用。既定0.02")
+        progress = d3.number_input("売れ止まり想定(進捗率)", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key="pz_pg",
+                                   help="途中終了リスク判定用の想定売上進捗。既定0.3")
 
     # ---------- 計算結果パネル（基本情報の直下・下で賞品を組むとライブ更新）----------
     st.markdown("### 📊 計算結果・自動判定（下で賞品を組むとリアルタイム更新）")
@@ -501,7 +505,7 @@ with tab_design:
     meta = DesignMeta(
         title=pz_title, unit_price=int(unit_price), total_tickets=int(total_tickets),
         cost_rate=float(cost_rate), external_grant=float(external),
-        allow_loss_line=int(allow_loss), assumed_progress=float(progress),
+        assumed_progress=float(progress),
         limit_per_day=limit_day, limit_total=limit_total, ad_threshold_pt=int(ad_threshold),
         charge_amount=int(charge_amount),
     )
