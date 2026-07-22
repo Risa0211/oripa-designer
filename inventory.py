@@ -27,6 +27,9 @@ class InventoryItem:
     image_url: str
     snkrdunk_url: str      # スニダン used URL
     allocation_product: str  # 引当中商品ID（カンマ区切り）
+    # スニダン2系統価格（インデックス由来。在庫スプシ経由は0）
+    price_recent: int = 0  # 直近取引価格（PSA10直近販売。BOXは直近中央値）
+    price_min: int = 0     # スニダン最安出品（画面「¥◯〜」相当。表示価格の暫定）
 
     @property
     def available_qty(self) -> int:

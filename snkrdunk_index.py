@@ -68,6 +68,9 @@ def _load_file(game: str, path: str, include_unpriced: bool) -> List[InventoryIt
             set_code = (row.get("set_code") or "").strip()
             # single はレア、それ以外は種別ラベルを grade 相当に入れておく
             grade = rarity if item_type == "single" else _TYPE_SUFFIX.get(item_type, item_type)
+            # 2系統価格: psa10_price=直近取引 / min_price=最安(表示価格の暫定)
+            price_recent = _to_int(row.get("psa10_price"))
+            price_min = _to_int(row.get("min_price"))
 
             items.append(InventoryItem(
                 row_idx=apparel_id,               # apparel_id は全体で一意 → (tab,row_idx) キーが安定
@@ -87,6 +90,8 @@ def _load_file(game: str, path: str, include_unpriced: bool) -> List[InventoryIt
                 image_url="",
                 snkrdunk_url=(row.get("url") or "").strip(),
                 allocation_product="",
+                price_recent=price_recent,
+                price_min=price_min,
             ))
     return items
 

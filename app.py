@@ -329,9 +329,6 @@ with tab_design:
         "末広がり判定がライブで出ます。スプシの『ガチャ設計シート』と同じ計算＋自動判定です。"
     )
 
-    # 計算結果は最上部（タイトル直下）に固定表示する
-    pz_result = st.container()
-
     # 賞品テーブルの列定義
     PZ_COLS = ["賞ランク", "カード名", "型番", "口数", "実価値/枚", "送料/件",
                "受取方法", "上乗せ倍率", "表示PT直接(任意)", "除外"]
@@ -405,12 +402,28 @@ with tab_design:
     if charge_amount > 0:
         bc3.info("💰 課金ガチャ: 課金分は売上に非算入。S2(額面最悪)のマイナスはこの課金回収で吸収されます。")
 
+    # ---------- 計算結果パネル（基本情報の直下・下で賞品を組むとライブ更新）----------
+    st.markdown("### 📊 計算結果・自動判定（下で賞品を組むとリアルタイム更新）")
+    pz_result = st.container()
+
     # ---------- ② カードを探して追加 ----------
     st.markdown("### ② カードを探して賞品に追加（スニダン相場から価格で選ぶ）")
-    sc1, sc2, sc3 = st.columns([3, 2, 2])
+    sc1, sc2, sc3, sc4 = st.columns([3, 2, 2, 2])
     pz_q = sc1.text_input("カード名で検索", key="pz_search", placeholder="例: リザードン / ルフィ / VSTARユニバース BOX")
     pz_target = sc2.number_input("目標相場(円・近い順)", min_value=0, value=0, step=1000, key="pz_tp")
     pz_show = sc3.number_input("表示件数", min_value=5, max_value=100, value=15, step=5, key="pz_show")
+    pz_valsrc = sc4.radio("実価値に使う価格（自動入力）", ["直近取引(PSA10)", "スニダン最安(表示)"],
+                          key="pz_valsrc", help="➕追加時に『実価値/枚』へ自動で入る価格。表に入れた後も手修正できます")
+
+    def _recent(it):
+        return getattr(it, "price_recent", 0) or it.price
+
+    def _min(it):
+        return getattr(it, "price_min", 0) or it.price
+
+    def _val_for(it):
+        return _min(it) if pz_valsrc.startswith("スニダン最安") else _recent(it)
+
     if pz_q or pz_target:
         idx_all = cached_snkrdunk_index()
         pool = [it for it in idx_all if (it.tab.startswith("ワンピ") if cat == "ワンピース" else not it.tab.startswith("ワンピ"))]
@@ -418,19 +431,23 @@ with tab_design:
             _q = pz_q.lower()
             pool = [it for it in pool if _q in (it.name or "").lower() or _q in (it.series or "").lower()]
         if pz_target > 0:
-            pool = sorted(pool, key=lambda x: abs(x.price - pz_target))
+            pool = sorted(pool, key=lambda x: abs(_val_for(x) - pz_target))
         else:
-            pool = sorted(pool, key=lambda x: -x.price)
-        st.caption(f"候補 {len(pool):,} 件中 上位 {min(pz_show, len(pool))} 件")
+            pool = sorted(pool, key=lambda x: -_val_for(x))
+        st.caption(f"候補 {len(pool):,} 件中 上位 {min(pz_show, len(pool))} 件 ｜ 相場は2系統: 直近取引(PSA10)とスニダン最安(表示)")
+        hc = st.columns([5, 2, 2, 1, 1])
+        hc[0].caption("カード名"); hc[1].caption("直近取引(PSA10)"); hc[2].caption("スニダン最安(表示)")
+        hc[3].caption("区分"); hc[4].caption("")
         for j, it in enumerate(pool[:int(pz_show)]):
-            cc = st.columns([5, 2, 2, 1])
+            cc = st.columns([5, 2, 2, 1, 1])
             _nm = f"[{it.name}]({it.snkrdunk_url})" if getattr(it, "snkrdunk_url", "") else it.name
             cc[0].markdown(f"{_nm} `{it.series or ''}`")
-            cc[1].markdown(f"¥{it.price:,}")
-            cc[2].markdown(f"[{it.tab}]")
-            if cc[3].button("➕ 追加", key=f"pz_add_{j}_{it.row_idx}"):
+            cc[1].markdown(f"¥{_recent(it):,}")
+            cc[2].markdown(f"¥{_min(it):,}")
+            cc[3].markdown(f"[{it.tab}]")
+            if cc[4].button("➕ 追加", key=f"pz_add_{j}_{it.row_idx}"):
                 newrow = {"賞ランク": "", "カード名": it.name, "型番": (it.card_no or it.series or ""),
-                          "口数": 1, "実価値/枚": int(it.price), "送料/件": 500,
+                          "口数": 1, "実価値/枚": int(_val_for(it)), "送料/件": 500,
                           "受取方法": METHOD_CHOICE, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False}
                 st.session_state.pz_df = pd.concat(
                     [st.session_state.pz_df, pd.DataFrame([newrow], columns=PZ_COLS)], ignore_index=True)
@@ -508,7 +525,7 @@ with tab_design:
 
     with pz_result:
         # ---------- ④ 計算結果 ----------
-        st.markdown("### ④ 計算結果（設計シートのヘッダと同じ）")
+        st.markdown("#### 計算結果（設計シートのヘッダと同じ）")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("総売上(円)", f"¥{res.revenue:,}")
         m2.metric("◆ pt還元率", f"{res.coin_return:.2%}", help="表示PT合計 ÷ 売上（バナーの◯%）")
@@ -532,7 +549,7 @@ with tab_design:
         st.caption(f"実効pt建てEV（末広がり指標）= pt建てEV {res.pt_ev:.1%} ＋ 外部付与 {external:.0%} = **{res.effective_pt_ev:.1%}**（1.0以上でNG）")
 
         # ---------- ⑤ 自動判定 ----------
-        st.markdown("### ⑤ 自動判定（OK公開可 まで直す）")
+        st.markdown("#### 🛡️ 自動判定（OK公開可 まで直す）")
         v = res.verdict
         if v == "NG":
             st.error("■ 総合判定：**NG 公開不可** — 下の赤を直してください")
@@ -546,7 +563,7 @@ with tab_design:
             (st.error if c.status == "NG" else st.warning if c.status == "注意" else st.caption)(line)
 
     # ---------- ⑥ 書き出し ----------
-    st.markdown("### ⑥ 書き出し")
+    st.markdown("### ④ 書き出し")
     import csv as _csv
     import io as _io
     buf = _io.StringIO()
@@ -3066,13 +3083,17 @@ with tab_inventory:
         filtered.sort(key=lambda x: x.name)
 
     CAP = 800
-    st.caption(f"該当 {len(filtered):,} 件（表示は先頭 {min(CAP, len(filtered)):,} 件・検索で絞り込めます）")
+    st.caption(f"該当 {len(filtered):,} 件（表示は先頭 {min(CAP, len(filtered)):,} 件・検索で絞り込めます）｜相場は2系統表示")
     df_inv = _pd_inv.DataFrame([{
         "カテゴリー": _inv_game(it.tab), "種別": _inv_kind(it.tab), "カード名": it.name,
-        "レア": it.grade, "型番": it.card_no, "相場(円)": it.price, "スニダン": it.snkrdunk_url,
+        "レア": it.grade, "型番": it.card_no,
+        "直近取引(PSA10)": (getattr(it, "price_recent", 0) or it.price),
+        "スニダン最安(表示)": (getattr(it, "price_min", 0) or it.price),
+        "スニダン": it.snkrdunk_url,
     } for it in filtered[:CAP]])
     st.dataframe(df_inv, use_container_width=True, hide_index=True, column_config={
-        "相場(円)": st.column_config.NumberColumn("相場(円)", format="¥%d"),
+        "直近取引(PSA10)": st.column_config.NumberColumn("直近取引(PSA10)", format="¥%d"),
+        "スニダン最安(表示)": st.column_config.NumberColumn("スニダン最安(表示)", format="¥%d"),
         "スニダン": st.column_config.LinkColumn("スニダン", display_text="開く"),
     })
-    st.caption("💡 相場は毎朝JST6:00に自動更新（上のバナー参照）。設計は『📝 新規設計』でこのカードから積めます。")
+    st.caption("💡 相場は毎朝JST6:00に自動更新。**直近取引=PSA10の直近販売／スニダン最安=画面の『¥◯〜』**。設計は『📝 新規設計』でこのカードから積めます。")
