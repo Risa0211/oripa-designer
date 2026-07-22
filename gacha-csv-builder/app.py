@@ -101,21 +101,21 @@ def load_store():
 
 
 def parse_design(uploaded):
-    if uploaded.name.lower().endswith(".xlsx"):
-        tmp = HERE / "_uploaded_design.xlsx"
-        tmp.write_bytes(uploaded.getbuffer())
-        try:
-            # シート名は指定せず自動検出（旧「設計入力」/新「設計テンプレート」両対応）
-            return B.read_design_xlsx(str(tmp))
-        finally:
-            tmp.unlink(missing_ok=True)
-    # CSV: 設計シートのCSVエクスポート（賞ランクヘッダ行を自動検出）も、素の明細CSVも両対応
-    tmp = HERE / "_uploaded_design.csv"
-    tmp.write_bytes(uploaded.getbuffer())
+    # 一時ファイルはユニーク名（複数人同時アップの衝突回避＝チーム利用対応）。/tmpに置く。
+    import tempfile
+    is_xlsx = uploaded.name.lower().endswith(".xlsx")
+    suffix = ".xlsx" if is_xlsx else ".csv"
+    fd, tmp = tempfile.mkstemp(suffix=suffix, prefix="design_")
     try:
-        return B.read_design_csv_table(str(tmp))
+        with os.fdopen(fd, "wb") as f:
+            f.write(uploaded.getbuffer())
+        if is_xlsx:
+            # シート名は指定せず自動検出（旧「設計入力」/新「設計テンプレート」両対応）
+            return B.read_design_xlsx(tmp)
+        # CSV: 設計シートのCSVエクスポート（賞ランクヘッダ行を自動検出）/ 素の明細CSV 両対応
+        return B.read_design_csv_table(tmp)
     finally:
-        tmp.unlink(missing_ok=True)
+        Path(tmp).unlink(missing_ok=True)
 
 
 def palette_options(palette):

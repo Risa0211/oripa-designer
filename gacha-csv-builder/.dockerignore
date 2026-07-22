@@ -1,0 +1,9 @@
+# デプロイに不要なもの（イメージを軽くする）
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+_uploaded_design.*
+.migrate_*_state.json
+.onepiece_wp_state.json
+*.log
+.DS_Store

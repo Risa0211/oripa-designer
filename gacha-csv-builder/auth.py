@@ -1,6 +1,7 @@
-"""共通パスワード認証（Streamlit Secretsから取得）"""
+"""共通パスワード認証（Streamlit Secrets or 環境変数から取得）"""
 from __future__ import annotations
 import hmac
+import os
 from pathlib import Path
 import streamlit as st
 
@@ -8,11 +9,12 @@ _LOGO = str(Path(__file__).parent / "assets" / "logo.png")
 
 
 def _get_password() -> str:
-    """Streamlit Secretsからパスワード取得。ローカル開発時は.streamlit/secrets.tomlも可"""
+    """パスワード取得。Streamlit Secrets → 環境変数 APP_PASSWORD の順（Cloud Run対応）。"""
     try:
-        return str(st.secrets.get("app_password", ""))
+        pw = str(st.secrets.get("app_password", ""))
     except Exception:
-        return ""
+        pw = ""
+    return pw or os.environ.get("APP_PASSWORD", "")
 
 
 def check_password() -> bool:
