@@ -201,6 +201,36 @@ tab_make, tab_view, tab_add = st.tabs(
     ["① ガチャCSV作成", "② 保管庫（検索・コピー・編集）", "③ 画像を追加"])
 
 
+def wp_live_search(query, limit=40):
+    """WPメディアをライブ検索して store 形式で返す（新着アップ分の同期）。
+    Xserverの国外IP制限でWPが読めない環境では例外→空リストで安全にフォールバック。"""
+    if not query:
+        return []
+    try:
+        hits = WP.search_media(query, user=WP_USER, app_pass=WP_PASS, per_page=limit)
+    except Exception:
+        return []
+    out = []
+    for m in hits:
+        nm, rar, kata = parse_card_title(m.get("title", ""))
+        out.append({"name": nm or m.get("title", ""), "rarity": rar, "kata": kata,
+                    "image_url": m.get("url", ""), "wp_id": m.get("id", ""), "source": "保管庫(WP)"})
+    return out
+
+
+def merge_by_wpid(csv_rows, wp_rows):
+    """静的CSVの結果とWPライブ結果を結合し、wp_id/URLで重複排除（CSV優先）。"""
+    seen = set()
+    out = []
+    for r in list(csv_rows) + list(wp_rows):
+        key = str(r.get("wp_id") or "") or (r.get("image_url") or "")
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
+
 def parse_card_title(t):
     """WPメディアのタイトル『カード名（レア）[型番]』を name/rar/kata に分解。"""
     import re as _re
@@ -285,6 +315,11 @@ def render_make(uploaded, category="交換専用"):
                         unsafe_allow_html=True)
             q = st.text_input("検索ワード（部分一致）", value=name, key=f"q_{row}")
             hits = SH.search_dopa(master_rows, q, limit=8) + SH.search_admin(admin_rows, q, limit=16)
+            # WPライブ検索の新着分もマージ（アップしたばかりの画像もここで選べる）
+            for w in wp_live_search(q, limit=12):
+                hits.append({"name": w["name"], "rarity": w["rarity"], "kata": w["kata"],
+                             "image_url": w["image_url"], "title": w["name"],
+                             "category": "", "id": "", "source": "保管庫(WP)"})
             if hits:
                 cols = st.columns(6)
                 for idx, h in enumerate(hits):
@@ -473,7 +508,9 @@ with tab_view:
     ncol = tc2.selectbox("表示列数", [4, 3, 5, 6], index=0, key="view_ncol")
     if q:
         hits = SH.search_store(store_rows, q, limit=120)
-        tc1.write(f"**{len(hits)} 件**（保管庫 {len(store_rows):,} 枚から）　"
+        # WPライブ検索をマージ（新着アップ分もヒット＝CSVとWPを同期）
+        hits = merge_by_wpid(hits, wp_live_search(q, limit=40))[:120]
+        tc1.write(f"**{len(hits)} 件**（保管庫 {len(store_rows):,} 枚＋WP新着）　"
                   f"多すぎる時は型番や正式名で絞り込むと見やすいです")
         cols = st.columns(ncol)
         for i, h in enumerate(hits):
