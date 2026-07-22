@@ -79,6 +79,7 @@ class DesignMeta:
     limit_per_day: str = ""      # 購入上限 口/日
     limit_total: str = ""        # 購入上限 口/累計
     ad_threshold_pt: int = 0     # アド確率「Xpt以上が1/Y」のX
+    charge_amount: int = 0       # 引く権利のための課金額(円/回)。★売上には含めない(別勘定)
 
 
 @dataclass

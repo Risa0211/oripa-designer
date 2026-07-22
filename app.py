@@ -165,7 +165,7 @@ def _render_price_refresh_banner():
 _render_price_refresh_banner()
 
 
-# ---------- 共通画像取得関数 (tab_template/tab_match 両方で使用) ----------
+# ---------- 共通画像取得関数 (tab_template で使用) ----------
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_snk_image(snk_url):
     """スニダンページから og:image URL を取得 (.webp→.jpg化)"""
@@ -302,109 +302,16 @@ def _fetch_price_for_url(snk_url, card_name, rarity):
         return 0, f'ERR:{str(ex)[:50]}'
 
 
-# ---------- サイドバー: 作業者名 + 参考競合 ----------
-with st.sidebar:
-    st.header("👤 作業者")
-    worker_name = st.text_input(
-        "あなたの名前", value=st.session_state.get('_worker_name', ''),
-        key='_worker_name_input',
-        placeholder="例: 山田、ワーカーA",
-        help="カード照合や商品設計時の登録に作業者名が記録されます",
-    )
-    if worker_name.strip():
-        st.session_state['_worker_name'] = worker_name.strip()
-    if not st.session_state.get('_worker_name'):
-        st.warning("⚠️ 名前を入力してください")
-
-    st.markdown("---")
-    st.header("① 参考競合を選ぶ")
-    refs = cached_references()
-    dopa_for_sidebar = []
-    try:
-        dopa_for_sidebar = cached_dopa_products()
-    except Exception:
-        pass
-
-    # 簡易検索 (トレカセンター + DOPA)
-    search = st.text_input("検索（タイトル・No.・DOPA-ID）", placeholder="例: おつきみ、1758、DOPA-285731")
-    filtered = refs
-    filtered_dopa = []
-    if search:
-        s = search.strip().lower()
-        filtered = [r for r in refs if s in r.title.lower() or s in str(r.no)]
-        filtered_dopa = [d for d in dopa_for_sidebar
-                         if s in d.title.lower() or s in d.product_id.lower()
-                         or s in str(d.product_id).replace("DOPA-", "")]
-
-    # 表示候補: 検索ありなら結果を統合、なしならトレカセンターのみ
-    options = []
-    option_items = []  # 元オブジェクト
-    for r in filtered[:500]:
-        options.append(f"[トレカセンター] No.{r.no}｜{r.title[:50]}（¥{r.price_per_coin}×{r.total_tickets:,}口）")
-        option_items.append(("torecacenter", r))
-    for d in filtered_dopa[:200]:
-        options.append(f"[DOPA] {d.product_id}｜{d.title[:50]}（{d.price}pt×{d.total_tickets:,}口）")
-        option_items.append(("dopa", d))
-
-    if not options:
-        st.warning("該当なし")
-        st.stop()
-
-    idx = st.selectbox("競合", range(len(options)), format_func=lambda i: options[i])
-    sel_type, selected_ref = option_items[idx]
-
-    st.markdown("---")
-    if sel_type == "torecacenter":
-        st.markdown(f"**🎴 {selected_ref.title}**")
-        st.markdown(f"- 1回: ¥{selected_ref.price_per_coin:,}")
-        st.markdown(f"- 総口数: {selected_ref.total_tickets:,}")
-        if selected_ref.sold_date:
-            st.markdown(f"- 完売: {selected_ref.sold_date}")
-        if selected_ref.url:
-            st.markdown(f"- [商品URL]({selected_ref.url})")
-        st.markdown("**等構成（参考）**")
-        for t, text in selected_ref.tiers.items():
-            cnt = count_cards_in_tier(text)
-            with st.expander(f"{t}（約{cnt}枚）"):
-                st.write(text)
-    else:  # dopa
-        st.markdown(f"**🎲 {selected_ref.title}**")
-        st.markdown(f"- 1回: {selected_ref.price}pt")
-        st.markdown(f"- 総口数: {selected_ref.total_tickets:,}")
-        st.markdown(f"- 残: {selected_ref.remaining:,}")
-        if selected_ref.has_last_one:
-            st.markdown(f"- ⭐ ラストワン賞あり")
-        if selected_ref.is_new_gacha:
-            st.markdown(f"- 🆕 新規限定ガチャ")
-        if selected_ref.url:
-            st.markdown(f"- [商品ページ]({selected_ref.url})")
-        # Reference互換オブジェクトに変換（既存設計フローでも参照可能に）
-        from dataclasses import make_dataclass
-        # 既存DesignSpec等が選択refを使うため、Reference互換でラップ
-        class _DopaRefShim:
-            def __init__(self, d):
-                self.no = d.product_id
-                self.title = d.title
-                self.url = d.url
-                self.price_per_coin = d.price
-                self.total_tickets = d.total_tickets
-                self.sold_date = ""
-                self.tags = "DOPA"
-                self.tiers = {}
-        selected_ref = _DopaRefShim(selected_ref)
-
-
 # ---------- メインタブ ----------
-(tab_design, tab_premium, tab_template, tab_rewrite, tab_match,
+(tab_design, tab_premium, tab_template, tab_rewrite,
  tab_torecacenter, tab_dopa_list, tab_paid_list, tab_new_list,
- tab_products, tab_suggest, tab_inventory, tab_markup) = st.tabs([
+ tab_products, tab_suggest, tab_inventory) = st.tabs([
     "📝 新規設計", "🎰 限定ガチャ",
     "📋 景品設計（競合コピー）",
     "✨ リライト商品案",
-    "🖼 カード照合",
     "🎴 トレカセンター商品一覧", "🎲 DOPA商品一覧",
     "🎰 有料ガチャ一覧", "🆕 新規ガチャ一覧",
-    "📋 商品一覧", "🔄 改善提案", "📦 在庫", "⚙️ 上乗せ率設定"
+    "🎰 作成済みガチャ", "🔄 改善提案", "🃏 商品一覧"
 ])
 
 
@@ -421,6 +328,9 @@ with tab_design:
         "単価×総口数＝売上。目玉から積んで、pt還元率・実利益率・総上乗せ率・アド確率(1/Y)・"
         "末広がり判定がライブで出ます。スプシの『ガチャ設計シート』と同じ計算＋自動判定です。"
     )
+
+    # 計算結果は最上部（タイトル直下）に固定表示する
+    pz_result = st.container()
 
     # 賞品テーブルの列定義
     PZ_COLS = ["賞ランク", "カード名", "型番", "口数", "実価値/枚", "送料/件",
@@ -486,6 +396,14 @@ with tab_design:
     progress = b10.number_input("想定進捗率(売れ止まり)", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key="pz_pg")
     ad_threshold = b11.number_input("アド確率のしきい値 X(pt以上)", min_value=0, value=5500, step=500, key="pz_adx",
                                     help="このpt以上の当たりを『アド』とみなし 1/Y を計算(例:1BOX相当¥5,500)")
+    # 課金ガチャ用: 引く権利(課金額)。★売上には含めない(別勘定)
+    bc1, bc2, bc3 = st.columns(3)
+    charge_amount = bc1.number_input("引く権利(課金額・円/回)", min_value=0, value=0, step=1000, key="pz_charge",
+                                     help="1回引く権利を得るための課金額。★売上には含めません(別勘定・課金回収の原資)")
+    bc2.metric("総口数×引く権利(参考)", f"¥{charge_amount*total_tickets:,}",
+               help="課金分の参考値。売上には含めない")
+    if charge_amount > 0:
+        bc3.info("💰 課金ガチャ: 課金分は売上に非算入。S2(額面最悪)のマイナスはこの課金回収で吸収されます。")
 
     # ---------- ② カードを探して追加 ----------
     st.markdown("### ② カードを探して賞品に追加（スニダン相場から価格で選ぶ）")
@@ -568,6 +486,7 @@ with tab_design:
         cost_rate=float(cost_rate), external_grant=float(external),
         allow_loss_line=int(allow_loss), assumed_progress=float(progress),
         limit_per_day=limit_day, limit_total=limit_total, ad_threshold_pt=int(ad_threshold),
+        charge_amount=int(charge_amount),
     )
     res = compute(meta, rows)
 
@@ -587,43 +506,44 @@ with tab_design:
     if disp:
         st.dataframe(pd.DataFrame(disp), use_container_width=True, hide_index=True)
 
-    # ---------- ④ 計算結果 ----------
-    st.markdown("### ④ 計算結果（設計シートのヘッダと同じ）")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("総売上(円)", f"¥{res.revenue:,}")
-    m2.metric("◆ pt還元率", f"{res.coin_return:.2%}", help="表示PT合計 ÷ 売上（バナーの◯%）")
-    m3.metric("◆ 実利益率", f"{res.real_profit_rate:.2%}", help="1 − 実価値合計 ÷ 売上")
-    m4.metric("◆ 総上乗せ率", f"{res.total_markup:.2%}", help="表示PT合計 ÷ 実価値合計")
-    m5, m6, m7, m8 = st.columns(4)
-    m5.metric(f"アド確率(≧{ad_threshold:,}pt)", (f"1/{res.ad_Y:.0f}" if res.ad_Y else "-"),
-              help="表示PTがXpt以上の口数から算出。1/319等")
-    m6.metric("最低保証(pt)", f"{res.min_guarantee:,}")
-    m7.metric("表示PT合計", f"¥{res.sum_display_pt:,}")
-    m8.metric("実価値合計", f"¥{res.sum_real_value:,}")
+    with pz_result:
+        # ---------- ④ 計算結果 ----------
+        st.markdown("### ④ 計算結果（設計シートのヘッダと同じ）")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("総売上(円)", f"¥{res.revenue:,}")
+        m2.metric("◆ pt還元率", f"{res.coin_return:.2%}", help="表示PT合計 ÷ 売上（バナーの◯%）")
+        m3.metric("◆ 実利益率", f"{res.real_profit_rate:.2%}", help="1 − 実価値合計 ÷ 売上")
+        m4.metric("◆ 総上乗せ率", f"{res.total_markup:.2%}", help="表示PT合計 ÷ 実価値合計")
+        m5, m6, m7, m8 = st.columns(4)
+        m5.metric(f"アド確率(≧{ad_threshold:,}pt)", (f"1/{res.ad_Y:.0f}" if res.ad_Y else "-"),
+                  help="表示PTがXpt以上の口数から算出。1/319等")
+        m6.metric("最低保証(pt)", f"{res.min_guarantee:,}")
+        m7.metric("表示PT合計", f"¥{res.sum_display_pt:,}")
+        m8.metric("実価値合計", f"¥{res.sum_real_value:,}")
 
-    st.markdown("#### 🛡️ 損益シナリオ（完売時）")
-    s1c, s2c, s3c, s4c = st.columns(4)
-    s1c.metric("S1 全員発送", f"¥{res.s1:,}")
-    s2c.metric("S2 全員pt(額面最悪)", f"¥{res.s2:,}", delta=("赤字" if res.s2 < 0 else "黒字"),
-               delta_color=("inverse" if res.s2 < 0 else "normal"))
-    s3c.metric("S3 全員pt(実質原価×" + f"{cost_rate:.2f})", f"¥{res.s3:,}",
-               delta=("赤字" if res.s3 < 0 else "黒字"), delta_color=("inverse" if res.s3 < 0 else "normal"))
-    s4c.metric("最大損失(S1〜S3最悪)", f"¥{res.max_loss:,}")
-    st.caption(f"実効pt建てEV（末広がり指標）= pt建てEV {res.pt_ev:.1%} ＋ 外部付与 {external:.0%} = **{res.effective_pt_ev:.1%}**（1.0以上でNG）")
+        st.markdown("#### 🛡️ 損益シナリオ（完売時）")
+        s1c, s2c, s3c, s4c = st.columns(4)
+        s1c.metric("S1 全員発送", f"¥{res.s1:,}")
+        s2c.metric("S2 全員pt(額面最悪)", f"¥{res.s2:,}", delta=("赤字" if res.s2 < 0 else "黒字"),
+                   delta_color=("inverse" if res.s2 < 0 else "normal"))
+        s3c.metric("S3 全員pt(実質原価×" + f"{cost_rate:.2f})", f"¥{res.s3:,}",
+                   delta=("赤字" if res.s3 < 0 else "黒字"), delta_color=("inverse" if res.s3 < 0 else "normal"))
+        s4c.metric("最大損失(S1〜S3最悪)", f"¥{res.max_loss:,}")
+        st.caption(f"実効pt建てEV（末広がり指標）= pt建てEV {res.pt_ev:.1%} ＋ 外部付与 {external:.0%} = **{res.effective_pt_ev:.1%}**（1.0以上でNG）")
 
-    # ---------- ⑤ 自動判定 ----------
-    st.markdown("### ⑤ 自動判定（OK公開可 まで直す）")
-    v = res.verdict
-    if v == "NG":
-        st.error("■ 総合判定：**NG 公開不可** — 下の赤を直してください")
-    elif v == "注意":
-        st.warning("■ 総合判定：**注意（公開可）** — 内容を確認して判断")
-    else:
-        st.success("■ 総合判定：**OK 公開可**")
-    for c in res.checks:
-        icon = {"OK": "🟢", "注意": "🟡", "NG": "🔴"}[c.status]
-        line = f"{icon} **{c.label}**" + (f" — {c.detail}" if c.detail else "")
-        (st.error if c.status == "NG" else st.warning if c.status == "注意" else st.caption)(line)
+        # ---------- ⑤ 自動判定 ----------
+        st.markdown("### ⑤ 自動判定（OK公開可 まで直す）")
+        v = res.verdict
+        if v == "NG":
+            st.error("■ 総合判定：**NG 公開不可** — 下の赤を直してください")
+        elif v == "注意":
+            st.warning("■ 総合判定：**注意（公開可）** — 内容を確認して判断")
+        else:
+            st.success("■ 総合判定：**OK 公開可**")
+        for c in res.checks:
+            icon = {"OK": "🟢", "注意": "🟡", "NG": "🔴"}[c.status]
+            line = f"{icon} **{c.label}**" + (f" — {c.detail}" if c.detail else "")
+            (st.error if c.status == "NG" else st.warning if c.status == "注意" else st.caption)(line)
 
     # ---------- ⑥ 書き出し ----------
     st.markdown("### ⑥ 書き出し")
@@ -1995,648 +1915,6 @@ with tab_rewrite:
             st.info("該当する商品がありません")
 
 
-# ---------- 🖼 カード照合タブ ----------
-@st.cache_data(ttl=3600)
-def _load_match_data():
-    """商品別カード照合 + 商品別カードマスタ(手動採用済みかチェック) を統合読込"""
-    import re
-    from research import open_research, load_per_product_card_index, clear_per_product_card_cache
-    # 採用済みチェック用に商品別カードマスタDB読込
-    clear_per_product_card_cache()
-    per_db = load_per_product_card_index()
-    # 在庫スプシ(ポケモン在庫管理)の「スニダン used URL」列を 依頼者入力済として「確定扱い」
-    from sheets_client import get_client as _gc_inv
-    inv_url_by_name = {}  # カード名小文字 → {url, price}
-    try:
-        _ss_inv = _gc_inv().open_by_key(config.get_active_inventory_sheet_id())
-        for _tab in ['PSA10在庫登録', 'PSA10在庫登録 のコピー']:
-            try:
-                _wsi = _ss_inv.worksheet(_tab)
-                _rs = _wsi.get_all_values()
-                if not _rs: continue
-                _h = _rs[0]
-                _ci_name = _h.index('カード名') if 'カード名' in _h else -1
-                _ci_url = _h.index('スニダン used URL') if 'スニダン used URL' in _h else -1
-                _ci_pri = _h.index('相場(1枚)') if '相場(1枚)' in _h else (_h.index('相場(1枚)') if '相場(1枚)' in _h else -1)
-                if _ci_name < 0 or _ci_url < 0: continue
-                for _r in _rs[1:]:
-                    if len(_r) <= max(_ci_name, _ci_url): continue
-                    _nm = (_r[_ci_name] or '').strip().lower()
-                    _u = (_r[_ci_url] or '').strip()
-                    if _nm and _u.startswith('http'):
-                        if _nm not in inv_url_by_name:
-                            try: _p = int((_r[_ci_pri] or '0').replace(',', '').replace('¥', '')) if _ci_pri >= 0 and len(_r) > _ci_pri else 0
-                            except: _p = 0
-                            inv_url_by_name[_nm] = {'url': _u, 'price': _p}
-            except Exception: pass
-    except Exception: pass
-    # 確定済(ワーカー対応不要) + CLIP仮採用も「設計時チェック予定」でワーカー対応不要扱い
-    DONE_KW = ('manual_ui', 'manual_url', 'manual_exclude', 'confirmed_by_worker', 'confirmed_by_designer', 'provisional_clip')
-    manual_done = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in DONE_KW)}
-    REVIEW_KW = ('manual_review', 'provisional_review')
-    review_keys = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in REVIEW_KW)}
-    PROV_KW = ('provisional_clip',)
-    provisional_keys = {k for k, cm in per_db.items() if any(kw in (cm.source or '').lower() for kw in PROV_KW)}
-
-    items = []
-    try:
-        ss = open_research()
-        ws_match = ss.worksheet('商品別カード照合')
-        # 数式そのものを取得(=HYPERLINK/=IMAGE のURL抽出のため)
-        rows = ws_match.get_all_values(value_render_option='FORMULA')
-        if rows and len(rows) >= 2:
-            h = {col: i for i, col in enumerate(rows[0])}
-            def _cell(r, name):
-                idx = h.get(name)
-                if idx is None or idx >= len(r):
-                    return ''
-                return str(r[idx] or '').strip()
-            for r in rows[1:]:
-                if not r or not _cell(r, '商品No'):
-                    continue
-                tc_img_raw = _cell(r, 'トレカ画像')
-                tc_img = ''
-                if tc_img_raw and 'IMAGE(' in tc_img_raw:
-                    m = re.search(r'IMAGE\("([^"]+)"', tc_img_raw)
-                    if m: tc_img = m.group(1)
-                cands = []
-                for j in range(1, 4):
-                    img_raw = _cell(r, f'候補{j}画像')
-                    img_url = ''
-                    if img_raw and 'IMAGE(' in img_raw:
-                        m = re.search(r'IMAGE\("([^"]+)"', img_raw)
-                        if m: img_url = m.group(1)
-                    url_raw = _cell(r, f'候補{j}URL')
-                    url = ''
-                    if 'HYPERLINK(' in url_raw:
-                        m = re.search(r'HYPERLINK\("([^"]+)"', url_raw)
-                        if m: url = m.group(1)
-                    name = _cell(r, f'候補{j}名')
-                    sim = _cell(r, f'候補{j}類似度')
-                    try: sim = float(sim) if sim else 0
-                    except: sim = 0
-                    if name or img_url:
-                        cands.append({'name': name, 'url': url, 'img_url': img_url, 'sim': sim})
-                base_link_raw = _cell(r, '商品ページ')
-                base_url = ''
-                if 'HYPERLINK(' in base_link_raw:
-                    m = re.search(r'HYPERLINK\("([^"]+)"', base_link_raw)
-                    if m: base_url = m.group(1)
-                base_no_v = _cell(r, '商品No')
-                card_name_v = _cell(r, 'カード名')
-                rarity_v = _cell(r, 'レアリティ')
-                # 商品別カードマスタDBで採用済みかチェック
-                db_key = f'{base_no_v}|{card_name_v}|{rarity_v}'.lower()
-                db_done = db_key in manual_done
-                # 登録済みURL/価格/採用方法
-                db_url = ''
-                db_price = 0
-                db_src = ''
-                if db_key in per_db:
-                    db_url = per_db[db_key].snkrdunk_url
-                    db_price = per_db[db_key].buy_price
-                    db_src = per_db[db_key].source
-                adopt_cell = _cell(r, '採用(1/2/3/手動URL/除外)') if '採用(1/2/3/手動URL/除外)' in h else _cell(r, '採用方法')
-                adopt_final = adopt_cell if adopt_cell else ('✅DB済' if db_done else '')
-                # 候補URL列(シンプル版照合タブ用)
-                if not cands:
-                    for j in range(1, 4):
-                        if f'候補{j}URL' in h:
-                            cand_url_raw = _cell(r, f'候補{j}URL')
-                            # 純粋なURL or HYPERLINK 数式
-                            url_v = ''
-                            if cand_url_raw.startswith('http'):
-                                url_v = cand_url_raw
-                            elif 'HYPERLINK(' in cand_url_raw:
-                                m = re.search(r'HYPERLINK\("([^"]+)"', cand_url_raw)
-                                if m: url_v = m.group(1)
-                            name_v = _cell(r, f'候補{j}名')
-                            sim_v = _cell(r, f'候補{j}類似度')
-                            try: sim_v = float(sim_v) if sim_v else 0
-                            except: sim_v = 0
-                            if url_v or name_v:
-                                cands.append({'name': name_v, 'url': url_v, 'img_url': '', 'sim': sim_v})
-                review_flag = db_key in review_keys
-                prov_flag = db_key in provisional_keys
-                # 在庫スプシ(依頼者入力)にURLあれば「確定扱い」
-                _name_key = card_name_v.lower()
-                if _name_key in inv_url_by_name and not (db_done or review_flag):
-                    _iv = inv_url_by_name[_name_key]
-                    db_done = True
-                    adopt_final = adopt_final or '✅在庫スプシ由来(依頼者入力)'
-                    if not db_url:
-                        db_url = _iv['url']
-                        db_price = _iv['price']
-                        db_src = '在庫スプシ(依頼者入力)'
-                items.append({
-                    'no': _cell(r, 'No'),
-                    'base_no': base_no_v,
-                    'base_url': base_url,
-                    'card_name': card_name_v,
-                    'rarity': rarity_v,
-                    'tier': _cell(r, '賞'),
-                    'qty': _cell(r, '数量'),
-                    'tc_image_url': tc_img,
-                    'cands': cands,
-                    'adopt': adopt_final,
-                    'reason': _cell(r, '判定理由') if '判定理由' in h else _cell(r, '備考'),
-                    'source_tab': '照合',
-                    'db_done': db_done,
-                    'db_url': db_url,
-                    'db_price': db_price,
-                    'db_src': db_src,
-                    'review_flag': review_flag,
-                    'prov_flag': prov_flag,
-                })
-    except Exception as e:
-        st.warning(f'照合タブ読込失敗: {e}')
-    return items
-
-
-with tab_match:
-    import re as _re_match
-    st.subheader("🖼 商品別カード照合")
-    st.caption("同名異版のカード(=シャワーズ マスボミラー151版 vs SV4a版 など)の正しいスニダンURLを選ぶ。採用後は商品別カードマスタDBに保存→ツール各所で自動反映。")
-
-    # 作業者別集計 (同類グループ一括採用分は除外=ワーカーが実際に1枚ずつ選定した分のみカウント)
-    with st.expander("📊 作業者別 作業件数", expanded=False):
-        if st.button("🔄 集計を再計算", key="match_stats_reload"):
-            st.rerun()
-        try:
-            from research import open_research as _or_stats
-            ws_stats = _or_stats().worksheet('商品別カードマスタ')
-            stats_rows = ws_stats.get_all_records()
-            from collections import Counter
-            worker_confirmed = Counter()       # 実選定分(報酬対象)
-            worker_bulk = Counter()             # 同類一括分(参考表示・対象外)
-            worker_review = Counter()
-            # 同類一括採用を示すキーワード(_save_card_match 呼出時の source_note)
-            BULK_KW = ('同類一括', '同類グループ一括')
-            for r in stats_rows:
-                src = str(r.get('採用方法', ''))
-                m = _re_match.search(r'by:([^|]+?)(?:\||$)', src)
-                worker = m.group(1).strip() if m else '不明'
-                src_low = src.lower()
-                is_bulk = any(kw in src for kw in BULK_KW)
-                if 'confirmed_by_worker' in src_low:
-                    if is_bulk:
-                        worker_bulk[worker] += 1
-                    else:
-                        worker_confirmed[worker] += 1
-                elif 'provisional_review' in src_low or 'manual_review' in src_low:
-                    worker_review[worker] += 1
-                elif 'manual_ui' in src_low or 'manual_url' in src_low:
-                    # 旧タグ(manual_ui/manual_url)の同類一括もチェック
-                    if is_bulk:
-                        worker_bulk[worker] += 1
-                    else:
-                        worker_confirmed[worker] += 1
-            st.markdown("**✅ 実選定分 (ワーカーが画像見て1枚ずつURL登録した件数)**")
-            if worker_confirmed:
-                import pandas as _pd_stats
-                df_stats = _pd_stats.DataFrame([
-                    {'作業者': w, '実選定件数': n}
-                    for w, n in worker_confirmed.most_common()
-                ])
-                st.dataframe(df_stats, use_container_width=True, hide_index=True)
-                st.metric("合計", f"{sum(worker_confirmed.values())}件")
-            else:
-                st.info("実選定登録なし")
-            st.markdown("**📚 同類グループ一括採用分 (参考・カウント対象外)**")
-            if worker_bulk:
-                st.dataframe(
-                    _pd_stats.DataFrame([{'作業者': w, '一括採用件数': n} for w, n in worker_bulk.most_common()]),
-                    use_container_width=True, hide_index=True,
-                )
-                st.caption(f"※同類グループ機能で連動採用された分。実選定1件で N件処理されるため、上の『実選定分』のみカウント対象")
-            st.markdown("**⏸ 要確認(保留)**")
-            if worker_review:
-                st.dataframe(
-                    _pd_stats.DataFrame([{'作業者': w, '要確認件数': n} for w, n in worker_review.most_common()]),
-                    use_container_width=True, hide_index=True,
-                )
-        except Exception as e:
-            st.warning(f"集計取得失敗: {e}")
-
-    # ローカル採用済みセット(スプシ反映を待たずに未対応リストから即座に除外)
-    if '_match_done_local' not in st.session_state:
-        st.session_state['_match_done_local'] = set()
-
-    btn_cols = st.columns([2, 2, 6])
-    with btn_cols[0]:
-        if st.button("🔄 最新データ取得", key="match_reload",
-                      help="スプシから最新DBを読み直すだけ。採用済データは壊れません(DBに保存済なので安全)。表示が古いと感じた時のみ使用"):
-            _load_match_data.clear()
-            st.session_state['_match_done_local'] = set()
-            st.session_state['_match_idx'] = 0
-            st.rerun()
-    with btn_cols[1]:
-        st.caption(f"今セッション採用済: {len(st.session_state['_match_done_local'])}件")
-
-    all_items = _load_match_data()
-    if not all_items:
-        st.info("照合タブが空です。Step Bを先に実行してください。")
-    else:
-        # フィルタ
-        fc = st.columns([2, 1.4, 1, 1, 1])
-        with fc[0]:
-            f_search = st.text_input("🔍 商品No or カード名", key="match_search")
-        with fc[1]:
-            f_mode = st.radio("表示", ["未対応のみ", "⏸ 要確認のみ", "🟡 仮採用のみ", "採用済のみ(修正用)", "全件"],
-                              key="match_mode", horizontal=True,
-                              help="未対応=ワーカー作業対象 / 要確認=後で対応 / 仮採用=設計時確認予定 / 採用済=確定済")
-        with fc[2]:
-            f_min_sim = st.number_input("候補1類似度 ≥", value=0.0, step=0.05, key="match_min_sim")
-        with fc[3]:
-            f_max_sim = st.number_input("候補1類似度 <", value=1.01, step=0.05, key="match_max_sim")
-        with fc[4]:
-            f_sort = st.selectbox("並び", ["No順", "類似度低い順", "類似度高い順"], key="match_sort")
-
-        def _item_key(x):
-            return (str(x['base_no']), x['card_name'], x['rarity'])
-
-        filtered = all_items
-        if f_search:
-            s = f_search.strip().lower()
-            filtered = [x for x in filtered if s in x['card_name'].lower() or s in str(x['base_no']).lower() or s in str(x['no']).lower()]
-        local_done = st.session_state['_match_done_local']
-        # 「📝 修正」ボタンから来た場合は1回だけ全件モードで強制表示
-        mode_effective = f_mode
-        if st.session_state.pop('_match_force_all', False):
-            mode_effective = "全件"
-        if mode_effective == "未対応のみ":
-            # 未対応 = 採用列なし & ローカル未採用 & 要確認なし & 仮採用なし
-            filtered = [x for x in filtered if not x['adopt'].strip()
-                        and _item_key(x) not in local_done
-                        and not x.get('review_flag')
-                        and not x.get('prov_flag')]
-        elif mode_effective == "⏸ 要確認のみ":
-            filtered = [x for x in filtered if x.get('review_flag')]
-        elif mode_effective == "🟡 仮採用のみ":
-            filtered = [x for x in filtered if x.get('prov_flag')]
-        elif mode_effective == "採用済のみ(修正用)":
-            filtered = [x for x in filtered if (x['adopt'].strip() or _item_key(x) in local_done)
-                        and not x.get('review_flag')
-                        and not x.get('prov_flag')]
-        def _top1_sim(x):
-            return x['cands'][0]['sim'] if x['cands'] else 0
-        filtered = [x for x in filtered if f_min_sim <= _top1_sim(x) < f_max_sim]
-        if f_sort == "類似度低い順":
-            filtered.sort(key=_top1_sim)
-        elif f_sort == "類似度高い順":
-            filtered.sort(key=lambda x: -_top1_sim(x))
-
-        st.markdown(f"**{len(filtered):,}件 / 全{len(all_items):,}件**")
-
-        # 採用済/要確認/仮採用モードはリスト表示優先
-        # mode_effective を使う(force_all時はリスト表示せず詳細画面に遷移)
-        if mode_effective in ("採用済のみ(修正用)", "⏸ 要確認のみ", "🟡 仮採用のみ") and filtered:
-            import pandas as _pd_match
-            df_match = _pd_match.DataFrame([{
-                "商品No": x['base_no'],
-                "賞": x['tier'],
-                "カード名": x['card_name'],
-                "レア": x['rarity'],
-                "数量": x['qty'],
-                "登録価格(円)": int(x.get('db_price') or 0),
-                "登録URL": x.get('db_url') or '',
-                "採用方法": x.get('db_src') or '',
-                "競合商品ページ": x.get('base_url') or '',
-            } for x in filtered])
-            st.caption("⬇️ 行をクリックして選択 → 下に「📝 このカードを修正」ボタンが出ます")
-            ev_match = st.dataframe(
-                df_match, use_container_width=True, hide_index=True,
-                on_select="rerun", selection_mode="single-row",
-                column_config={
-                    "登録URL": st.column_config.LinkColumn("登録URL"),
-                    "競合商品ページ": st.column_config.LinkColumn("競合商品ページ"),
-                    "登録価格(円)": st.column_config.NumberColumn("登録価格(円)", format="¥%d"),
-                },
-                key="match_done_list_table",
-            )
-            sel_rows = (ev_match.selection or {}).get("rows", [])
-            if sel_rows:
-                target = filtered[sel_rows[0]]
-                st.success(f"選択中: 商品{target['base_no']} {target['card_name']} ({target['rarity']}) 現¥{int(target.get('db_price') or 0):,}")
-
-                if mode_effective == "⏸ 要確認のみ":
-                    # 要確認モード=最終チェック者: 画像確認+リスト内でURL入力→即採用→消える
-                    st.caption("💡 最終チェック者用: URL入力 or そのまま承認で **即採用扱い** で要確認から消えます")
-                    # 画像 + 商品ページリンク
-                    img_cols = st.columns([1, 2, 2])
-                    with img_cols[0]:
-                        _t_img = _get_tc_image(target.get('base_url', ''), target['card_name'], target['rarity'])
-                        if _t_img:
-                            st.image(_t_img, width=160, caption="トレカ画像")
-                        else:
-                            st.caption("(競合画像なし)")
-                    with img_cols[1]:
-                        if target.get('base_url'):
-                            st.link_button("🎴 競合商品ページを開く", target['base_url'], use_container_width=True)
-                        if target.get('db_url'):
-                            st.link_button("🔗 現スニダンURLを開く", target['db_url'], use_container_width=True)
-                    with img_cols[2]:
-                        # 現スニダンURL画像も小さく表示(あれば)
-                        if target.get('db_url'):
-                            _s_img = _get_snk_image(target['db_url'])
-                            if _s_img:
-                                st.image(_s_img, width=160, caption="現スニダン画像")
-                    with st.form(key="match_approve_form", clear_on_submit=False):
-                        new_url = st.text_input(
-                            "スニダンURL (修正する場合のみ入力。空ならDB現値そのまま採用)",
-                            value=target.get('db_url') or '',
-                            placeholder="https://snkrdunk.com/apparels/...",
-                        )
-                        approve_btn = st.form_submit_button("✅ 承認して採用 (要確認から消す)", type="primary", use_container_width=True)
-                    if approve_btn:
-                        if not st.session_state.get('_worker_name'):
-                            st.session_state['_worker_name'] = '設計者'
-                        try:
-                            final_url = (new_url or '').strip() or (target.get('db_url') or '')
-                            if final_url and final_url.startswith('http'):
-                                # URL指定あり → 価格再取得(失敗してもDB現値で保存)
-                                try:
-                                    price, msg = _fetch_price_for_url(final_url, target['card_name'], target['rarity'])
-                                except Exception:
-                                    price, msg = 0, 'fetch err'
-                                if price <= 0:
-                                    price = int(target.get('db_price') or 0)
-                                    msg = '価格取得失敗→DB現値維持'
-                            else:
-                                final_url = target.get('db_url') or ''
-                                price = int(target.get('db_price') or 0)
-                                msg = 'URLなし'
-                            _save_card_match(
-                                target['base_no'], target['card_name'], target['rarity'],
-                                target['tier'], target['qty'],
-                                final_url, price,
-                                f"要確認→最終承認 {msg[:30]}",
-                                status='confirmed_by_worker',
-                            )
-                            _load_match_data.clear()
-                            st.success(f"✅ 承認: {target['card_name']} ¥{price:,}")
-                            st.rerun()
-                        except Exception as ex:
-                            st.error(f"保存失敗: {str(ex)[:80]}")
-                else:
-                    # 採用済モード(修正用) は従来通り
-                    if st.button("📝 このカードを修正", type="primary", use_container_width=True, key="match_edit_btn"):
-                        st.session_state["_match_force_all"] = True
-                        all_idx = None
-                        target_key = _item_key(target)
-                        for i, x in enumerate(all_items):
-                            if _item_key(x) == target_key:
-                                all_idx = i
-                                break
-                        st.session_state["_match_idx"] = all_idx if all_idx is not None else 0
-                        st.rerun()
-            st.stop()
-
-        if not filtered:
-            st.info("該当なし")
-        else:
-            # 現在表示インデックス
-            if '_match_idx' not in st.session_state:
-                st.session_state['_match_idx'] = 0
-            idx = max(0, min(st.session_state['_match_idx'], len(filtered) - 1))
-            item = filtered[idx]
-
-            nav = st.columns([1, 1, 6, 1, 1])
-            with nav[0]:
-                if st.button("◀ 前", key=f"match_prev_{idx}", disabled=(idx == 0)):
-                    st.session_state['_match_idx'] = idx - 1
-                    st.rerun()
-            with nav[1]:
-                if st.button("次 ▶", key=f"match_next_{idx}", disabled=(idx >= len(filtered) - 1)):
-                    st.session_state['_match_idx'] = idx + 1
-                    st.rerun()
-            with nav[2]:
-                st.progress((idx + 1) / len(filtered), text=f"{idx + 1} / {len(filtered)}")
-            with nav[3]:
-                # key を idx ごとに変えて widget 状態を毎回新規にする(古いidx記憶バグ回避)
-                jump = st.number_input(
-                    "⮕", min_value=1, max_value=len(filtered), value=idx + 1,
-                    label_visibility="collapsed", key=f"match_jump_{idx}",
-                )
-                if jump - 1 != idx:
-                    st.session_state['_match_idx'] = int(jump) - 1
-                    st.rerun()
-            with nav[4]:
-                st.caption(f"件目")
-
-            st.markdown("---")
-            # ヘッダ情報
-            cur_mult, cur_base = extract_multiplier_and_base(item['card_name'])
-            display_name = item['card_name']
-            if cur_mult > 1:
-                display_name += f"  🔢 ×{cur_mult}"
-            st.markdown(f"### {display_name} ({item['rarity']})")
-            head_cols = st.columns([3, 2])
-            with head_cols[0]:
-                if item['base_url']:
-                    st.markdown(f"📦 [商品No.{item['base_no']} 競合ページを開く]({item['base_url']})")
-                else:
-                    st.markdown(f"📦 商品No.{item['base_no']}")
-                st.caption(f"賞: {item['tier']} / 数量: {item['qty']} / 照合行No: {item['no']}")
-                if cur_mult > 1:
-                    st.caption(f"🔢 multiplier={cur_mult} (スニダン単価×{cur_mult}で実価値計算)")
-                if item['reason']:
-                    st.caption(f"判定理由: {item['reason']}")
-            with head_cols[1]:
-                if item.get('review_flag'):
-                    st.info("⏸ 要確認(保留中)")
-                elif item.get('db_done'):
-                    st.success("✅ 商品別カードマスタDBに保存済(手動採用)")
-                elif item['adopt']:
-                    st.success(f"✅ 採用済: {item['adopt']}")
-                else:
-                    st.warning("⚠️ 未対応")
-
-            # 登録済みURL情報 (DB保存済みの場合)
-            if item.get('db_url') or item.get('db_price', 0) > 0:
-                with st.container(border=True):
-                    db_cols = st.columns([4, 1.5, 1.5, 2])
-                    with db_cols[0]:
-                        st.markdown(f"**📌 登録済みスニダンURL:** [{item['db_url'] or '(空=除外扱い)'}]({item['db_url']})" if item['db_url'] else "**📌 登録済み:** (URLなし=除外扱い)")
-                    with db_cols[1]:
-                        st.metric("登録価格", f"¥{int(item['db_price']):,}")
-                    with db_cols[2]:
-                        st.caption(f"採用方法")
-                        st.caption(f"{item['db_src'][:30]}")
-                    with db_cols[3]:
-                        if item['db_url']:
-                            st.link_button("🔗 登録済URLを開く", item['db_url'], use_container_width=True)
-                    st.caption("💡 修正するには下の候補から選び直し or 手動URL入力で上書きできます")
-
-            # 同類グループ検出: 同じベース名+レアリティ (商品横断)
-            # パック/BOX系は商品違いでも同じURLになるため横断検索
-            # シングルカードも同名同レアは多くの場合同じカード(シャワーズ問題は手動で除外)
-            # 採用済の同類カードも上書き対象に含める=「全部同じカードなら一括」のユーザー要望対応
-            _is_pack_or_box = bool(_re_match.search(r'(パック|PACK|BOX|ボックス|箱)', item['card_name']))
-            same_base_group = [
-                x for x in all_items
-                if extract_multiplier_and_base(x['card_name'])[1] == cur_base and
-                   x['rarity'] == item['rarity'] and
-                   _item_key(x) != _item_key(item)
-            ]
-            if same_base_group:
-                _group_label = "📚 同類グループ(商品横断)" if _is_pack_or_box else "📚 同類グループ(同名同レア)"
-                _help_txt = "**全商品の同名カード**に同じURLが登録されます" if _is_pack_or_box else "**同名同レアの全カード**に同じURLが登録されます"
-                _sub_txt = "数違いの同じパック/BOX" if _is_pack_or_box else "同じカード名+同じレアリティ(別商品)"
-                with st.expander(f"{_group_label} {len(same_base_group)}件: {_sub_txt} (同じスニダンURLで一括採用可)", expanded=True):
-                    for g in same_base_group[:30]:
-                        gm, _ = extract_multiplier_and_base(g['card_name'])
-                        st.caption(f"  ↳ 商品{g['base_no']} | {g['card_name']} (×{gm}) / 賞:{g['tier']}")
-                    if len(same_base_group) > 30:
-                        st.caption(f"  ... 他{len(same_base_group) - 30}件")
-                    st.caption(f"→ 下の「候補N採用」or「手動URL採用」を押すと {_help_txt}")
-
-            # 画像並列表示 (画像URLは都度取得・キャッシュ済み)
-            st.markdown("---")
-            img_cols = st.columns(4)
-            with img_cols[0]:
-                st.markdown("##### 🎴 トレカ画像")
-                tc_img_url = item.get('tc_image_url') or _get_tc_image(item['base_url'], item['card_name'], item['rarity'])
-                if tc_img_url:
-                    st.image(tc_img_url, use_column_width=True)
-                    st.caption("これが正解")
-                else:
-                    st.warning("画像なし")
-
-            for j, c in enumerate(item['cands'][:3]):
-                with img_cols[j + 1]:
-                    sim_label = f"類似度 {c['sim']:.3f}" if c['sim'] > 0 else "類似度不明"
-                    st.markdown(f"##### 候補{j+1} ({sim_label})")
-                    snk_img = c.get('img_url') or _get_snk_image(c.get('url', ''))
-                    if snk_img:
-                        st.image(snk_img, use_column_width=True)
-                    else:
-                        st.warning("画像なし")
-                    st.caption(c['name'][:50])
-                    btn_cols = st.columns([3, 1])
-                    with btn_cols[0]:
-                        if st.button(f"✅ 候補{j+1}を採用", key=f"match_adopt_{j}_{item['no']}_{idx}", type="primary", use_container_width=True):
-                            if not st.session_state.get('_worker_name'):
-                                st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
-                                st.stop()
-                            try:
-                                with st.spinner("価格取得+DB保存中..."):
-                                    price, msg = _fetch_price_for_url(c['url'], item['card_name'], item['rarity'])
-                                    _save_card_match(item['base_no'], item['card_name'], item['rarity'],
-                                                     item['tier'], item['qty'], c['url'], price,
-                                                     f"候補{j+1} sim={c['sim']:.2f} {msg[:20]}",
-                                                     status='confirmed_by_worker')
-                                    st.session_state['_match_done_local'].add(_item_key(item))
-                                    for g in same_base_group:
-                                        _save_card_match(g['base_no'], g['card_name'], g['rarity'],
-                                                         g['tier'], g['qty'], c['url'], price,
-                                                         f"同類一括 sim={c['sim']:.2f}",
-                                                         status='confirmed_by_worker')
-                                        st.session_state['_match_done_local'].add(_item_key(g))
-                            except Exception as _ex:
-                                st.error(f"❌ DB保存失敗: {str(_ex)[:200]}\n\n再度お試しください。継続する場合は管理者に連絡してください。")
-                                st.stop()
-                            extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
-                            _unit_label = "パック単価" if _is_pack_or_box else "単価"
-                            st.success(f"候補{j+1}を採用 ({_unit_label}¥{price:,}{extra})")
-                            # キャッシュクリア(要確認等の状態を即反映)
-                            _load_match_data.clear()
-                            st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
-                            st.rerun()
-                    with btn_cols[1]:
-                        if c['url']:
-                            st.link_button("🔗", c['url'], help="スニダンページを開く")
-
-            # 下段: 手動URL入力 / 要確認 / スキップ
-            st.markdown("---")
-            st.caption("💡 URLを貼り付けて「📝 手動採用」を押してください (Enter不要) ／ わからない場合は「⏸ 要確認」で保留→後で一覧確認")
-            manual_cols = st.columns([4, 1, 1, 1])
-            manual_key = f"match_manual_{item['no']}_{idx}"
-            with manual_cols[0]:
-                st.text_input(
-                    "📝 手動URL入力 (上記候補に正解がない場合、スニダンURLを貼り付け)",
-                    key=manual_key,
-                    placeholder="https://snkrdunk.com/apparels/..."
-                )
-            with manual_cols[1]:
-                if st.button("📝 手動採用", key=f"match_manual_btn_{item['no']}_{idx}"):
-                    if not st.session_state.get('_worker_name'):
-                        st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
-                        st.stop()
-                    # 押下時に session_state から最新値を取得
-                    url = (st.session_state.get(manual_key, '') or '').strip()
-                    if not url:
-                        st.warning("URLが空です。スニダンURLを貼り付けてください")
-                    elif not url.startswith('http'):
-                        st.warning("URLが不正です(https://snkrdunk.com/apparels/... の形式で入力)")
-                    else:
-                        with st.spinner("価格取得中..."):
-                            price, msg = _fetch_price_for_url(url, item['card_name'], item['rarity'])
-                        if price <= 0:
-                            # 価格0は保存せずエラー → ユーザーにURL再確認を促す
-                            st.error(
-                                f"❌ 価格取得に失敗しました (¥0)。**保存していません**。\n\n"
-                                f"理由: {msg[:80]}\n\n"
-                                f"考えられる原因:\n"
-                                f"・URLが間違っている (別カードのページ)\n"
-                                f"・スニダンに販売履歴がない (極めて稀)\n"
-                                f"・スニダン側のAPIエラー(時間を置いて再試行)\n\n"
-                                f"対処: URLを再確認して貼り直してください。"
-                                f"もし本当に値段がつかないカード(ハズレ枠相当)なら「❌除外」を押してください"
-                            )
-                        else:
-                            try:
-                                with st.spinner("DB保存中..."):
-                                    _save_card_match(item['base_no'], item['card_name'], item['rarity'],
-                                                     item['tier'], item['qty'], url, price,
-                                                     f"手動URL {msg[:30]}",
-                                                     status='confirmed_by_worker')
-                                    st.session_state['_match_done_local'].add(_item_key(item))
-                                    for g in same_base_group:
-                                        _save_card_match(g['base_no'], g['card_name'], g['rarity'],
-                                                         g['tier'], g['qty'], url, price,
-                                                         f"手動URL(同類一括)",
-                                                         status='confirmed_by_worker')
-                                        st.session_state['_match_done_local'].add(_item_key(g))
-                            except Exception as _ex:
-                                st.error(f"❌ DB保存失敗: {str(_ex)[:200]}\n\n再度お試しください。継続する場合は管理者に連絡してください。")
-                                st.stop()
-                            extra = f" + 同類{len(same_base_group)}件" if same_base_group else ""
-                            _unit_label2 = "パック単価" if _is_pack_or_box else "単価"
-                            st.success(f"✅ 手動URLを採用 ({_unit_label2}¥{price:,}{extra})")
-                            st.session_state.pop(manual_key, None)
-                            _load_match_data.clear()  # キャッシュクリアで状態即反映
-                            st.session_state['_match_idx'] = max(0, min(idx, len(filtered) - 1))
-                            st.rerun()
-            with manual_cols[2]:
-                if st.button("⏸ 要確認", key=f"match_review_{item['no']}_{idx}", use_container_width=True,
-                              help="保留フラグ。後で「⏸要確認のみ」モードで一覧確認・対応"):
-                    if not st.session_state.get('_worker_name'):
-                        st.warning("⚠️ サイドバーの『あなたの名前』を入力してください")
-                        st.stop()
-                    _save_card_match(item['base_no'], item['card_name'], item['rarity'],
-                                     item['tier'], item['qty'], '', 0,
-                                     '要確認(後で対応)',
-                                     status='provisional_review')
-                    st.success("⏸ 要確認として保留(後で一覧確認可能)")
-                    _load_match_data.clear()  # 即反映
-                    st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
-                    st.rerun()
-            with manual_cols[3]:
-                if st.button("⏭ スキップ", key=f"match_skip_{item['no']}_{idx}", use_container_width=True,
-                              help="今は飛ばす。次回起動時にまた未対応として表示される"):
-                    st.session_state['_match_idx'] = min(idx + 1, len(filtered) - 1)
-                    st.rerun()
-
-            # カード名/レアリティに誤りがある場合は管理者に連絡してDB側で直接修正
-            # (ツール側からの修正はStreamlit制約で安定しないため非対応)
-            st.caption(
-                "📝 カード名やレアリティに誤りがある場合は管理者に連絡してください "
-                "(例: 「商品1481 スターミーV のレアは SAR ではなく CSR」)。"
-                "スニダンURLの修正は上の「📝 手動採用」(現状のカード名/レアリティのまま)で再採用してください"
-            )
-
-
 # ---------- トレカセンター商品一覧タブ ----------
 with tab_torecacenter:
     st.subheader("🎴 トレカセンター商品一覧")
@@ -3748,335 +3026,53 @@ with tab_suggest:
                             st.error(f"失敗: {e}")
 
 
-# ---------- 上乗せ率設定タブ ----------
-with tab_markup:
-    st.subheader("⚙️ 上乗せ率設定（ptの上乗せ）")
-    st.markdown("""
-顧客にはptで価格を表示します。**カード相場 × (1 + 上乗せ率)** がpt額面（顧客が見る金額）になります。
-
-例: 相場 ¥100,000 のカードに 20% 上乗せ → pt額面 120,000pt（=120,000円換算）として表示
-""")
-    from markup import load_markup_bands, clear_cache as clear_markup_cache
-    bands = load_markup_bands(force=True)
-
-    df_bands = pd.DataFrame([
-        {"価格下限": b.lower, "価格上限": b.upper, "上乗せ率（%）": b.rate_pct}
-        for b in bands
-    ])
-    edited = st.data_editor(
-        df_bands, num_rows="dynamic", use_container_width=True, hide_index=True,
-        column_config={
-            "価格下限": st.column_config.NumberColumn(format="%d", min_value=0),
-            "価格上限": st.column_config.NumberColumn(format="%d", min_value=0),
-            "上乗せ率（%）": st.column_config.NumberColumn(format="%.1f", min_value=0, max_value=100),
-        },
-    )
-
-    save_col, _ = st.columns([1, 4])
-    with save_col:
-        if st.button("💾 設定を保存", type="primary", use_container_width=True):
-            inv = open_inventory()
-            ws = inv.worksheet(config.TAB_MARKUP)
-            new_rows = []
-            for _, row in edited.iterrows():
-                if pd.isna(row["価格下限"]) or pd.isna(row["価格上限"]) or pd.isna(row["上乗せ率（%）"]):
-                    continue
-                new_rows.append([int(row["価格下限"]), int(row["価格上限"]), float(row["上乗せ率（%）"]), ""])
-            ws.clear()
-            ws.update([config.MARKUP_HEADERS] + new_rows, "A1", value_input_option="USER_ENTERED")
-            clear_markup_cache()
-            st.success("✅ 保存しました")
-            st.rerun()
-
-    st.markdown("---")
-    st.markdown("### 動作確認")
-    test_price = st.number_input("テスト用相場（円）", min_value=0, value=50000, step=1000)
-    from markup import find_markup_rate, coin_price_for
-    rate = find_markup_rate(int(test_price), bands)
-    coin = coin_price_for(int(test_price), bands)
-    st.info(f"相場 ¥{int(test_price):,} → 上乗せ {rate}% → pt額面 **{coin:,} pt**（=¥{coin:,}換算）")
-
-    st.markdown("---")
-    st.subheader("📋 上乗せ率プリセット")
-    st.markdown("""
-商品ごとに使い回せる上乗せ率パターンを保存します。商品設計画面の「プリセット適用」から呼び出せます。
-
-| 列 | 意味 |
-|---|---|
-| ベース上乗せ率（%） | 商品全体に適用される倍率（-1なら価格帯別ルール） |
-| 各等の列（1等/2等/.../S賞/...） | 等別の上書き値（-1ならベース倍率を使う、0以上ならその値で上書き） |
-""")
-    from markup import load_presets, save_preset, MarkupPreset, clear_cache as _mclear
-    presets_ui = load_presets(force=True)
-    df_presets = pd.DataFrame([
-        {
-            "プリセット名": p.name,
-            "ベース上乗せ率（%）": p.base_rate,
-            **p.tier_rates,
-            "備考": p.note,
-        } for p in presets_ui
-    ])
-    edited_ps = st.data_editor(
-        df_presets,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True,
-        key="preset_editor",
-    )
-
-    if st.button("💾 プリセットを保存", type="primary", key="save_presets"):
-        # 全行を書き戻し
-        inv = open_inventory()
-        ws_p = inv.worksheet(config.TAB_MARKUP_PRESETS)
-        headers_p = ws_p.row_values(1) or config.PRESET_HEADERS
-        rows = []
-        for _, row in edited_ps.iterrows():
-            if pd.isna(row.get("プリセット名")) or not str(row.get("プリセット名", "")).strip():
-                continue
-            r = []
-            for h in headers_p:
-                v = row.get(h, "")
-                if pd.isna(v) or v == "":
-                    r.append(-1 if h not in ("プリセット名", "ベース上乗せ率（%）", "備考") else "")
-                else:
-                    r.append(v)
-            rows.append(r)
-        ws_p.clear()
-        ws_p.update([headers_p] + rows, "A1", value_input_option="USER_ENTERED")
-        _mclear()
-        st.success("✅ プリセットを保存しました")
-        st.rerun()
-
-
-# ---------- 在庫タブ ----------
+# ---------- 商品一覧タブ（スニダン相場） ----------
 with tab_inventory:
-    st.subheader("📦 在庫一覧と相場更新")
+    import pandas as _pd_inv
+    st.subheader("🃏 商品一覧（スニダン取得カード・BOX・パックと相場）")
+    st.caption("ガチャに入れられるカード/BOX/パックの一覧と相場（スニダン・毎朝自動更新）。『📝 新規設計』の検索と同じデータです。")
+    idx = cached_snkrdunk_index()
 
-    btn_cols = st.columns([1, 1, 4])
-    with btn_cols[0]:
-        if st.button("🔄 再読込", key="reload_inv", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-    with btn_cols[1]:
-        bulk_update = st.button("📈 全在庫の相場を一括更新", type="primary", use_container_width=True,
-                                help="snkrdunk URL がある全カードの相場を取得して更新します（1〜数分かかる場合あり）")
+    def _inv_kind(tab):
+        if tab.endswith("BOX"):
+            return "BOX"
+        if tab.endswith("パック"):
+            return "パック"
+        if tab.endswith("デッキ"):
+            return "デッキ"
+        return "シングル"
 
-    if bulk_update:
-        from snkrdunk_client import fetch_recent_price
-        from inventory import update_market_price as _update_price
-        items_for_update = [it for it in load_all_inventory() if it.snkrdunk_url]
-        if not items_for_update:
-            st.warning("snkrdunk URL付きの在庫がありません")
-        else:
-            progress = st.progress(0)
-            status = st.empty()
-            ok = 0
-            fail = 0
-            for i, it in enumerate(items_for_update):
-                status.text(f"[{i+1}/{len(items_for_update)}] {it.name} を取得中...")
-                price, msg = fetch_recent_price(it.snkrdunk_url, grade=it.grade)
-                if price and price > 0:
-                    try:
-                        _update_price(it.tab, it.row_idx, price, note=msg.split("／")[0][:30])
-                        ok += 1
-                    except Exception as e:
-                        fail += 1
-                else:
-                    fail += 1
-                progress.progress((i + 1) / len(items_for_update))
-            status.empty()
-            progress.empty()
-            st.success(f"✅ 完了: 成功 {ok}件 / 失敗 {fail}件")
-            st.cache_data.clear()
-            st.rerun()
+    def _inv_game(tab):
+        return "ワンピ" if tab.startswith("ワンピ") else "ポケカ"
 
-    @st.cache_data(ttl=30)
-    def load_inv_df():
-        items = load_all_inventory()
-        return items
+    fc1, fc2, fc3, fc4 = st.columns([3, 2, 2, 2])
+    inv_q = fc1.text_input("カード名・型番で検索", key="inv_q", placeholder="例: リザードン / VSTARユニバース / OP01")
+    inv_game = fc2.multiselect("カテゴリー", ["ポケカ", "ワンピ"], default=["ポケカ", "ワンピ"], key="inv_game")
+    inv_kind = fc3.multiselect("種別", ["シングル", "BOX", "パック", "デッキ"],
+                               default=["シングル", "BOX", "パック", "デッキ"], key="inv_kind")
+    inv_sort = fc4.selectbox("並び", ["相場が高い順", "相場が安い順", "名前順"], key="inv_sort")
 
-    items = load_inv_df()
+    filtered = [it for it in idx if _inv_game(it.tab) in inv_game and _inv_kind(it.tab) in inv_kind]
+    if inv_q:
+        _q = inv_q.lower()
+        filtered = [it for it in filtered
+                    if _q in (it.name or "").lower() or _q in (it.card_no or "").lower()
+                    or _q in (it.series or "").lower()]
+    if inv_sort == "相場が高い順":
+        filtered.sort(key=lambda x: -x.price)
+    elif inv_sort == "相場が安い順":
+        filtered.sort(key=lambda x: x.price)
+    else:
+        filtered.sort(key=lambda x: x.name)
 
-    from snkrdunk_client import extract_apparel_id as _extract_aid
-
-    def _url_health(url: str) -> str:
-        """URL健全性: ✅個別カードURL / ⚠️検索一覧URL / ❌URL空 / ❓その他"""
-        if not url:
-            return "❌"
-        if _extract_aid(url):
-            return "✅"
-        if "/apparels?" in url or "/search" in url:
-            return "⚠️"
-        return "❓"
-
-    df = pd.DataFrame([
-        {
-            "URL": _url_health(it.snkrdunk_url),
-            "区分": it.tab, "カード名": it.name, "シリーズ": it.series,
-            "グレード": it.grade,
-            "数量": it.qty, "予約中": it.reserved_qty, "販売中": it.on_sale_qty,
-            "残数量": it.remaining_qty,
-            "相場": it.price, "仕入れ価格": it.purchase_price,
-            "相場更新": it.price_updated or "-",
-            "snk URL": it.snkrdunk_url,
-            "引当先": it.allocation_product or "",
-            "row_idx": it.row_idx,
-        } for it in items
-    ])
-
-    # URL健全性サマリ
-    bad_count = int((df["URL"] != "✅").sum())
-    if bad_count > 0:
-        st.warning(f"⚠️ URLが要修正の在庫が **{bad_count}件** あります（下の「⚠️URL要修正のみ」で絞込めます）")
-
-    fc1, fc2, fc3, fc4, fc5 = st.columns([1.2, 1, 1.4, 1.2, 1.6])
-    with fc1:
-        f_tab = st.multiselect("区分", options=["PSA10", "BOX"], default=["PSA10", "BOX"])
-    with fc2:
-        only_available = st.checkbox("残数量あり", value=True)
-    with fc3:
-        only_no_purchase = st.checkbox("仕入れ価格未入力のみ", value=False)
-    with fc4:
-        only_bad_url = st.checkbox("⚠️URL要修正のみ", value=False,
-                                    help="スニダンURLが個別カードURLになっていない在庫だけ表示")
-    with fc5:
-        f_search = st.text_input("カード名で絞込")
-
-    df_show = df[df["区分"].isin(f_tab)]
-    if only_available:
-        df_show = df_show[df_show["残数量"] > 0]
-    if only_no_purchase:
-        df_show = df_show[df_show["仕入れ価格"] == 0]
-    if only_bad_url:
-        df_show = df_show[df_show["URL"] != "✅"]
-    if f_search.strip():
-        df_show = df_show[df_show["カード名"].str.contains(f_search.strip(), na=False)]
-
-    st.caption(f"{len(df_show)}件")
-    st.dataframe(
-        df_show.drop(columns=["row_idx"]),
-        use_container_width=True, hide_index=True,
-    )
-
-    st.markdown("---")
-    st.markdown("### 個別操作（相場更新・仕入れ価格入力）")
-    st.caption("カード名で検索してから1つ選んで、相場をsnkrdunkから取得 or 仕入れ価格を入力できます")
-
-    if len(df_show) > 0:
-        op_search = st.text_input(
-            "🔍 カード名で検索",
-            placeholder="例: リーリエ / ロイヤル / ピカチュウ",
-            key="op_search",
-        )
-        df_op = df_show
-        if op_search.strip():
-            df_op = df_op[df_op["カード名"].str.contains(op_search.strip(), na=False)]
-
-        if len(df_op) == 0:
-            st.warning("該当するカードがありません")
-        else:
-            st.caption(f"候補: {len(df_op)}件")
-            sel_idx_label = st.selectbox(
-                "カードを選択",
-                options=df_op.index.tolist(),
-                format_func=lambda i: (
-                    f"[{df_op.loc[i, '区分']}] {df_op.loc[i, 'カード名']} "
-                    f"({str(df_op.loc[i, 'グレード']) or '-'}, "
-                    f"相場¥{int(df_op.loc[i, '相場'] or 0):,}, 仕入¥{int(df_op.loc[i, '仕入れ価格'] or 0):,})"
-                ),
-            )
-            sel = df_op.loc[sel_idx_label]
-            sel_url = str(sel["snk URL"]) if pd.notna(sel["snk URL"]) else ""
-            sel_grade = str(sel["グレード"]) if pd.notna(sel["グレード"]) else ""
-            sel_url_ok = bool(_extract_aid(sel_url))
-
-            # URL不正時は先に修復UIを表示
-            if not sel_url_ok:
-                st.warning(
-                    f"⚠️ このカードのスニダンURLが正しく設定されていません。\n\n"
-                    f"現URL: `{sel_url or '(空)'}`\n\n"
-                    "下の候補一覧から正しいカードを選んでURLを保存してください。"
-                )
-                cand_cols = st.columns([2, 1])
-                with cand_cols[0]:
-                    fix_query = st.text_input(
-                        "検索キーワード（デフォルト=カード名）",
-                        value=str(sel["カード名"]),
-                        key=f"fix_q_{sel_idx_label}",
-                    )
-                with cand_cols[1]:
-                    fix_rarity = st.text_input(
-                        "レア表記（任意・精度UP）",
-                        value="PSA10" if sel["区分"] == "PSA10" else "",
-                        key=f"fix_r_{sel_idx_label}",
-                        help="例: SAR / UR / SR / PSA10",
-                    )
-                if st.button("🔍 候補を検索", key=f"fix_search_{sel_idx_label}"):
-                    from snkrdunk_client import search_apparel_id_by_keyword
-                    with st.spinner("snkrdunk 検索中..."):
-                        cands = search_apparel_id_by_keyword(
-                            fix_query.strip(), fix_rarity.strip(), max_candidates=8,
-                        )
-                    st.session_state[f"fix_cands_{sel_idx_label}"] = cands
-
-                cands = st.session_state.get(f"fix_cands_{sel_idx_label}", [])
-                if cands:
-                    st.markdown(f"**候補 {len(cands)}件（スコア順）**")
-                    cand_labels = [
-                        f"[{c.get('score', 0):+d}] id={c['id']} | {c.get('name', '')[:80]}"
-                        for c in cands
-                    ]
-                    chosen_i = st.radio(
-                        "正しいカードを選択",
-                        options=list(range(len(cands))),
-                        format_func=lambda i: cand_labels[i],
-                        key=f"fix_pick_{sel_idx_label}",
-                    )
-                    save_cols = st.columns([1, 1, 1])
-                    with save_cols[0]:
-                        if st.button("💾 このURLで保存", type="primary",
-                                     key=f"fix_save_{sel_idx_label}",
-                                     use_container_width=True):
-                            from inventory import update_snkrdunk_url
-                            new_url = cands[chosen_i]["url"]
-                            update_snkrdunk_url(str(sel["区分"]), int(sel["row_idx"]), new_url)
-                            st.success(f"✅ URL保存: {new_url}")
-                            st.session_state.pop(f"fix_cands_{sel_idx_label}", None)
-                            st.cache_data.clear()
-                            st.rerun()
-                    with save_cols[1]:
-                        st.link_button("🔗 選択候補を開く",
-                                       cands[chosen_i]["url"], use_container_width=True)
-                st.markdown("---")
-
-            op_cols = st.columns([2, 2, 2])
-            with op_cols[0]:
-                if st.button(
-                    "📈 このカードの相場をsnkrdunkから更新",
-                    disabled=not sel_url_ok,
-                    use_container_width=True,
-                ):
-                    from snkrdunk_client import fetch_recent_price
-                    from inventory import update_market_price as _update_price
-                    with st.spinner("取得中..."):
-                        price, msg = fetch_recent_price(sel_url, grade=sel_grade)
-                    if price:
-                        _update_price(str(sel["区分"]), int(sel["row_idx"]), price, note=msg.split("／")[0][:30])
-                        st.success(f"✅ 相場 ¥{int(sel['相場']):,} → ¥{price:,} に更新（{msg}）")
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.error(f"取得失敗: {msg}")
-            with op_cols[1]:
-                new_purchase = st.number_input(
-                    "仕入れ価格（円）", min_value=0,
-                    value=int(sel["仕入れ価格"] or 0), step=1000,
-                    key=f"pp_{sel_idx_label}",
-                )
-            with op_cols[2]:
-                if st.button("💾 仕入れ価格を保存", use_container_width=True):
-                    from inventory import update_purchase_price
-                    update_purchase_price(str(sel["区分"]), int(sel["row_idx"]), int(new_purchase))
-                    st.success(f"✅ 仕入れ価格 ¥{int(new_purchase):,} を保存")
-                    st.cache_data.clear()
-                    st.rerun()
+    CAP = 800
+    st.caption(f"該当 {len(filtered):,} 件（表示は先頭 {min(CAP, len(filtered)):,} 件・検索で絞り込めます）")
+    df_inv = _pd_inv.DataFrame([{
+        "カテゴリー": _inv_game(it.tab), "種別": _inv_kind(it.tab), "カード名": it.name,
+        "レア": it.grade, "型番": it.card_no, "相場(円)": it.price, "スニダン": it.snkrdunk_url,
+    } for it in filtered[:CAP]])
+    st.dataframe(df_inv, use_container_width=True, hide_index=True, column_config={
+        "相場(円)": st.column_config.NumberColumn("相場(円)", format="¥%d"),
+        "スニダン": st.column_config.LinkColumn("スニダン", display_text="開く"),
+    })
+    st.caption("💡 相場は毎朝JST6:00に自動更新（上のバナー参照）。設計は『📝 新規設計』でこのカードから積めます。")
