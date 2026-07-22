@@ -381,12 +381,19 @@ with tab_design:
     total_tickets = b3.number_input("総口数", min_value=1, value=5000, step=100, key="pz_total")
     revenue = unit_price * total_tickets
     b4.metric("総売上(円)", f"¥{revenue:,}")
-    # 自分で決める項目（購入上限・アド確率しきい値・課金額）
-    b5, b6, b7 = st.columns(3)
+    # 自分で決める項目（購入上限・目標還元率・アド基準・課金額）
+    b5, b6, b7, b8 = st.columns(4)
     limit_day = b5.text_input("購入上限 口/日", value="300", key="pz_ld")
     limit_total = b6.text_input("購入上限 口/累計", value="1000", key="pz_lt")
-    ad_threshold = b7.number_input("アド確率のしきい値 X(pt以上)", min_value=0, value=5500, step=500, key="pz_adx",
-                                   help="このpt以上の当たりを『アド』とみなし 1/Y を計算(例:1BOX相当¥5,500)")
+    target_return = b7.number_input("目標還元率(%)", min_value=0.0, max_value=300.0, value=117.0, step=1.0, key="pz_tr",
+                                    help="狙う総還元率。下の『残りポイント配分ガイド』の基準になります（例:117%）")
+    _AD_PRESETS = {"1BOX相当 ¥5,500以上": 5500, "¥10,000以上": 10000, "¥30,000以上": 30000,
+                   "¥50,000以上": 50000, "¥100,000以上": 100000, "手動で指定": -1}
+    ad_choice = b8.selectbox("アドの基準（この額以上が当たる確率を1/Yで表示）", list(_AD_PRESETS.keys()),
+                             key="pz_adsel", help="ニブイチ等の『カードが当たる割合』は下の当たり率で自動表示されます")
+    ad_threshold = _AD_PRESETS[ad_choice]
+    if ad_threshold < 0:
+        ad_threshold = st.number_input("アド基準額（この表示pt以上）", min_value=0, value=5500, step=500, key="pz_adx")
     # 課金ガチャ用: 引く権利(課金額)。★売上には含めない(別勘定)
     bc1, bc2, bc3 = st.columns(3)
     charge_amount = bc1.number_input("引く権利(課金額・円/回)", min_value=0, value=0, step=1000, key="pz_charge",
@@ -439,24 +446,38 @@ with tab_design:
             pool = sorted(pool, key=lambda x: abs(_val_for(x) - pz_target))
         else:
             pool = sorted(pool, key=lambda x: -_val_for(x))
-        st.caption(f"候補 {len(pool):,} 件中 上位 {min(pz_show, len(pool))} 件 ｜ 価格2系統: 直近取引 と 相場（スニダン）")
-        hc = st.columns([5, 2, 2, 1, 1])
-        hc[0].caption("カード名"); hc[1].caption("直近取引"); hc[2].caption("相場")
-        hc[3].caption("区分"); hc[4].caption("")
-        for j, it in enumerate(pool[:int(pz_show)]):
-            cc = st.columns([5, 2, 2, 1, 1])
-            _nm = f"[{it.name}]({it.snkrdunk_url})" if getattr(it, "snkrdunk_url", "") else it.name
-            cc[0].markdown(f"{_nm} `{it.series or ''}`")
-            cc[1].markdown(f"¥{_recent(it):,}")
-            cc[2].markdown(f"¥{_souba(it):,}" if _souba(it) else "—")
-            cc[3].markdown(f"[{it.tab}]")
-            if cc[4].button("➕ 追加", key=f"pz_add_{j}_{it.row_idx}"):
-                newrow = {"賞ランク": "", "カード名": it.name, "型番": (it.card_no or it.series or ""),
-                          "口数": 1, "実価値/枚": int(_val_for(it)), "送料/件": 500,
-                          "受取方法": METHOD_CHOICE, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False}
-                st.session_state.pz_df = pd.concat(
-                    [st.session_state.pz_df, pd.DataFrame([newrow], columns=PZ_COLS)], ignore_index=True)
-                st.rerun()
+        shown = pool[:int(pz_show)]
+        st.caption(f"候補 {len(pool):,} 件中 上位 {len(shown)} 件 ｜ ✅チェックして下のボタンでまとめて追加できます（目玉を一気に）")
+        # チェックして複数まとめて追加（1枚ずつでなく効率化）
+        res_rows = [{
+            "追加": False, "カード名": it.name, "型番": (it.card_no or it.series or ""),
+            "直近取引": _recent(it), "相場": (_souba(it) or None), "区分": it.tab,
+            "スニダン": it.snkrdunk_url,
+        } for it in shown]
+        res_edit = st.data_editor(
+            pd.DataFrame(res_rows), hide_index=True, use_container_width=True, key="pz_search_editor",
+            disabled=["カード名", "型番", "直近取引", "相場", "区分", "スニダン"],
+            column_config={
+                "追加": st.column_config.CheckboxColumn("追加", width="small"),
+                "直近取引": st.column_config.NumberColumn("直近取引", format="¥%d"),
+                "相場": st.column_config.NumberColumn("相場", format="¥%d"),
+                "スニダン": st.column_config.LinkColumn("スニダン", display_text="開く"),
+            },
+        )
+        ab1, ab2 = st.columns([1, 3])
+        _picked_idx = [i for i, v in enumerate(res_edit["追加"].tolist()) if v]
+        if ab1.button(f"➕ チェックした{len(_picked_idx)}件を賞品に追加", type="primary",
+                      disabled=not _picked_idx, use_container_width=True, key="pz_bulk_add"):
+            newrows = []
+            for i in _picked_idx:
+                it = shown[i]
+                newrows.append({"賞ランク": "", "カード名": it.name, "型番": (it.card_no or it.series or ""),
+                                "口数": 1, "実価値/枚": int(_val_for(it)), "送料/件": 500,
+                                "受取方法": METHOD_CHOICE, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False})
+            st.session_state.pz_df = pd.concat(
+                [st.session_state.pz_df, pd.DataFrame(newrows, columns=PZ_COLS)], ignore_index=True)
+            st.rerun()
+        ab2.caption("💡 まず目玉を複数チェックして追加 → 賞ランク/口数を整えて、残りは下の『残りポイント配分ガイド』を見ながら下位賞を足します。")
 
     # ---------- ③ 賞品テーブル（直接編集） ----------
     st.markdown("### ③ 賞品テーブル（直接編集・行の追加/削除OK）")
@@ -520,6 +541,7 @@ with tab_design:
         st.markdown(f"**{_vmark}**")
         st.metric("pt還元率", f"{res.coin_return:.1%}")
         st.metric("実利益率", f"{res.real_profit_rate:.1%}")
+        st.metric("当たり率(現物)", f"1/{total_tickets/res.card_win_count:.1f}" if res.card_win_count else "-")
         st.metric(f"アド確率(≧{ad_threshold:,}pt)", f"1/{res.ad_Y:.0f}" if res.ad_Y else "-")
         st.metric("S2 全員pt(最悪)", f"¥{res.s2:,}")
         st.metric("最低保証(pt)", f"{res.min_guarantee:,}")
@@ -554,11 +576,30 @@ with tab_design:
         m3.metric("◆ 実利益率", f"{res.real_profit_rate:.2%}", help="1 − 実価値合計 ÷ 売上")
         m4.metric("◆ 総上乗せ率", f"{res.total_markup:.2%}", help="表示PT合計 ÷ 実価値合計")
         m5, m6, m7, m8 = st.columns(4)
-        m5.metric(f"アド確率(≧{ad_threshold:,}pt)", (f"1/{res.ad_Y:.0f}" if res.ad_Y else "-"),
-                  help="表示PTがXpt以上の口数から算出。1/319等")
-        m6.metric("最低保証(pt)", f"{res.min_guarantee:,}")
-        m7.metric("表示PT合計", f"¥{res.sum_display_pt:,}")
-        m8.metric("実価値合計", f"¥{res.sum_real_value:,}")
+        m5.metric("当たり率(現物カード)", (f"1/{total_tickets/res.card_win_count:.1f}" if res.card_win_count else "-"),
+                  help="現物カードが当たる割合(発送限定+選択制)÷総口数。1/2=ニブイチ。ハズレはpt限定")
+        m6.metric(f"アド確率(≧{ad_threshold:,}pt)", (f"1/{res.ad_Y:.0f}" if res.ad_Y else "-"),
+                  help="表示PTがこの額以上の口数から算出。例:1BOX相当¥5,500以上が1/319")
+        m7.metric("最低保証(pt)", f"{res.min_guarantee:,}")
+        m8.metric("表示PT合計", f"¥{res.sum_display_pt:,}")
+
+        # ---------- 🧩 残りポイント配分ガイド（目玉を積んだ後、下位賞を残りptで埋める）----------
+        _target_pt = int(round(res.revenue * target_return / 100))
+        _remain_pt = _target_pt - res.sum_display_pt
+        _remain_cnt = total_tickets - res.count_sum
+        _per = int(round(_remain_pt / _remain_cnt)) if _remain_cnt > 0 else 0
+        st.markdown(f"#### 🧩 残りポイント配分ガイド（目標還元率 {target_return:.0f}%）")
+        g1, g2, g3, g4 = st.columns(4)
+        g1.metric("目標 表示PT合計", f"¥{_target_pt:,}", help="売上 × 目標還元率")
+        g2.metric("残り必要pt", f"¥{_remain_pt:,}",
+                  delta=("使い切り" if abs(_remain_pt) < max(1, _target_pt) * 0.01 else ("あと配る" if _remain_pt > 0 else "超過")),
+                  delta_color=("normal" if _remain_pt >= 0 else "inverse"),
+                  help="目標 − 現在の表示PT合計。プラス=まだ配れる/マイナス=盛りすぎ")
+        g3.metric("残り口数", f"{_remain_cnt:,}", help="総口数 − 現在の口数（下位賞に割り当てる残り）")
+        g4.metric("残り1口あたり目安", f"¥{_per:,}" if _remain_cnt > 0 else "-",
+                  help="残り必要pt ÷ 残り口数。この単価前後の下位賞カードを選ぶと目標に合います")
+        if _remain_cnt > 0 and _remain_pt > 0:
+            st.caption(f"💡 目玉を積んだ後、残り **{_remain_cnt:,}口** に **1口あたり約¥{_per:,}** の下位賞（またはpt交換）を配ると 還元率 {target_return:.0f}% に近づきます。")
 
         st.markdown("#### 🛡️ 損益シナリオ（完売時）")
         s1c, s2c, s3c, s4c = st.columns(4)

@@ -2,7 +2,7 @@
 
 タブ: 使い方 / ポケカ / ワンピ
 2つの価格列(スニダンのカードページと同じ2指標):
-  直近取引価格(souba)  = 直近に「売れた」価格(成約)。シングル=PSA10直近成約。
+  直近取引価格(souba)  = 直近に「売れた」価格(成約)。シングル=PSA10直近成約のみ(無ければ空欄・他グレードにフォールバックしない)。
   相場(souba_ask)      = 今「出ている」出品の最安値(現在値)。
                          シングル=PSA10グレードの出品最安 / BOX・パック=表記の下限額(minPrice)。
 両方空欄 → 備考「取引履歴なし（希少）」。全カードを残す。
@@ -59,7 +59,7 @@ USAGE = [
     [""],
     ["■ 価格は2列あります（スニダンのカードページと同じ2つの数字）"],
     ["   ●「直近取引価格」… 直近に “売れた” 価格（成約）"],
-    ["        ・シングル … スニダンPSA10の直近成約価格"],
+    ["        ・シングル … スニダンPSA10の直近成約価格（PSA10の成約が無ければ空欄）"],
     ["        ・BOX/パック … この列は空欄（成約は追っていません）"],
     ["   ●「相場」… 今 “出ている” 出品の最安値（リアルタイムの売り希望）"],
     ["        ・シングル … PSA10グレードの現在の出品最安（例「¥14,980〜」の14,980）"],
@@ -126,7 +126,7 @@ def reprice(rows):
     """毎日: 高額(souba_sort>¥3,000) + その他全カードを1/7ずつ巡回(希少含む・7日で一巡)。
     single → 直近取引価格(PSA10直近成約)と相場(PSA10出品最安)の両方を再取得。
     それ以外 → 相場=表記下限(minPrice)。"""
-    from snkrdunk_client import fetch_recent_price, fetch_psa10_ask
+    from snkrdunk_client import fetch_psa10_sale, fetch_psa10_ask
     from concurrent.futures import ThreadPoolExecutor, as_completed
     bucket = datetime.now(JST).timetuple().tm_yday % 7
 
@@ -143,9 +143,10 @@ def reprice(rows):
         upd = {}
         try:
             if r["item_type"] == "single":
-                price, _ = fetch_recent_price(r["url"], grade="PSA10", is_pack=False, item_name=r["name"])
-                if price:
-                    upd["psa10_price"] = str(price)          # 直近取引価格(成約)
+                price, snote = fetch_psa10_sale(r["url"])    # 直近取引価格=PSA10成約のみ(無ければNone=空欄)
+                if snote:                                    # 成功時のみ更新(通信失敗はstale保持)
+                    upd["psa10_price"] = str(price) if price else ""
+                    upd["note"] = snote
                 ask = fetch_psa10_ask(r["url"])              # 相場(PSA10出品最安)
                 if ask is not None:                          # None=取得失敗はstale保持
                     upd["ask_price"] = str(ask) if ask else ""  # 0=出品ゼロは空欄化
@@ -177,7 +178,9 @@ def recompute(rows):
         r["souba_sort"] = str(hi) if hi else ""
         r["freq"] = "毎日" if hi > DAILY_THRESHOLD else "週1"
         if not hi:
-            r["note"] = "取引履歴なし（希少）"
+            r["note"] = "取引履歴なし（希少）"           # 直近取引も相場も無い=希少
+        elif single and not souba and ask:
+            r["note"] = "PSA10成約なし（相場は出品あり）"  # 直近成約は無いが出品はある
 
 
 def cell(r, key, kind):

@@ -28,6 +28,30 @@ def _normalize_grade(grade: str) -> str:
     return g.upper()
 
 
+def fetch_psa10_sale(url: str) -> Tuple[Optional[int], str]:
+    """「直近取引価格」= PSA10グレードの直近成約価格のみを取得(厳格)。
+    sales-history から condition=PSA10 の直近成約だけを返す。
+    **PSA10成約が無ければ None(=空欄)** を返す(他グレード/中古最安/サイズ1個へフォールバックしない)。
+    ※fetch_recent_price はフォールバックするので直近取引価格には使わない。
+    戻り値: (price|None, note)
+    """
+    aid = extract_apparel_id(url)
+    if not aid:
+        return None, ""
+    try:
+        r = requests.get(f"https://snkrdunk.com/v1/apparels/{aid}/sales-history",
+                         params={"size_id": 0, "page": 1, "per_page": 20},
+                         headers=HEADERS, timeout=TIMEOUT)
+        if r.status_code != 200:
+            return None, ""
+        for e in r.json().get("history", []):
+            if _normalize_grade(e.get("condition", "")) == "PSA10" and e.get("price"):
+                return int(e["price"]), f"直近PSA10販売 {e.get('date','')}"
+        return None, "PSA10成約なし"
+    except (requests.RequestException, ValueError, KeyError):
+        return None, ""
+
+
 def fetch_psa10_ask(url: str) -> Optional[int]:
     """カードページの「相場」= PSA10グレードの現在の出品最安値を取得。
     スニダンのカードページ(HTML/SSR)に埋め込まれた状態別condition配列から

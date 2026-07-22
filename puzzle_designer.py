@@ -120,6 +120,9 @@ class DesignResult:
     # アド確率
     ad_count: int = 0
     ad_Y: float = 0.0
+    # 当たり率（現物カードが当たる割合＝発送限定＋選択制。ニブイチ=1/2の指標）
+    card_win_count: int = 0
+    win_rate: float = 0.0
     # 最低保証
     min_guarantee: int = 0
     checks: List[Check] = field(default_factory=list)
@@ -171,6 +174,10 @@ def compute(meta: DesignMeta, rows: List[PrizeRow]) -> DesignResult:
     if X > 0:
         r.ad_count = sum(p.count for p in active if p.display_pt_per >= X)
         r.ad_Y = (meta.total_tickets / r.ad_count) if r.ad_count else 0.0
+
+    # ---- 当たり率（現物カードが当たる割合＝発送限定＋選択制。ニブイチ=1/2）----
+    r.card_win_count = sum(p.count for p in active if p.method in (METHOD_SHIP, METHOD_CHOICE))
+    r.win_rate = (r.card_win_count / meta.total_tickets) if meta.total_tickets else 0.0
 
     # ---- 最低保証（最小の表示PT/枚）----
     pts = [p.display_pt_per for p in active if p.display_pt_per > 0]
