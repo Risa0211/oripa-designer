@@ -432,6 +432,22 @@ with st.sidebar:
 
 
 with tab_design:
+    st.subheader("① カテゴリー（ポケモン / ワンピース）")
+    cat_cols = st.columns([1, 3])
+    with cat_cols[0]:
+        design_category = st.radio(
+            "カテゴリー",
+            options=["ポケモン", "ワンピース"],
+            horizontal=True, label_visibility="collapsed",
+            key="design_category",
+            help="設計するカードの種類。候補カード（スニダン全カード）がポケモン/ワンピースで切り替わります",
+        )
+    with cat_cols[1]:
+        if design_category == "ワンピース":
+            st.info("🏴‍☠️ **ワンピース**: 候補はスニダンのワンピカードのみ（在庫スプシはポケモン専用のため『無在庫』でお使いください）")
+        else:
+            st.info("⚡ **ポケモン**: 在庫スプシ＋スニダンのポケカが候補になります")
+
     st.subheader("② 在庫モード")
     mode_cols = st.columns([1, 3])
     with mode_cols[0]:
@@ -450,14 +466,17 @@ with tab_design:
         else:
             st.info("📦 **在庫連動モード**: 残数量がある在庫から選択。保存で「予約中」になります。")
 
-    # 無在庫モードのときだけ、スニダン全カード（ポケカ＋ワンピ）を候補に含められる
+    # 無在庫モードのときだけ、スニダン全カード（選択カテゴリー）を候補に含められる
+    _cat_word = "ワンピ" if design_category == "ワンピース" else "ポケカ"
     include_snk_index = False
     if stock_mode == "no_stock":
         include_snk_index = st.checkbox(
-            "🃏 スニダン全カード（ポケカ＋ワンピ・シングル/BOX/パック）も候補に含める",
+            f"🃏 スニダン全カード（{_cat_word}・シングル/BOX/パック）も候補に含める",
             value=True, key="design_include_snk_index",
             help="在庫スプシに無いカードも、スニダン相場付きで景品候補に選べます（無在庫販売前提）",
         )
+    elif design_category == "ワンピース":
+        st.warning("⚠️ ワンピースの在庫はスプシにありません。上の在庫モードを『無在庫』にするとスニダンのワンピカードから選べます。")
 
     st.subheader("③ 販売パラメータ")
     c1, c2, c3, c4 = st.columns(4)
@@ -512,10 +531,13 @@ with tab_design:
 
         base_cols = st.columns([2, 3, 2])
         with base_cols[0]:
+            # key で管理する widget に value= を併用すると自動提案/プリセットの反映が
+            # 効かなくなる（Streamlit のアンチパターン）。初期値は setdefault で一度だけ設定。
+            if "base_markup_rate_input" not in st.session_state:
+                st.session_state["base_markup_rate_input"] = 50.0
             base_markup_rate = st.number_input(
                 "商品全体ベース上乗せ率（%）",
                 min_value=-1.0, max_value=200.0, step=5.0,
-                value=float(st.session_state.get("base_markup_rate_input", 50.0)),
                 key="base_markup_rate_input",
                 help="`-1`で価格帯別ルール、`50`で全等1.5倍、`0`で上乗せなし。等別の値が指定されればそちらが優先",
             )
@@ -596,12 +618,13 @@ with tab_design:
                 )
                 tier_target = 0
             # 上乗せ率（等別、空欄なら-1=価格帯ルール）
+            # key 管理の widget に value= を併用しない（自動提案/プリセットが効かなくなるため）。
             markup_key = f"markup_{tname}"
-            markup_default = st.session_state.get(markup_key, -1.0)
+            if markup_key not in st.session_state:
+                st.session_state[markup_key] = -1.0
             markup_rate = row[3].number_input(
                 f"markup_input_{tname}",
                 min_value=-1.0, max_value=200.0, step=1.0,
-                value=float(markup_default),
                 label_visibility="collapsed",
                 key=markup_key,
                 help="-1のままなら価格帯別ルールを使用。0以上を入れると等別の値を使う",
@@ -630,11 +653,15 @@ with tab_design:
     if "design_session" not in st.session_state:
         st.session_state.design_session = None
 
-    c_left, c_mid, c_right = st.columns([1, 1, 2])
+    st.markdown(
+        "👇 **まず下のボタンを押すと**、各等にカードが自動で割り当てられ、"
+        "その下に **カードの追加（➕）・削除（❌）・上乗せ率の編集** ができる画面が出ます。"
+    )
+    c_left, c_mid, c_right = st.columns([2, 1, 2])
     with c_left:
-        preview_btn = st.button("🔍 自動提案", type="primary", use_container_width=True)
+        preview_btn = st.button("🚀 カードを割り当てて編集する", type="primary", use_container_width=True)
     with c_mid:
-        reset_btn = st.button("♻ 再割当", use_container_width=True, disabled=st.session_state.design_session is None)
+        reset_btn = st.button("♻ 割当てし直す", use_container_width=True, disabled=st.session_state.design_session is None)
     with c_right:
         reserve_btn = st.button("💾 この内容で保存", type="secondary", use_container_width=True, disabled=st.session_state.design_session is None)
 
@@ -659,6 +686,12 @@ with tab_design:
                 design_inventory = None
                 if stock_mode == "no_stock" and include_snk_index:
                     design_inventory = _safe_load(load_all_inventory) + cached_snkrdunk_index()
+                # カテゴリーで候補を絞る（ワンピ=ワンピタブのみ / ポケモン=ワンピ以外）
+                if design_inventory is not None:
+                    if design_category == "ワンピース":
+                        design_inventory = [it for it in design_inventory if it.tab.startswith("ワンピ")]
+                    else:
+                        design_inventory = [it for it in design_inventory if not it.tab.startswith("ワンピ")]
                 result = design(spec, inventory=design_inventory, reference=selected_ref)
             # session に保存: tier_selections は (tab, row_idx) のリスト
             tier_selections = {
@@ -791,14 +824,14 @@ with tab_design:
                         cols[1].markdown(f"¥{it.price:,}")
                         dev_per = (it.price / tspec.target_price - 1) if tspec.target_price else 0
                         cols[2].markdown(f"{dev_per:+.0%}" if tspec.target_price else "-")
-                        if cols[3].button("❌", key=f"rm_{tname}_{i}"):
+                        if cols[3].button("❌ 外す", key=f"rm_{tname}_{i}"):
                             st.session_state.design_session["tier_selections"][tname].pop(i)
                             st.rerun()
                 else:
                     st.info("まだカードが選ばれていません。下の候補から追加してください。")
 
                 # --- 代替候補 ---
-                st.markdown("**📋 候補カード**")
+                st.markdown("**📋 候補カードから選ぶ**（➕で追加・上の❌で外す＝入れ替え）")
                 # 目標に近い順でソート
                 target = tspec.target_price
                 # 無在庫モードは全カード、在庫モードは残数量ありのみ
@@ -860,12 +893,13 @@ with tab_design:
 
                 for j, it in enumerate(filtered_candidates[:max_show]):
                     cols = st.columns([4, 2, 2, 1, 1])
-                    cols[0].markdown(f"{it.name} `{it.series or ''}`")
+                    _nm = f"[{it.name}]({it.snkrdunk_url})" if getattr(it, "snkrdunk_url", "") else it.name
+                    cols[0].markdown(f"{_nm} `{it.series or ''}`")
                     cols[1].markdown(f"¥{it.price:,}")
                     dev_per = (it.price / target - 1) if target else 0
                     cols[2].markdown(f"{dev_per:+.0%}" if target else "-")
                     cols[3].markdown(f"[{it.tab}]")
-                    if cols[4].button("➕", key=f"add_{tname}_{j}_{it.row_idx}"):
+                    if cols[4].button("➕ 追加", key=f"add_{tname}_{j}_{it.row_idx}"):
                         st.session_state.design_session["tier_selections"][tname].append((it.tab, it.row_idx))
                         st.rerun()
 
