@@ -56,16 +56,47 @@ def wp_creds():
     return u, p
 
 
+PRIZE_MIN_VALUE = 1000   # 還元pt(≒価値)がこれ以下の管理画面カードは事前ロードしない（賞にならない＝要追加で都度検索は可能）
+
+
+@st.cache_data(show_spinner=False)
+def load_prize_values():
+    """card_db_export の還元pt(≒カード価値)。id→pt。低額カードを事前ロードから外す判定に使う。"""
+    vals = {}
+    if ADMIN_CSV.exists():
+        for r in B.read_csv_dict(str(ADMIN_CSV)):
+            try:
+                vals[str(r.get("id", ""))] = int((r.get("redemption_points") or "0").replace(",", ""))
+            except Exception:
+                pass
+    return vals
+
+
+def _prize_worthy(row, values, min_value=PRIZE_MIN_VALUE):
+    """管理画面由来の行を価値でふるう。DOPAは常に残す。値が引けない行も安全側で残す。
+    画像URL末尾の a{id}（例 089-063-ex-a25989.webp → id 25989）で card_db_export の還元ptを引く。"""
+    import re as _re
+    if (B.get(row, "source") or "").startswith("DOPA"):
+        return True
+    m = _re.search(r"a(\d+)\.\w+$", B.get(row, "画像URL", "image_url", "image") or "")
+    if not m:
+        return True
+    v = values.get(m.group(1))
+    return True if v is None else v > min_value
+
+
 @st.cache_data(show_spinner=False)
 def load_master():
-    """①照合用のカード原簿（DOPA綺麗 ＋ DOPAに無い管理画面カード）。
-    軽量化のため、DOPAに綺麗版があるカードの管理画面(粗い)重複はツールに載せない
-    （保管庫の画像自体は消さない）。DOPAに無いカードの管理画面画像は残す＝足りなくならない。
-    その後、同一カード（型番＋名前）の残り重複もDOPA優先で1件に集約。"""
+    """①照合用のカード原簿（DOPA綺麗 ＋ DOPAに無い『賞になりうる』管理画面カード）。
+    軽量化: (1)DOPAに綺麗版があるカードの管理画面(粗い)重複は載せない (2)還元pt≤¥1,000の
+    低額カード（オリパ賞にならない）は事前ロードしない（要追加で都度検索は可能＝カバレッジ維持）。
+    保管庫の画像自体は一切消さない。最後に同一カード（型番＋名前）はDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
     for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
         if extra.exists():
             rows = rows + B.read_csv_dict(str(extra))
+    vals = load_prize_values()
+    rows = [r for r in rows if _prize_worthy(r, vals)]
     return B.dedupe_master_rows(B.drop_admin_dupes_of_clean(rows))
 
 
@@ -94,13 +125,15 @@ def load_palette():
 
 @st.cache_data(show_spinner=False)
 def load_store():
-    """保管庫マスター（DOPA綺麗 ＋ DOPAに無い管理画面カード）。カード名/型番/URL/媒体id付き。
-    DOPAに綺麗版があるカードの管理画面(粗い)重複はツールに載せない＝軽量化（保管庫は消さない）。
+    """保管庫マスター（DOPA綺麗 ＋ DOPAに無い『賞になりうる』管理画面カード）。カード名/型番/URL/媒体id付き。
+    DOPA重複＋還元pt≤¥1,000の低額カードはツールに載せない＝軽量化（保管庫の画像は消さない）。
     その後、同一カード（型番＋名前）の残り重複もDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
     for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
         if extra.exists():
             rows = rows + B.read_csv_dict(str(extra))
+    vals = load_prize_values()
+    rows = [r for r in rows if _prize_worthy(r, vals)]
     return B.dedupe_master_rows(B.drop_admin_dupes_of_clean(rows))
 
 
