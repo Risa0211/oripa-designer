@@ -74,7 +74,7 @@ def find_markup_rate(price: int, bands: List[MarkupBand] = None) -> float:
 
 
 def coin_price_for(market_price: int, bands: List[MarkupBand] = None) -> int:
-    """相場（市場価値）にコイン上乗せ率を適用したコイン価格を返す"""
+    """相場（市場価値）にpt上乗せ率を適用したpt価格を返す"""
     rate = find_markup_rate(market_price, bands)
     return int(round(market_price * (1 + rate / 100)))
 

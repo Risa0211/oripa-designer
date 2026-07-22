@@ -103,7 +103,7 @@ def check_economics(result) -> List[Warning]:
         if result.customer_return_rate > 1.0:
             ws.append(Warning(
                 SEV_CRITICAL, CAT_ECONOMICS, "顧客還元率が100%超",
-                detail=f"顧客還元率 {result.customer_return_rate:.0%} - コイン額面が売上を超過",
+                detail=f"顧客還元率 {result.customer_return_rate:.0%} - pt額面が売上を超過",
                 suggestion="原価or当たり数を減らす、または1回価格を上げる",
             ))
         elif result.customer_return_rate < 0.50:

@@ -31,7 +31,7 @@ class PremiumDesignSpec:
     reference_no: str          # 参考競合No.（任意）
     reference_title: str
     total_tickets: int         # 総口数
-    price_per_spin: int        # 1回コイン消費（pt）
+    price_per_spin: int        # 1回の消費pt
     target_profit_rate: float  # 粗利率目標
     stock_mode: str            # "linked" or "no_stock"
 
@@ -72,7 +72,7 @@ class PremiumDesignResult:
     total_revenue: int           # 売上（pt × 総口数）
     total_card_market: int       # カード相場合計
     total_card_cost: int         # カード仕入れ合計
-    total_coin_value: int        # コイン額面合計（顧客視点）
+    total_coin_value: int        # pt額面合計（顧客視点）
     total_point_value: int       # ポイント還元（額面）
     total_point_real_cost: int   # ポイント還元（実コスト換算）
 

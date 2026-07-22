@@ -28,7 +28,7 @@ class DesignSpec:
     total_tickets: int
     price_per_spin: int
     target_profit_rate: float  # 0.30 = 30%（仕入れベース）
-    target_return_rate: float  # 顧客還元率の目標（コインベース）= 1 - target_profit_rate ※簡易
+    target_return_rate: float  # 顧客還元率の目標（ptベース）= 1 - target_profit_rate ※簡易
     tiers: List[TierSpec]
     note: str = ""
     stock_mode: str = "linked"  # "linked" (在庫連動) or "no_stock" (無在庫)
@@ -75,10 +75,10 @@ class DesignResult:
     total_revenue: int             # 売上（円）= 総口数×1回価格
     total_cost: int                # 仕入れベース原価合計（粗利計算用）
     total_market: int              # 相場ベース合計（参考）
-    total_coin_value: int          # コイン額面合計（顧客還元率の分子）
+    total_coin_value: int          # pt額面合計（顧客還元率の分子）
     actual_profit_rate: float      # 実粗利率 = (売上 - 仕入れ合計) / 売上
     real_return_rate: float        # 実還元率 = 仕入れ合計 / 売上（運営の本当の還元率）
-    customer_return_rate: float    # 顧客還元率 = コイン額面合計 / 売上（顧客が見る還元率）
+    customer_return_rate: float    # 顧客還元率 = pt額面合計 / 売上（顧客が見る還元率）
     created_at: str
     warnings: list = field(default_factory=list)
     all_inventory: list = field(default_factory=list)

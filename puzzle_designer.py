@@ -2,7 +2,7 @@
 
 代表のスプシ「ガチャ設計テンプレート」2種を1:1で再現する純粋ロジック。
 - テンプレ①(マスター版): 単価×総口数=売上 / 賞行(本数・実価値・上乗せ倍率)→
-  出現率・表示PT・コイン還元率・実利益率・総上乗せ率
+  出現率・表示PT・pt還元率・実利益率・総上乗せ率
 - テンプレ②(v3.0 自動判定): 実効pt建てEV(末広がり)・S1/S2/S3損益・最大損失・
   アド確率(1/Y)・最低保証・口数一致・仮名称・購入上限 → 総合判定
 
@@ -93,7 +93,7 @@ class DesignResult:
     revenue: int = 0
     sum_display_pt: int = 0
     sum_real_value: int = 0
-    coin_return: float = 0.0       # コイン還元率(総還元率)=表示PT合計/売上
+    coin_return: float = 0.0       # pt還元率(総還元率)=表示PT合計/売上
     real_profit_rate: float = 0.0  # 実利益率=1-実価値合計/売上（テンプレ①ヘッダ）
     total_markup: float = 0.0      # 総上乗せ率=表示PT合計/実価値合計
     count_sum: int = 0
@@ -301,7 +301,7 @@ if __name__ == "__main__":
     ]
     r = compute(meta, rows)
     print(f"売上={r.revenue:,}（正=612,480）")
-    print(f"コイン還元率={r.coin_return:.2%}（正=96.03%）")
+    print(f"pt還元率={r.coin_return:.2%}（正=96.03%）")
     print(f"実利益率={r.real_profit_rate:.2%}（正=32.32%）")
     print(f"総上乗せ率={r.total_markup:.2%}（正=141.89%）")
     print(f"表示PT合計={r.sum_display_pt:,}（正=588,180）実価値合計={r.sum_real_value:,}（正=414,540）")

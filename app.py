@@ -418,7 +418,7 @@ with tab_design:
 
     st.subheader("🎯 自分で設計（パズル型・設計シート準拠）")
     st.caption(
-        "単価×総口数＝売上。目玉から積んで、コイン還元率・実利益率・総上乗せ率・アド確率(1/Y)・"
+        "単価×総口数＝売上。目玉から積んで、pt還元率・実利益率・総上乗せ率・アド確率(1/Y)・"
         "末広がり判定がライブで出ます。スプシの『ガチャ設計シート』と同じ計算＋自動判定です。"
     )
 
@@ -591,7 +591,7 @@ with tab_design:
     st.markdown("### ④ 計算結果（設計シートのヘッダと同じ）")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("総売上(円)", f"¥{res.revenue:,}")
-    m2.metric("◆ コイン還元率", f"{res.coin_return:.2%}", help="表示PT合計 ÷ 売上（バナーの◯%）")
+    m2.metric("◆ pt還元率", f"{res.coin_return:.2%}", help="表示PT合計 ÷ 売上（バナーの◯%）")
     m3.metric("◆ 実利益率", f"{res.real_profit_rate:.2%}", help="1 − 実価値合計 ÷ 売上")
     m4.metric("◆ 総上乗せ率", f"{res.total_markup:.2%}", help="表示PT合計 ÷ 実価値合計")
     m5, m6, m7, m8 = st.columns(4)
@@ -2691,9 +2691,9 @@ with tab_torecacenter:
         tc_search = st.text_input("🔍 タイトル / No.", key="tc_search",
                                    placeholder="例: ピカチュウ、3532、JACKPONCHO")
     with f_cols[1]:
-        tc_min_price = st.number_input("単価下限(コイン)", min_value=0, value=0, step=100, key="tc_min_price")
+        tc_min_price = st.number_input("単価下限(pt)", min_value=0, value=0, step=100, key="tc_min_price")
     with f_cols[2]:
-        tc_max_price = st.number_input("単価上限(コイン)", min_value=0, value=0, step=100,
+        tc_max_price = st.number_input("単価上限(pt)", min_value=0, value=0, step=100,
                                         key="tc_max_price", help="0=制限なし")
     with f_cols[3]:
         tc_limit = st.number_input("表示上限", min_value=20, max_value=2000, value=100, step=50, key="tc_limit")
@@ -3200,7 +3200,7 @@ with tab_premium:
     with pc2:
         pg_total = st.number_input("総口数", min_value=1, value=8000, step=100, key="pg_total")
     with pc3:
-        pg_price = st.number_input("1回コイン消費（pt）", min_value=1, value=2800, step=100, key="pg_price")
+        pg_price = st.number_input("1回の消費pt", min_value=1, value=2800, step=100, key="pg_price")
     with pc4:
         pg_profit = st.number_input("目標粗利率（%）", min_value=0.0, max_value=100.0, value=30.0, step=1.0, key="pg_profit")
 
@@ -3471,26 +3471,26 @@ with tab_premium:
 
         rc4, rc5, rc6 = st.columns(3)
         rc4.metric("顧客還元率", f"{result_pg.customer_return_rate:.1%}",
-                   help="顧客が見る還元率（コイン額面ベース、ポイント還元含む）")
+                   help="顧客が見る還元率（pt額面ベース、ポイント還元含む）")
         rc5.metric("実還元率", f"{result_pg.real_return_rate:.1%}",
                    help="運営の本当の還元率（カード仕入れ + ポイント実コスト）")
-        rc6.metric("コイン上乗せ差分",
+        rc6.metric("pt上乗せ差分",
                    f"{(result_pg.customer_return_rate - result_pg.real_return_rate)*100:+.1f}pt")
 
         # --- 最悪ケース試算（当選者が全員ポイント還元＋外れptも全額面で払戻す想定）---
         st.markdown("###### 🛡️ 最悪ケース試算（全員ポイント還元・外れptも額面満額で払戻す想定）")
-        pg_worst_cost = result_pg.total_coin_value  # コイン額面(カード) + ポイント額面(満額)
+        pg_worst_cost = result_pg.total_coin_value  # pt額面(カード) + ポイント額面(満額)
         pg_worst_profit = result_pg.total_revenue - pg_worst_cost
         pg_worst_rate = (pg_worst_profit / result_pg.total_revenue) if result_pg.total_revenue else 0
         pw1, pw2, pw3 = st.columns(3)
         pw1.metric(
             "弊社コスト（最悪ケース）", f"¥{pg_worst_cost:,}",
-            help="カードのコイン額面 + 外れポイント額面（実コスト率を掛けない満額）。全員がpt還元・満額払戻しした場合の上限コスト",
+            help="カードのpt額面 + 外れポイント額面（実コスト率を掛けない満額）。全員がpt還元・満額払戻しした場合の上限コスト",
         )
         pw2.metric(
             "最悪ケース粗利", f"¥{pg_worst_profit:,}", delta=f"{pg_worst_rate:.1%}",
             delta_color="normal" if pg_worst_profit >= 0 else "inverse",
-            help="売上 − コイン額面合計。下振れの底の利益",
+            help="売上 − pt額面合計。下振れの底の利益",
         )
         pw3.metric(
             "最悪ケース還元率", f"{result_pg.customer_return_rate:.1%}",
@@ -3508,7 +3508,7 @@ with tab_premium:
 | カード仕入れ合計 | ¥{result_pg.total_card_cost:,} |
 | ポイント還元（額面） | ¥{result_pg.total_point_value:,} |
 | ポイント還元（実コスト × {live_pg_spec.point_real_cost_rate:.0%}） | ¥{result_pg.total_point_real_cost:,} |
-| コイン額面合計（顧客視点） | ¥{result_pg.total_coin_value:,} |
+| pt額面合計（顧客視点） | ¥{result_pg.total_coin_value:,} |
 | **実コスト合計** | ¥{result_pg.total_card_cost + result_pg.total_point_real_cost:,} |
 | **粗利** | ¥{result_pg.gross_profit:,} |
 """)
@@ -3750,11 +3750,11 @@ with tab_suggest:
 
 # ---------- 上乗せ率設定タブ ----------
 with tab_markup:
-    st.subheader("⚙️ 上乗せ率設定（コインの上乗せ）")
+    st.subheader("⚙️ 上乗せ率設定（ptの上乗せ）")
     st.markdown("""
-顧客にはコインで価格を表示します。**カード相場 × (1 + 上乗せ率)** がコイン額面（顧客が見る金額）になります。
+顧客にはptで価格を表示します。**カード相場 × (1 + 上乗せ率)** がpt額面（顧客が見る金額）になります。
 
-例: 相場 ¥100,000 のカードに 20% 上乗せ → コイン額面 120,000コイン（=120,000円換算）として表示
+例: 相場 ¥100,000 のカードに 20% 上乗せ → pt額面 120,000pt（=120,000円換算）として表示
 """)
     from markup import load_markup_bands, clear_cache as clear_markup_cache
     bands = load_markup_bands(force=True)
@@ -3794,7 +3794,7 @@ with tab_markup:
     from markup import find_markup_rate, coin_price_for
     rate = find_markup_rate(int(test_price), bands)
     coin = coin_price_for(int(test_price), bands)
-    st.info(f"相場 ¥{int(test_price):,} → 上乗せ {rate}% → コイン額面 **{coin:,} コイン**（=¥{coin:,}換算）")
+    st.info(f"相場 ¥{int(test_price):,} → 上乗せ {rate}% → pt額面 **{coin:,} pt**（=¥{coin:,}換算）")
 
     st.markdown("---")
     st.subheader("📋 上乗せ率プリセット")
