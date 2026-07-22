@@ -674,19 +674,46 @@ with tab_design:
 
     # ---------- ⑥ 書き出し ----------
     st.markdown("### ④ 書き出し")
-    import csv as _csv
-    import io as _io
-    buf = _io.StringIO()
-    w = _csv.writer(buf)
-    w.writerow(IMPORT_HEADERS)
-    for r_ in to_import_rows(rows):
-        w.writerow(r_)
-    st.download_button(
-        "📥 管理画面取込CSVを書き出す", data=buf.getvalue().encode("utf-8-sig"),
-        file_name=f"{(pz_title or 'gacha').replace('/', '_')}_import.csv", mime="text/csv",
-        help="Price=実価値/枚・Redemption Points=表示PT/枚・Inventory=口数。画像URLは登録時に追加",
+    _fname = (pz_title or "gacha").replace("/", "_").replace(" ", "_")
+    _fmt = st.radio(
+        "フォーマットを選ぶ",
+        ["提出用 設計シート①（マスター版・簡易）",
+         "提出用 設計シート②（v3.0・自動判定付き）",
+         "管理画面 取込CSV"],
+        key="pz_export_fmt", horizontal=False,
+        help="①②は代表提出用のガチャ設計シート（Excel）。②は自動判定・公開前チェック付き。開くと自動計算されます",
     )
-    st.caption("💡 リライト（トレセン以外のサイト）: ②で似たカードを検索して積むか、③のテーブルに賞・カード・口数を直接手入力してください。URL登録は不要です。")
+    if _fmt.startswith("提出用 設計シート①"):
+        from submit_export import fill_master
+        st.download_button(
+            "📥 設計シート①（マスター版）をダウンロード", data=fill_master(meta, rows),
+            file_name=f"【ガチャ設計】{_fname}_マスター版.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="賞ランク/カード名/実価値/上乗せ倍率/本数を流し込み。開くと出現率・還元率が自動計算",
+        )
+    elif _fmt.startswith("提出用 設計シート②"):
+        from submit_export import fill_v3
+        st.download_button(
+            "📥 設計シート②（v3.0・判定付き）をダウンロード", data=fill_v3(meta, rows),
+            file_name=f"【ガチャ設計】{_fname}_v3.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="設計入力シートに流し込み。自動判定・公開前チェックシートが開いた時に自動計算されます",
+        )
+        st.caption("⚠️ 賞品は先頭21行まで反映（v3.0テンプレの上限）。それ以上はマスター版を使ってください。")
+    else:
+        import csv as _csv
+        import io as _io
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(IMPORT_HEADERS)
+        for r_ in to_import_rows(rows):
+            w.writerow(r_)
+        st.download_button(
+            "📥 管理画面 取込CSVをダウンロード", data=buf.getvalue().encode("utf-8-sig"),
+            file_name=f"{_fname}_import.csv", mime="text/csv",
+            help="Price=実価値/枚・Redemption Points=表示PT/枚・Inventory=口数。画像URLは登録時に追加",
+        )
+    st.caption("💡 提出用①②はExcel/スプレッドシートで開くと数式が自動計算されます（②は自動判定でOK公開可まで確認可）。")
 
 
 # ---------- 景品設計タブ（競合コピー型） ----------
