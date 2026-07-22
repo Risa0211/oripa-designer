@@ -381,25 +381,12 @@ with tab_design:
     total_tickets = b3.number_input("総口数", min_value=1, value=5000, step=100, key="pz_total")
     revenue = unit_price * total_tickets
     b4.metric("総売上(円)", f"¥{revenue:,}")
-    # 自分で決める項目（購入上限・目標還元率・アド基準・課金額）
-    b5, b6, b7, b8 = st.columns(4)
+    # 自分で決める項目（購入上限・目標還元率・課金額）
+    b5, b6, b7 = st.columns(3)
     limit_day = b5.text_input("購入上限 口/日", value="300", key="pz_ld")
     limit_total = b6.text_input("購入上限 口/累計", value="1000", key="pz_lt")
-    target_return = b7.number_input("目標還元率(%)", min_value=0.0, max_value=300.0, value=117.0, step=1.0, key="pz_tr",
-                                    help="狙う総還元率。下の『残りポイント配分ガイド』の基準になります（例:117%）")
-    # 「アド=お得な当たり」の下限を単価(1回いくら)の倍率で決める＝直感的
-    _AD_MULT = {"元が取れる(単価以上)": 1, "単価の3倍以上": 3, "単価の5倍以上": 5,
-                "単価の10倍以上": 10, "金額(pt)で直接指定": -1}
-    ad_choice = b8.selectbox("アドの基準（お得な当たりの下限）", list(_AD_MULT.keys()), index=3,
-                             key="pz_adsel",
-                             help="『これ以上当たったらお得』とみなす金額。アド確率＝この額以上が当たる確率(1/Y)。"
-                                  "単価の倍率で指定＝直感的。ニブイチ等の当たり率は別で自動表示")
-    _admul = _AD_MULT[ad_choice]
-    if _admul < 0:
-        ad_threshold = st.number_input("アド基準額（この表示pt以上）", min_value=0, value=int(unit_price) * 10, step=500, key="pz_adx")
-    else:
-        ad_threshold = int(unit_price) * _admul
-        b8.caption(f"＝ {ad_threshold:,}pt 以上を『アド』とみなす")
+    target_return = b7.number_input("目標還元率(%)（顧客・表示pt基準）", min_value=0.0, max_value=300.0, value=117.0, step=1.0, key="pz_tr",
+                                    help="顧客が見る還元率＝表示PT合計÷売上。運営の取り分は別（実利益率で確認）。残りpt配分ガイドの基準にもなります")
     # 課金ガチャ用: 引く権利(課金額)。★売上には含めない(別勘定)
     bc1, bc2, bc3 = st.columns(3)
     charge_amount = bc1.number_input("引く権利(課金額・円/回)", min_value=0, value=0, step=1000, key="pz_charge",
@@ -418,6 +405,34 @@ with tab_design:
                                    help="クーポン/紹介pt等ガチャ外で配るpt。末広がり判定に使用。既定0.02")
         progress = d3.number_input("売れ止まり想定(進捗率)", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key="pz_pg",
                                    help="途中終了リスク判定用の想定売上進捗。既定0.3")
+
+    # ---------- 🎯 確率ゴール（任意・顧客の見え方=表示pt基準）----------
+    # 設定しなくてもOK（賞品テーブルの出現率を見ながら調整できる）。1/N等は全て表示pt基準。
+    GOAL_NONE = "なし（カードを選んで出現率を見て調整）"
+    GOAL_ADO = "アド確定（毎回、単価以上の表示ptが戻る）"
+    GOAL_HIGH = "高額を ◯分の1 で出す（表示pt◯以上）"
+    GOAL_NIBU = "カードが当たる確率 ◯分の1（ニブイチ等）"
+    goal_type = GOAL_NONE
+    goal_x = 0          # 高額ゴールの表示ptしきい値
+    goal_n = 0          # 目標 1/N
+    ad_threshold = 0    # 高額ゴール時のみ engine に渡す
+    with st.expander("🎯 確率ゴール（任意・設定しなくてもOK／数字は顧客の見え方=表示pt基準）"):
+        goal_type = st.radio("種類", [GOAL_NONE, GOAL_ADO, GOAL_HIGH, GOAL_NIBU],
+                             key="pz_goaltype", label_visibility="collapsed")
+        if goal_type == GOAL_ADO:
+            st.caption("毎回の最低保証（＝一番低い表示pt）が単価以上なら『元が取れる』確定です。")
+            if st.button("最低保証＝単価にそろえる（pt限定/floor行の表示ptを単価に）", key="pz_goal_floor"):
+                for i in range(len(st.session_state.pz_df)):
+                    if st.session_state.pz_df.iat[i, PZ_COLS.index("受取方法")] == METHOD_PT:
+                        st.session_state.pz_df.iat[i, PZ_COLS.index("表示PT直接(任意)")] = int(unit_price)
+                st.rerun()
+        elif goal_type == GOAL_HIGH:
+            gc1, gc2 = st.columns(2)
+            goal_x = gc1.number_input("表示ptがこの額以上を『高額』とみなす", min_value=0, value=int(unit_price) * 10, step=500, key="pz_goalx")
+            goal_n = gc2.number_input("目標: ◯分の1 で出す（Nを入力）", min_value=1, value=319, step=1, key="pz_goaln")
+            ad_threshold = int(goal_x)
+        elif goal_type == GOAL_NIBU:
+            goal_n = st.number_input("目標: カードが当たる確率 ◯分の1（Nを入力・ニブイチ=2）", min_value=1, value=2, step=1, key="pz_goaln2")
 
     # ---------- 計算結果パネル（基本情報の直下・下で賞品を組むとライブ更新）----------
     st.markdown("### 📊 計算結果・自動判定（下で賞品を組むとリアルタイム更新）")
@@ -539,16 +554,37 @@ with tab_design:
     )
     res = compute(meta, rows)
 
+    # ---------- 確率ゴールの現在値・達成判定（表示pt基準）----------
+    goal_label = goal_value = None
+    goal_ok = None
+    if goal_type == GOAL_ADO:
+        goal_ok = res.min_guarantee > 0 and res.min_guarantee >= unit_price
+        goal_label = "🎯 アド確定（毎回元が取れる）"
+        goal_value = f"最低保証 {res.min_guarantee:,}pt {'≥' if goal_ok else '<'} 単価 {unit_price:,}pt"
+    elif goal_type == GOAL_HIGH:
+        _y = res.ad_Y
+        goal_ok = bool(_y) and _y <= goal_n
+        goal_label = f"🎯 高額（表示pt≧{goal_x:,}）"
+        goal_value = (f"現在 1/{_y:.0f} ／ 目標 1/{goal_n:,}" if _y else f"現在 該当なし ／ 目標 1/{goal_n:,}")
+    elif goal_type == GOAL_NIBU:
+        _y = (total_tickets / res.card_win_count) if res.card_win_count else 0
+        goal_ok = bool(_y) and _y <= goal_n
+        goal_label = "🎯 カードが当たる確率"
+        goal_value = (f"現在 1/{_y:.1f} ／ 目標 1/{goal_n:,}" if _y else f"現在 該当なし ／ 目標 1/{goal_n:,}")
+
     # ---------- サイドバー: 設計サマリー（スクロールしても常時見える）----------
     with st.sidebar:
         _vmark = {"OK": "🟢 OK 公開可", "注意": "🟡 注意（公開可）", "NG": "🔴 NG 公開不可"}[res.verdict]
         st.markdown("### 📊 設計サマリー")
         st.caption(f"**{pz_title or '（無題）'}**　単価{unit_price:,}pt×{total_tickets:,}口")
         st.markdown(f"**{_vmark}**")
-        st.metric("pt還元率", f"{res.coin_return:.1%}")
-        st.metric("実利益率", f"{res.real_profit_rate:.1%}")
+        st.metric("顧客還元率(表示pt)", f"{res.coin_return:.1%}")
+        st.metric("実利益率(運営)", f"{res.real_profit_rate:.1%}")
         st.metric("当たり率(現物)", f"1/{total_tickets/res.card_win_count:.1f}" if res.card_win_count else "-")
-        st.metric(f"アド確率(≧{ad_threshold:,}pt)", f"1/{res.ad_Y:.0f}" if res.ad_Y else "-")
+        if goal_label:
+            _gm = "🟢" if goal_ok else "🔴"
+            st.markdown(f"{_gm} **{goal_label}**")
+            st.caption(goal_value)
         st.metric("S2 全員pt(最悪)", f"¥{res.s2:,}")
         st.metric("最低保証(pt)", f"{res.min_guarantee:,}")
         _cnt_ok = "✅" if res.count_sum == total_tickets else "⚠️"
@@ -578,16 +614,22 @@ with tab_design:
         st.markdown("#### 計算結果（設計シートのヘッダと同じ）")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("総売上(円)", f"¥{res.revenue:,}")
-        m2.metric("◆ pt還元率", f"{res.coin_return:.2%}", help="表示PT合計 ÷ 売上（バナーの◯%）")
-        m3.metric("◆ 実利益率", f"{res.real_profit_rate:.2%}", help="1 − 実価値合計 ÷ 売上")
-        m4.metric("◆ 総上乗せ率", f"{res.total_markup:.2%}", help="表示PT合計 ÷ 実価値合計")
+        m2.metric("◆ 顧客還元率(表示pt)", f"{res.coin_return:.2%}", help="表示PT合計 ÷ 売上＝顧客が見る還元率（バナーの◯%）。運営の取り分ではない")
+        m3.metric("◆ 実利益率(運営)", f"{res.real_profit_rate:.2%}", help="1 − 実価値合計 ÷ 売上＝運営目線の利益率（実価値=相場ベース）")
+        m4.metric("◆ 総上乗せ率", f"{res.total_markup:.2%}", help="表示PT合計 ÷ 実価値合計＝どれだけ盛っているか")
         m5, m6, m7, m8 = st.columns(4)
         m5.metric("当たり率(現物カード)", (f"1/{total_tickets/res.card_win_count:.1f}" if res.card_win_count else "-"),
                   help="現物カードが当たる割合(発送限定+選択制)÷総口数。1/2=ニブイチ。ハズレはpt限定")
-        m6.metric(f"アド確率(≧{ad_threshold:,}pt)", (f"1/{res.ad_Y:.0f}" if res.ad_Y else "-"),
-                  help="表示PTがこの額以上の口数から算出。例:1BOX相当¥5,500以上が1/319")
+        if goal_label:
+            m6.metric(goal_label.replace("🎯 ", ""), goal_value.split("／")[0].strip() if "／" in goal_value else goal_value,
+                      delta=("達成" if goal_ok else "未達"), delta_color=("normal" if goal_ok else "inverse"),
+                      help="🎯確率ゴール（表示pt基準）。詳細はサイドバー/下記")
+        else:
+            m6.metric("確率ゴール", "未設定", help="基本情報の『🎯確率ゴール』で任意設定。出現率は下の表で確認")
         m7.metric("最低保証(pt)", f"{res.min_guarantee:,}")
         m8.metric("表示PT合計", f"¥{res.sum_display_pt:,}")
+        if goal_label:
+            (st.success if goal_ok else st.warning)(f"{goal_label}：{goal_value} → {'🟢 達成' if goal_ok else '🔴 未達（枚数/構成を調整）'}")
 
         # ---------- 🧩 残りポイント配分ガイド（目玉を積んだ後、下位賞を残りptで埋める）----------
         _target_pt = int(round(res.revenue * target_return / 100))
