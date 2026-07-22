@@ -58,12 +58,13 @@ def wp_creds():
 
 @st.cache_data(show_spinner=False)
 def load_master():
-    """①照合用のカード原簿（DOPAポケ＋DOPAワンピ＋管理画面移行分）。型番/名前で賞品を引く。
+    """①照合用のカード原簿（サイトから引っ張った綺麗な画像＝DOPAポケ＋DOPAワンピのみ）。
+    元々サイトにあった管理画面の画像(master_db_admin)は重く粗いので照合には載せない。
+    管理画面のカードは「要追加」で card_db_export から必要な分だけ都度検索・移行できる。
     同一カード（型番＋名前）の二重登録はDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
-    for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
-        if extra.exists():
-            rows = rows + B.read_csv_dict(str(extra))
+    if ONEPIECE_CSV.exists():
+        rows = rows + B.read_csv_dict(str(ONEPIECE_CSV))
     return B.dedupe_master_rows(rows)
 
 
@@ -92,12 +93,12 @@ def load_palette():
 
 @st.cache_data(show_spinner=False)
 def load_store():
-    """保管庫マスター（DOPAポケ + DOPAワンピ + 管理画面移行分）。カード名/型番/URL/媒体id付き。
-    同一カード（型番＋名前）の二重登録はDOPA優先で1件に集約。"""
+    """保管庫マスター（サイトから引っ張った綺麗な画像＝DOPAポケ + DOPAワンピのみ）。
+    元々サイトにあった管理画面移行分(master_db_admin)は保管庫から削除したので載せない。
+    カード名/型番/URL/媒体id付き。同一カード（型番＋名前）はDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
-    for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
-        if extra.exists():
-            rows = rows + B.read_csv_dict(str(extra))
+    if ONEPIECE_CSV.exists():
+        rows = rows + B.read_csv_dict(str(ONEPIECE_CSV))
     return B.dedupe_master_rows(rows)
 
 
@@ -486,25 +487,53 @@ def render_make(uploaded, category="交換専用"):
                     manual.setdefault(row, {})["演出キー"] = pal_opts[pal_labels.index(sel) - 1][1]
             st.divider()
 
-    # ---- 確定プレビュー & ダウンロード ----
+    # ---- 確定プレビュー（その場で編集・削除できる）& ダウンロード ----
     st.subheader("確定してCSVに出力される賞")
     if out_rows:
-        view = [{"ランク": r[10], "カード名": r[1], "カテゴリ(G)": r[6],
-                 "還元pt": r[4], "在庫": r[7], "画像": r[5]}
-                for r in out_rows]
-        st.dataframe(view, use_container_width=True, hide_index=True,
-                     column_config={"画像": st.column_config.ImageColumn("画像", width="small")})
+        st.caption("表の値を直接編集できます。『削除』にチェックした賞はCSVから外れます"
+                   "（カード名・カテゴリ・還元pt・在庫はダブルクリックで書き換え）。")
+        edit_src = [{"_i": i, "削除": False, "画像": r[5],
+                     "ランク": r[10], "カード名": r[1], "カテゴリ(G)": r[6],
+                     "還元pt": r[4], "在庫": r[7]}
+                    for i, r in enumerate(out_rows)]
+        edited = st.data_editor(
+            edit_src, use_container_width=True, hide_index=True, key="confirm_editor",
+            column_config={
+                "_i": None,
+                "削除": st.column_config.CheckboxColumn("削除", width="small"),
+                "画像": st.column_config.ImageColumn("画像", width="small"),
+                "ランク": st.column_config.TextColumn("ランク", disabled=True),
+                "カード名": st.column_config.TextColumn("カード名"),
+                "カテゴリ(G)": st.column_config.TextColumn("カテゴリ(G)"),
+                "還元pt": st.column_config.TextColumn("還元pt"),
+                "在庫": st.column_config.TextColumn("在庫"),
+            })
+        # 編集・削除を out_rows に反映して最終行を作る
+        final_rows = []
+        for e in edited:
+            if e.get("削除"):
+                continue
+            r = list(out_rows[int(e["_i"])])
+            r[1] = str(e.get("カード名", r[1]) or "")
+            r[6] = str(e.get("カテゴリ(G)", r[6]) or "")
+            r[4] = str(e.get("還元pt", r[4]) or "")
+            r[7] = str(e.get("在庫", r[7]) or "")
+            final_rows.append(r)
+        dropped = len(out_rows) - len(final_rows)
+        if dropped:
+            st.caption(f"（{dropped}件を削除中。CSVには {len(final_rows)}件 が出力されます）")
     else:
+        final_rows = []
         st.info("まだ確定した賞がありません。上で画像を選ぶ／指定すると増えます。")
 
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(B.DEFAULT_HEADERS)
-    w.writerows(out_rows)
+    w.writerows(final_rows)
     csv_bytes = ("﻿" + buf.getvalue()).encode("utf-8")
-    st.download_button(f"管理画面インポートCSVをダウンロード（{len(out_rows)}件）",
+    st.download_button(f"管理画面インポートCSVをダウンロード（{len(final_rows)}件）",
                        data=csv_bytes, file_name=Path(uploaded.name).stem + "_import.csv",
-                       mime="text/csv", type="primary", disabled=(len(out_rows) == 0))
+                       mime="text/csv", type="primary", disabled=(len(final_rows) == 0))
 
     # ---- 管理画面へのインポート手順（DLしたCSVをどこに貼るか）----
     with st.expander("▶ このCSVを管理画面に入れる手順", expanded=(len(out_rows) > 0)):
