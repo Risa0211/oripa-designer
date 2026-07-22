@@ -387,13 +387,19 @@ with tab_design:
     limit_total = b6.text_input("購入上限 口/累計", value="1000", key="pz_lt")
     target_return = b7.number_input("目標還元率(%)", min_value=0.0, max_value=300.0, value=117.0, step=1.0, key="pz_tr",
                                     help="狙う総還元率。下の『残りポイント配分ガイド』の基準になります（例:117%）")
-    _AD_PRESETS = {"1BOX相当 ¥5,500以上": 5500, "¥10,000以上": 10000, "¥30,000以上": 30000,
-                   "¥50,000以上": 50000, "¥100,000以上": 100000, "手動で指定": -1}
-    ad_choice = b8.selectbox("アドの基準（この額以上が当たる確率を1/Yで表示）", list(_AD_PRESETS.keys()),
-                             key="pz_adsel", help="ニブイチ等の『カードが当たる割合』は下の当たり率で自動表示されます")
-    ad_threshold = _AD_PRESETS[ad_choice]
-    if ad_threshold < 0:
-        ad_threshold = st.number_input("アド基準額（この表示pt以上）", min_value=0, value=5500, step=500, key="pz_adx")
+    # 「アド=お得な当たり」の下限を単価(1回いくら)の倍率で決める＝直感的
+    _AD_MULT = {"元が取れる(単価以上)": 1, "単価の3倍以上": 3, "単価の5倍以上": 5,
+                "単価の10倍以上": 10, "金額(pt)で直接指定": -1}
+    ad_choice = b8.selectbox("アドの基準（お得な当たりの下限）", list(_AD_MULT.keys()), index=3,
+                             key="pz_adsel",
+                             help="『これ以上当たったらお得』とみなす金額。アド確率＝この額以上が当たる確率(1/Y)。"
+                                  "単価の倍率で指定＝直感的。ニブイチ等の当たり率は別で自動表示")
+    _admul = _AD_MULT[ad_choice]
+    if _admul < 0:
+        ad_threshold = st.number_input("アド基準額（この表示pt以上）", min_value=0, value=int(unit_price) * 10, step=500, key="pz_adx")
+    else:
+        ad_threshold = int(unit_price) * _admul
+        b8.caption(f"＝ {ad_threshold:,}pt 以上を『アド』とみなす")
     # 課金ガチャ用: 引く権利(課金額)。★売上には含めない(別勘定)
     bc1, bc2, bc3 = st.columns(3)
     charge_amount = bc1.number_input("引く権利(課金額・円/回)", min_value=0, value=0, step=1000, key="pz_charge",
