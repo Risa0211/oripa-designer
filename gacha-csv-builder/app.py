@@ -258,6 +258,27 @@ def show_img(url):
     st.markdown(img_tag(url), unsafe_allow_html=True)
 
 
+def compress_img(data, max_w=800, quality=82):
+    """アップ画像をWebP圧縮（横max_px・q82）。保管庫の2万枚と同じ基準で容量を大幅削減。
+    失敗時は元データのまま（拡張子Noneで返す）。戻り値 (bytes, ext or None)。"""
+    try:
+        from io import BytesIO
+        from PIL import Image
+        im = Image.open(BytesIO(data))
+        if im.mode in ("P", "LA"):
+            im = im.convert("RGBA")
+        elif im.mode == "CMYK":
+            im = im.convert("RGB")
+        if im.width > max_w:
+            h = round(im.height * max_w / im.width)
+            im = im.resize((max_w, h), Image.LANCZOS)
+        out = BytesIO()
+        im.save(out, "WEBP", quality=quality, method=6)
+        return out.getvalue(), ".webp"
+    except Exception:
+        return data, None
+
+
 def upload_fn(kata, rar, data, ext=".webp"):
     """アップ画像のファイル名を『型番-レア-内容ハッシュ』のASCII一意名にする。
     カード名が日本語だとASCII変換で消えて 'add.webp' 等になり衝突する問題を回避。"""
@@ -445,12 +466,14 @@ def render_make(uploaded, category="交換専用"):
                         st.error("画像追加にはログイン(WP_USER/WP_APP_PASS)が必要です。")
                     else:
                         ext = os.path.splitext(up.name)[1] or ".png"
+                        data, wext = compress_img(up.getvalue())   # WebP自動圧縮
+                        ext = wext or ext
                         fn = upload_fn(cur.get("型番", ""), cur.get("レアリティ", ""),
-                                       up.getvalue(), ext=ext)
+                                       data, ext=ext)
                         try:
-                            _, nu = sh_upload(fn, up.getvalue(), name)
+                            _, nu = sh_upload(fn, data, name)
                             manual.setdefault(row, {})["画像URL上書き"] = nu
-                            st.success("保管庫に追加してこの賞に設定しました。")
+                            st.success("保管庫に追加してこの賞に設定しました（自動圧縮済み）。")
                             st.rerun()
                         except Exception as e:
                             st.error(f"追加に失敗: {e}")
@@ -550,10 +573,12 @@ def card_cell(h):
             rep = st.file_uploader("画像を差し替え", type=["png", "jpg", "jpeg", "webp"], key=f"rep_{mid}")
             if rep is not None and st.button("この画像に差し替え", key=f"repbtn_{mid}"):
                 ext = os.path.splitext(rep.name)[1] or ".png"
-                fn = upload_fn(n_kata, n_rar, rep.getvalue(), ext=ext)
+                data, wext = compress_img(rep.getvalue())   # WebP自動圧縮
+                ext = wext or ext
+                fn = upload_fn(n_kata, n_rar, data, ext=ext)
                 try:
-                    _, nu = sh_replace(mid, fn, rep.getvalue(), _title())
-                    st.success("差し替えました（URLが変わります）"); st.code(nu)
+                    _, nu = sh_replace(mid, fn, data, _title())
+                    st.success("差し替えました（自動圧縮済み・URLが変わります）"); st.code(nu)
                 except Exception as e:
                     st.error(f"差し替えに失敗: {e}")
             if st.checkbox("削除を確認", key=f"delchk_{mid}") and \
@@ -608,10 +633,12 @@ with tab_add:
         if a_kata.strip():
             title += f"[{a_kata.strip()}]"
         ext = os.path.splitext(up_img.name)[1] or ".png"
-        fn = upload_fn(a_kata.strip(), a_rar.strip(), up_img.getvalue(), ext=ext)
+        data, wext = compress_img(up_img.getvalue())   # WebP自動圧縮
+        ext = wext or ext
+        fn = upload_fn(a_kata.strip(), a_rar.strip(), data, ext=ext)
         try:
-            _, url = sh_upload(fn, up_img.getvalue(), title)
-            st.success("保管庫に追加しました。")
+            _, url = sh_upload(fn, data, title)
+            st.success("保管庫に追加しました（自動圧縮済み）。")
             st.code(url)
             show_img(url)
             st.caption("「② 保管庫」で名前検索すると出てきます（反映まで少し時間がかかる場合があります）。")
