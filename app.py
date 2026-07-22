@@ -422,11 +422,12 @@ with tab_design:
     def _recent(it):
         return getattr(it, "price_recent", 0) or it.price
 
-    def _min(it):
-        return getattr(it, "price_min", 0) or it.price
+    def _souba(it):
+        return getattr(it, "price_souba", 0)  # 0=相場なし（PSA10出品ゼロ）
 
     def _val_for(it):
-        return _min(it) if pz_valsrc == "相場" else _recent(it)
+        # 相場を選択・相場が無ければ直近取引にフォールバック（実価値が0にならないように）
+        return (_souba(it) or _recent(it)) if pz_valsrc == "相場" else _recent(it)
 
     if pz_q or pz_target:
         idx_all = cached_snkrdunk_index()
@@ -447,7 +448,7 @@ with tab_design:
             _nm = f"[{it.name}]({it.snkrdunk_url})" if getattr(it, "snkrdunk_url", "") else it.name
             cc[0].markdown(f"{_nm} `{it.series or ''}`")
             cc[1].markdown(f"¥{_recent(it):,}")
-            cc[2].markdown(f"¥{_min(it):,}")
+            cc[2].markdown(f"¥{_souba(it):,}" if _souba(it) else "—")
             cc[3].markdown(f"[{it.tab}]")
             if cc[4].button("➕ 追加", key=f"pz_add_{j}_{it.row_idx}"):
                 newrow = {"賞ランク": "", "カード名": it.name, "型番": (it.card_no or it.series or ""),
@@ -3109,7 +3110,7 @@ with tab_inventory:
         "カテゴリー": _inv_game(it.tab), "種別": _inv_kind(it.tab), "カード名": it.name,
         "レア": it.grade, "型番": it.card_no,
         "直近取引": (getattr(it, "price_recent", 0) or it.price),
-        "相場": (getattr(it, "price_min", 0) or it.price),
+        "相場": (getattr(it, "price_souba", 0) or None),
         "スニダン": it.snkrdunk_url,
     } for it in filtered[:CAP]])
     st.dataframe(df_inv, use_container_width=True, hide_index=True, column_config={
@@ -3117,4 +3118,4 @@ with tab_inventory:
         "相場": st.column_config.NumberColumn("相場", format="¥%d"),
         "スニダン": st.column_config.LinkColumn("スニダン", display_text="開く"),
     })
-    st.caption("💡 毎朝JST6:00に自動更新。**直近取引=PSA10の直近販売価格／相場=スニダンの相場**。設計は『📝 新規設計』でこのカードから積めます。")
+    st.caption("💡 毎朝JST6:00に自動更新。**直近取引=PSA10の直近販売価格／相場=スニダンの相場（シングル=PSA10出品最安・BOX等=下限）**。空欄=相場なし（PSA10出品ゼロ）。設計は『📝 新規設計』でこのカードから積めます。")
