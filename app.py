@@ -13,7 +13,6 @@ st.set_page_config(
     page_title="みんなのトレカ オリパ設計ツール",
     page_icon="assets/icon.png",
     layout="wide",
-    initial_sidebar_state="expanded",  # 設計サマリー(計算結果)を最初から表示＝スクロール不要
 )
 
 # ログイン認証
@@ -314,8 +313,17 @@ def _fetch_price_for_url(snk_url, card_name, rarity):
 ])
 
 
-with tab_design:
+@st.fragment  # 設計タブだけを隔離＝表の編集で他タブ(景品設計/競合リサーチ)を再実行しない＝軽くなる
+def _design_fragment():
     import pandas as pd
+
+    def _frag_rerun():
+        # 通常はfragmentスコープで軽く再実行。フラグメント再実行中でない時(初回/他タブ起点)はapp scopeにフォールバック
+        try:
+            st.rerun(scope="fragment")
+        except st.errors.StreamlitAPIException:
+            st.rerun()
+
     from puzzle_designer import (
         PrizeRow, DesignMeta, compute, apply_ladder,
         LADDER_LEAN_TOP, LADDER_HEAVY_TOP, to_import_rows, IMPORT_HEADERS,
@@ -434,7 +442,7 @@ with tab_design:
         for _dk, _dv in _PZ_INPUT_DEFAULTS.items():
             st.session_state[_dk] = _dv
         st.toast("設計をリセットしました")
-        st.rerun()
+        _frag_rerun()
     if tb2.button("💾 下書き保存", key="pz_draft_save", use_container_width=True,
                   help="いまの設計をこのセッションに一時保存。『呼び出す』で戻せます（ブラウザを閉じると消えます）"):
         st.session_state["pz_draft"] = _pz_snapshot()
@@ -444,7 +452,7 @@ with tab_design:
                   help="直近の下書きを復元します"):
         _pz_restore(st.session_state["pz_draft"])
         st.toast("下書きを呼び出しました")
-        st.rerun()
+        _frag_rerun()
     tb4.download_button(
         "📥 保存（ファイル）", data=_json.dumps(_pz_snapshot(), ensure_ascii=False, indent=2).encode("utf-8"),
         file_name=f"{(st.session_state.get('pz_title') or 'gacha').replace('/', '_').replace(' ', '_')}_設計.json",
@@ -456,9 +464,12 @@ with tab_design:
             try:
                 _pz_restore(_json.loads(_up.getvalue().decode("utf-8")))
                 st.toast("設計を読み込みました")
-                st.rerun()
+                _frag_rerun()
             except (ValueError, KeyError) as e:
                 st.error(f"読み込めませんでした: {e}")
+
+    # 📊 計算結果サマリー（最上部・スクロール不要）。中身は下の計算後に流し込む＝毎回ライブ更新
+    _summary_ph = st.container()
 
     # ---------- ① 基本情報 ----------
     st.markdown("### ① 基本情報")
@@ -513,7 +524,7 @@ with tab_design:
                 for i in range(len(st.session_state.pz_df)):
                     if st.session_state.pz_df.iat[i, PZ_COLS.index("受取方法")] == METHOD_PT:
                         st.session_state.pz_df.iat[i, PZ_COLS.index("表示PT直接(任意)")] = int(unit_price)
-                st.rerun()
+                _frag_rerun()
         elif goal_type == GOAL_HIGH:
             gc1, gc2 = st.columns(2)
             goal_x = gc1.number_input("表示ptがこの額以上を『高額』とみなす", min_value=0, value=int(unit_price) * 10, step=500, key="pz_goalx")
@@ -600,7 +611,7 @@ with tab_design:
                 _base = _base[~_empty_same]
                 st.session_state.pz_df = _sort_pz(pd.concat(
                     [_base, pd.DataFrame(newrows, columns=PZ_COLS)], ignore_index=True))
-                st.rerun()
+                _frag_rerun()
             ab2.caption("💡 賞（1等→2等→…）を選んでカードをチェック→追加。追加したカードはその賞の位置に並びます。")
 
     # 🎁 福袋・特殊枠もカードと同じく「① 追加先の賞」に入れる（1等〜その他・ラストワン、どこでもOK）
@@ -622,7 +633,7 @@ with tab_design:
             (_base["カード名"].fillna("").astype(str).str.strip() == "")
         _base = _base[~_empty_same]
         st.session_state.pz_df = _sort_pz(pd.concat([_base, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True))
-        st.rerun()
+        _frag_rerun()
 
     # ---------- ③ 賞品テーブル（直接編集） ----------
     st.markdown("### ③ 賞品テーブル（直接編集・行の追加/削除OK）")
@@ -632,29 +643,29 @@ with tab_design:
         apply_ladder(rows, LADDER_LEAN_TOP)
         for i, r in enumerate(rows):
             st.session_state.pz_df.iat[i, PZ_COLS.index("上乗せ倍率")] = r.markup
-        st.rerun()
+        _frag_rerun()
     if lc2.button("倍率ラダー: 上位厚(2.0/1.7/1.5/1.3)", key="pz_ladder_heavy", use_container_width=True):
         rows = _df_to_rows(st.session_state.pz_df)
         apply_ladder(rows, LADDER_HEAVY_TOP)
         for i, r in enumerate(rows):
             st.session_state.pz_df.iat[i, PZ_COLS.index("上乗せ倍率")] = r.markup
-        st.rerun()
+        _frag_rerun()
     if lc3.button("最低保証＝単価にそろえる", key="pz_floor_unit", use_container_width=True,
                   help="pt限定/floor行の表示PT直接を単価に合わせる（トレセン級お得）"):
         for i in range(len(st.session_state.pz_df)):
             if st.session_state.pz_df.iat[i, PZ_COLS.index("受取方法")] == METHOD_PT:
                 st.session_state.pz_df.iat[i, PZ_COLS.index("表示PT直接(任意)")] = int(unit_price)
-        st.rerun()
+        _frag_rerun()
     if lc4.button("テーブルをリセット", key="pz_reset", use_container_width=True):
         st.session_state.pz_df = _pz_default_df()
-        st.rerun()
+        _frag_rerun()
     lc5, lc6, lc7, lc8 = st.columns([1.3, 0.9, 1.0, 1.6])
     if lc5.button("🏅 ラストワン賞を追加", key="pz_add_lastone", use_container_width=True,
                   help="最後の1口に確定で当たる賞。賞ランク=ラストワン・1口の行を追加。カード名は②検索/テーブルで入れてください"):
         _nr = {"賞ランク": "ラストワン", "カード名": "", "型番": "", "口数": 1, "実価値/枚": 0,
                "送料/件": 500, "受取方法": METHOD_SHIP, "上乗せ倍率": 2.0, "表示PT直接(任意)": None, "除外": False}
         st.session_state.pz_df = _sort_pz(pd.concat([st.session_state.pz_df, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True))
-        st.rerun()
+        _frag_rerun()
     # pt交換専用の pt/口数を指定して追加（1pt以外＝2pt/3pt交換専用もここで作れる）
     _fill_pt = lc6.number_input("交換専用のpt", min_value=1, value=1, step=1, key="pz_fill_pt",
                                 help="作る交換専用枠の表示pt。1pt以外(2pt・3pt・最低保証=単価 等)もここで指定")
@@ -678,7 +689,7 @@ with tab_design:
             _nr = {"賞ランク": "その他", "カード名": f"{int(_fill_pt)}pt交換専用", "型番": "", "口数": _add_cnt, "実価値/枚": int(_fill_pt),
                    "送料/件": 0, "受取方法": METHOD_PT, "上乗せ倍率": 0.0, "表示PT直接(任意)": int(_fill_pt), "除外": False}
             st.session_state.pz_df = _sort_pz(pd.concat([st.session_state.pz_df, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True))
-            st.rerun()
+            _frag_rerun()
         else:
             st.toast(f"残り口数がありません（現在 {_cur:,} / 総口数 {int(total_tickets):,}）")
 
@@ -728,7 +739,7 @@ with tab_design:
     _changed = _sig(_new) != _sig(st.session_state.pz_df.reset_index(drop=True))
     st.session_state.pz_df = _new
     if _changed:
-        st.rerun()  # 編集を即時反映（計算列・並び順・還元率をすぐ更新）
+        _frag_rerun()  # 編集を即時反映（計算列・並び順・還元率をすぐ更新）
 
     rows = _df_to_rows(st.session_state.pz_df)
     meta = DesignMeta(
@@ -758,26 +769,25 @@ with tab_design:
         goal_label = "🎯 カードが当たる確率"
         goal_value = (f"現在 1/{_y:.1f} ／ 目標 1/{goal_n:,}" if _y else f"現在 該当なし ／ 目標 1/{goal_n:,}")
 
-    # ---------- サイドバー: 設計サマリー（スクロールしても常時見える）----------
-    with st.sidebar:
+    # ---------- 📊 計算結果サマリー（最上部・横並びコンパクト・編集で即ライブ更新）----------
+    with _summary_ph:
         _vmark = {"OK": "🟢 OK 公開可", "注意": "🟡 注意（公開可）", "NG": "🔴 NG 公開不可"}[res.verdict]
-        st.markdown("### 📊 設計サマリー")
-        st.caption(f"**{pz_title or '（無題）'}**　単価{unit_price:,}pt×{total_tickets:,}口")
-        st.markdown(f"**{_vmark}**")
-        st.metric("顧客還元率(表示pt)", f"{res.coin_return:.1%}")
-        st.metric("実利益率(運営)", f"{res.real_profit_rate:.1%}")
-        st.metric("当たり率(現物)", f"1/{total_tickets/res.card_win_count:.1f}" if res.card_win_count else "-")
-        if goal_label:
-            _gm = "🟢" if goal_ok else "🔴"
-            st.markdown(f"{_gm} **{goal_label}**")
-            st.caption(goal_value)
-        st.metric("S2 全員pt(最悪)", f"¥{res.s2:,}")
-        st.metric("最低保証(pt)", f"{res.min_guarantee:,}")
-        _cnt_ok = "✅" if res.count_sum == total_tickets else "⚠️"
-        st.caption(f"{_cnt_ok} 口数 {res.count_sum:,} / {total_tickets:,}")
-        st.caption(f"末広がりEV {res.effective_pt_ev:.0%}（1.0以上NG）")
+        st.markdown(f"#### 📊 計算結果サマリー　{_vmark}")
+        _sc = st.columns(6)
+        _sc[0].metric("顧客還元率(表示pt)", f"{res.coin_return:.1%}")
+        _sc[1].metric("実利益率(運営)", f"{res.real_profit_rate:.1%}")
+        _sc[2].metric("当たり率(現物)", f"1/{total_tickets/res.card_win_count:.1f}" if res.card_win_count else "-")
+        _sc[3].metric("最低保証(pt)", f"{res.min_guarantee:,}")
+        _sc[4].metric("S2 全員pt(最悪)", f"¥{res.s2:,}", delta=("赤字" if res.s2 < 0 else "黒字"),
+                      delta_color=("inverse" if res.s2 < 0 else "normal"))
+        _sc[5].metric("口数", f"{res.count_sum:,}/{total_tickets:,}",
+                      delta=("一致" if res.count_sum == total_tickets else "不一致"),
+                      delta_color=("normal" if res.count_sum == total_tickets else "inverse"))
+        _goal_txt = (f"　｜　{'🟢達成' if goal_ok else '🔴未達'} {goal_label}：{goal_value}" if goal_label else "")
+        st.caption(f"**{pz_title or '（無題）'}**　単価{unit_price:,}pt×{total_tickets:,}口"
+                   f"　｜　末広がりEV {res.effective_pt_ev:.0%}（1.0以上NG）{_goal_txt}"
+                   "　💡下でカード/口数を編集すると即ここに反映（他タブは再実行しないので軽い）")
         st.divider()
-        st.caption("💡 下でカード/口数を編集すると即反映。ここは固定表示なのでスクロールしても見えます。")
 
     with pz_result:
         # ---------- ④ 計算結果 ----------
@@ -892,6 +902,10 @@ with tab_design:
             help="Price=実価値/枚・Redemption Points=表示PT/枚・Inventory=口数。画像URLは登録時に追加",
         )
     st.caption("💡 提出用①②はExcel/スプレッドシートで開くと数式が自動計算されます（②は自動判定でOK公開可まで確認可）。")
+
+
+with tab_design:
+    _design_fragment()
 
 
 # ---------- 景品設計タブ（競合コピー型） ----------
