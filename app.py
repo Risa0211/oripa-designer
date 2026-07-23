@@ -653,6 +653,26 @@ with tab_design:
         else:
             st.toast(f"残り口数がありません（現在 {_cur:,} / 総口数 {int(total_tickets):,}）")
 
+    # 🎁 福袋・特殊枠（スニダン一覧に無い運営オリジナル枠）を「その他」に追加。ptは追加後に表で編集OK
+    _FUKU_PRESETS = {
+        "みんトレ福袋（10,000pt）": {"name": "みんトレ福袋", "pt": 10000, "psa10": False},
+        "みんトレ福袋（30,000pt）": {"name": "みんトレ福袋", "pt": 30000, "psa10": False},
+        "神福袋（150,000pt・PSA10入り）": {"name": "神福袋", "pt": 150000, "psa10": True},
+        "神福袋（800,000pt・PSA10入り）": {"name": "神福袋", "pt": 800000, "psa10": True},
+    }
+    lf1, lf2, lf3 = st.columns([2.4, 0.9, 1.6])
+    _fuku_choice = lf1.selectbox("🎁 福袋・特殊枠を『その他』に追加", list(_FUKU_PRESETS), key="pz_fuku_sel",
+                                 help="みんトレ福袋/神福袋などスニダン一覧に無い運営オリジナル枠。追加後にptや実価値・受取方法を表で編集できます")
+    _fuku_cnt = lf2.number_input("口数", min_value=1, value=1, step=1, key="pz_fuku_cnt")
+    if lf3.button("➕ 福袋を追加", key="pz_fuku_add", use_container_width=True,
+                  help="選んだ福袋を『その他』に1行追加。表示PT・実価値=そのpt(編集可)。PSA10入りは発送限定・現物カード扱い"):
+        _p = _FUKU_PRESETS[_fuku_choice]
+        _nm = _p["name"] + ("（PSA10入り）" if _p["psa10"] else "")
+        _nr = {"賞ランク": "その他", "カード名": _nm, "型番": "", "口数": int(_fuku_cnt), "実価値/枚": int(_p["pt"]),
+               "送料/件": 500, "受取方法": METHOD_SHIP, "上乗せ倍率": 1.0, "表示PT直接(任意)": int(_p["pt"]), "除外": False}
+        st.session_state.pz_df = _sort_pz(pd.concat([st.session_state.pz_df, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True))
+        st.rerun()
+
     st.caption("行を消すには左端で行を選んで 🗑（またはDelete）。賞ランクは常に順番に並びます。灰色の列（出現率・表示PT・合計）は自動計算です。")
     # 常に賞ランク順に整列
     st.session_state.pz_df = _sort_pz(st.session_state.pz_df)
