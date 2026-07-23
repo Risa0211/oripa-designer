@@ -574,7 +574,19 @@ def _design_fragment():
     pz_add_rank = sc0.selectbox("① 追加先の賞", _RANK_CHOICES, key="pz_add_rank",
                                 help="この賞にカードを追加します。1等→2等…と賞ごとに選んでいくと分かりやすいです")
     pz_q = sc1.text_input("② カード名で検索", key="pz_search", placeholder="例: リザードン / ルフィ / VSTARユニバース BOX")
-    pz_target = sc2.number_input("目標相場(円・近い順)", min_value=0, value=0, step=1000, key="pz_tp")
+    pz_target = sc2.number_input("目標相場(円・近い順)", min_value=0, value=0, step=1000, key="pz_tp",
+                                 help="この相場に近いカードを探す。下の『表示ptで逆算』を使うと自動でここが埋まります")
+    # 表示ptと倍率から実価値を逆算して候補を出す（表示PT＝実価値×倍率 → 実価値＝表示PT÷倍率）
+    rc1, rc2, rc3 = st.columns([2, 2, 3])
+    pz_disp_pt = rc1.number_input("表示ptで逆算", min_value=0, value=0, step=500, key="pz_disp_pt",
+                                  help="この表示ptで見せたい枠のカードを探す。右の倍率で実価値を逆算して相場が近い候補を出します")
+    pz_disp_mult = rc2.number_input("その時の上乗せ倍率", min_value=0.1, max_value=10.0, value=1.5, step=0.1, key="pz_disp_mult",
+                                    help="表示pt＝実価値×倍率。例）表示pt3,000・倍率1.5→実価値≈2,000の候補")
+    # 逆算が有効なら目標相場を上書き
+    _eff_target = int(pz_target)
+    if pz_disp_pt > 0 and pz_disp_mult > 0:
+        _eff_target = int(round(pz_disp_pt / pz_disp_mult))
+        rc3.caption(f"表示pt {int(pz_disp_pt):,} ÷ 倍率 {pz_disp_mult:g} → **実価値≈¥{_eff_target:,}** の候補を表示中（追加時の倍率も {pz_disp_mult:g} を採用）")
     sc3, sc4 = st.columns([2, 3])
     pz_show = sc3.number_input("表示件数", min_value=5, max_value=100, value=15, step=5, key="pz_show")
     pz_valsrc = sc4.radio("実価値に使う価格（自動入力）", ["直近取引", "相場"], horizontal=True,
@@ -590,19 +602,19 @@ def _design_fragment():
         # 相場を選択・相場が無ければ直近取引にフォールバック（実価値が0にならないように）
         return (_souba(it) or _recent(it)) if pz_valsrc == "相場" else _recent(it)
 
-    if pz_q or pz_target:
+    if pz_q or _eff_target > 0:
         idx_all = cached_snkrdunk_index()
         pool = [it for it in idx_all if (it.tab.startswith("ワンピ") if cat == "ワンピース" else not it.tab.startswith("ワンピ"))]
         if pz_q:
             _q = pz_q.lower()
             pool = [it for it in pool if _q in (it.name or "").lower() or _q in (it.series or "").lower()]
-        if pz_target > 0:
-            pool = sorted(pool, key=lambda x: abs(_val_for(x) - pz_target))
+        if _eff_target > 0:
+            pool = sorted(pool, key=lambda x: abs(_val_for(x) - _eff_target))
         else:
             pool = sorted(pool, key=lambda x: -_val_for(x))
         shown = pool[:int(pz_show)]
         if not shown:
-            st.info("🔍 該当するカードがありません。検索語・カテゴリー・目標相場を変えてみてください。")
+            st.info("🔍 該当するカードがありません。検索語・カテゴリー・目標相場・表示ptを変えてみてください。")
         else:
             st.caption(f"候補 {len(pool):,} 件中 上位 {len(shown)} 件 ｜ ✅チェックして下のボタンでまとめて追加できます（目玉を一気に）")
             # チェックして複数まとめて追加（1枚ずつでなく効率化）
@@ -627,12 +639,14 @@ def _design_fragment():
             _method_for = METHOD_SHIP if pz_add_rank in ("1等", "2等") else METHOD_CHOICE
             if ab1.button(f"➕ チェックした{len(_picked_idx)}件を「{pz_add_rank}」に追加", type="primary",
                           disabled=not _picked_idx, use_container_width=True, key="pz_bulk_add"):
+                # 表示ptで逆算中なら、その倍率を採用（表示PT＝実価値×倍率が狙い通りになる）
+                _add_mult = float(pz_disp_mult) if (pz_disp_pt > 0 and pz_disp_mult > 0) else 1.5
                 newrows = []
                 for i in _picked_idx:
                     it = shown[i]
                     newrows.append({"賞ランク": pz_add_rank, "カード名": it.name, "型番": (it.card_no or it.series or ""),
                                     "口数": 1, "実価値/枚": int(_val_for(it)), "送料/件": 500,
-                                    "受取方法": _method_for, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False})
+                                    "受取方法": _method_for, "上乗せ倍率": _add_mult, "表示PT直接(任意)": None, "除外": False})
                 # 同じ賞の「空プレースホルダ行（カード名なし）」は追加時に置き換える
                 # → 空の1等 + 追加カードの1等 の2行になる不具合を防ぐ
                 _base = st.session_state.pz_df
