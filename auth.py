@@ -27,7 +27,7 @@ def check_password() -> bool:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         try:
-            st.image("assets/logo_square.png", width=240)
+            st.image("assets/logo_wide.png", width=320)  # 現行ロゴ（旧logo_squareはTOREKA表記の旧版）
         except Exception:
             pass
         st.markdown("### オリパ商品設計ツール")
