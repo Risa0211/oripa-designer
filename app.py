@@ -13,6 +13,7 @@ st.set_page_config(
     page_title="みんなのトレカ オリパ設計ツール",
     page_icon="assets/icon.png",
     layout="wide",
+    initial_sidebar_state="expanded",  # 設計サマリー(計算結果)を最初から表示＝スクロール不要
 )
 
 # ログイン認証
@@ -333,15 +334,24 @@ with tab_design:
                "受取方法", "上乗せ倍率", "表示PT直接(任意)", "除外"]
 
     def _pz_default_df():
+        # 目玉は②で賞ごとに追加する。既定は外れpt枠(交換専用)の1行だけ＝空の1等プレースホルダは置かない
+        # （空の1等 + 追加カードの1等 で2行になる不具合を防ぐ）
         return pd.DataFrame([
-            {"賞ランク": "1等", "カード名": "", "型番": "", "口数": 1, "実価値/枚": 0,
-             "送料/件": 500, "受取方法": METHOD_SHIP, "上乗せ倍率": 2.0, "表示PT直接(任意)": None, "除外": False},
             {"賞ランク": "その他", "カード名": "1pt交換専用", "型番": "", "口数": 100, "実価値/枚": 1,
              "送料/件": 0, "受取方法": METHOD_PT, "上乗せ倍率": 1.0, "表示PT直接(任意)": 1, "除外": False},
         ], columns=PZ_COLS)
 
     if "pz_df" not in st.session_state:
         st.session_state.pz_df = _pz_default_df()
+
+    # 基本情報の入力キー既定値（保存/呼び出し・やり直しで一括操作するため一覧化）
+    _PZ_INPUT_DEFAULTS = {
+        "pz_cat": "ポケモン", "pz_title": "", "pz_unit": 500, "pz_total": 5000,
+        "pz_ld": "", "pz_lt": "", "pz_tr": 117.0, "pz_charge": 0,
+        "pz_cr": 0.72, "pz_ext": 0.02, "pz_pg": 0.3,
+    }
+    for _dk, _dv in _PZ_INPUT_DEFAULTS.items():
+        st.session_state.setdefault(_dk, _dv)
 
     # 賞ランク順（1等→2等…→その他→ラストワン）で常に並べる
     _RANK_ORDER = {"1等": 1, "2等": 2, "3等": 3, "4等": 4, "5等": 5, "6等": 6, "7等": 7,
@@ -386,24 +396,80 @@ with tab_design:
             ))
         return rows
 
+    # ---------- 保存/呼び出し/やり直し ----------
+    import json as _json
+
+    def _pz_snapshot():
+        _df = st.session_state.pz_df
+        return {
+            "inputs": {k: st.session_state.get(k) for k in _PZ_INPUT_DEFAULTS},
+            "pz_df": _df.where(pd.notna(_df), None).to_dict(orient="records"),
+        }
+
+    def _pz_restore(snap):
+        for k, v in (snap.get("inputs") or {}).items():
+            if k in _PZ_INPUT_DEFAULTS and v is not None:
+                st.session_state[k] = v
+        recs = snap.get("pz_df")
+        if recs:
+            df = pd.DataFrame(recs)
+            for c in PZ_COLS:
+                if c not in df.columns:
+                    df[c] = None
+            st.session_state.pz_df = _sort_pz(df[PZ_COLS])
+
+    # ---------- ⚡ 操作バー（一番上・分かりやすく）----------
+    tb1, tb2, tb3, tb4 = st.columns([1.2, 1.2, 1.3, 2])
+    if tb1.button("🆕 設計をやり直す", key="pz_reset_all", use_container_width=True,
+                  help="賞品テーブルと基本情報を初期状態に戻します（保存した下書き・JSONは消えません）"):
+        st.session_state.pz_df = _pz_default_df()
+        for _dk, _dv in _PZ_INPUT_DEFAULTS.items():
+            st.session_state[_dk] = _dv
+        st.toast("設計をリセットしました")
+        st.rerun()
+    if tb2.button("💾 下書き保存", key="pz_draft_save", use_container_width=True,
+                  help="いまの設計をこのセッションに一時保存。『呼び出す』で戻せます（ブラウザを閉じると消えます）"):
+        st.session_state["pz_draft"] = _pz_snapshot()
+        st.toast("下書きを保存しました")
+    if tb3.button("↩️ 下書きを呼び出す", key="pz_draft_load", use_container_width=True,
+                  disabled="pz_draft" not in st.session_state,
+                  help="直近の下書きを復元します"):
+        _pz_restore(st.session_state["pz_draft"])
+        st.toast("下書きを呼び出しました")
+        st.rerun()
+    tb4.download_button(
+        "📥 保存（ファイル）", data=_json.dumps(_pz_snapshot(), ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name=f"{(st.session_state.get('pz_title') or 'gacha').replace('/', '_').replace(' ', '_')}_設計.json",
+        mime="application/json", use_container_width=True, key="pz_save_json",
+        help="設計をファイルに保存。次回このファイルを読み込めば続きから編集できます（永続保存）")
+    with st.expander("📤 保存ファイルを読み込む（続きから編集）"):
+        _up = st.file_uploader("設計JSONを選ぶ", type=["json"], key="pz_load_json", label_visibility="collapsed")
+        if _up is not None and st.button("この設計を読み込む", key="pz_load_json_btn"):
+            try:
+                _pz_restore(_json.loads(_up.getvalue().decode("utf-8")))
+                st.toast("設計を読み込みました")
+                st.rerun()
+            except (ValueError, KeyError) as e:
+                st.error(f"読み込めませんでした: {e}")
+
     # ---------- ① 基本情報 ----------
     st.markdown("### ① 基本情報")
     cat = st.radio("カテゴリー", ["ポケモン", "ワンピース"], horizontal=True, key="pz_cat")
     b1, b2, b3, b4 = st.columns(4)
     pz_title = b1.text_input("ガチャタイトル", key="pz_title", placeholder="例: 1/319の天門を開け!")
-    unit_price = b2.number_input("単価(pt/口・1pt=1円)", min_value=1, value=500, step=1, key="pz_unit")
-    total_tickets = b3.number_input("総口数", min_value=1, value=5000, step=100, key="pz_total")
+    unit_price = b2.number_input("単価(pt/口・1pt=1円)", min_value=1, step=1, key="pz_unit")
+    total_tickets = b3.number_input("総口数", min_value=1, step=100, key="pz_total")
     revenue = unit_price * total_tickets
     b4.metric("総売上(円)", f"¥{revenue:,}")
     # 自分で決める項目（購入上限・目標還元率・課金額）
     b5, b6, b7 = st.columns(3)
-    limit_day = b5.text_input("購入上限 口/日", value="300", key="pz_ld")
-    limit_total = b6.text_input("購入上限 口/累計", value="1000", key="pz_lt")
-    target_return = b7.number_input("目標還元率(%)（顧客・表示pt基準）", min_value=0.0, max_value=300.0, value=117.0, step=1.0, key="pz_tr",
+    limit_day = b5.text_input("購入上限 口/日", key="pz_ld", placeholder="例: 300（空欄＝未設定）")
+    limit_total = b6.text_input("購入上限 口/累計", key="pz_lt", placeholder="例: 1000（空欄＝未設定）")
+    target_return = b7.number_input("目標還元率(%)（顧客・表示pt基準）", min_value=0.0, max_value=300.0, step=1.0, key="pz_tr",
                                     help="顧客が見る還元率＝表示PT合計÷売上。運営の取り分は別（実利益率で確認）。残りpt配分ガイドの基準にもなります")
     # 課金ガチャ用: 引く権利(課金額)。★売上には含めない(別勘定)
     bc1, bc2, bc3 = st.columns(3)
-    charge_amount = bc1.number_input("引く権利(課金額・円/回)", min_value=0, value=0, step=1000, key="pz_charge",
+    charge_amount = bc1.number_input("引く権利(課金額・円/回)", min_value=0, step=1000, key="pz_charge",
                                      help="1回引く権利を得るための課金額。★売上には含めません(別勘定・課金回収の原資)")
     bc2.metric("総口数×引く権利(参考)", f"¥{charge_amount*total_tickets:,}",
                help="課金分の参考値。売上には含めない")
@@ -413,11 +479,11 @@ with tab_design:
     # 前提値（社内の経験値・通常は触らない）は畳んでおく
     with st.expander("⚙️ 詳細設定（前提値・通常は既定のままでOK）"):
         d1, d2, d3 = st.columns(3)
-        cost_rate = d1.number_input("pt実質原価率", min_value=0.0, max_value=1.0, value=0.72, step=0.01, key="pz_cr",
+        cost_rate = d1.number_input("pt実質原価率", min_value=0.0, max_value=1.0, step=0.01, key="pz_cr",
                                     help="1ptを商品で消化する実コスト(社内経験値)。実利益率・S3の計算に使用。既定0.72")
-        external = d2.number_input("外部付与見込み(売上比)", min_value=0.0, max_value=0.5, value=0.02, step=0.01, key="pz_ext",
+        external = d2.number_input("外部付与見込み(売上比)", min_value=0.0, max_value=0.5, step=0.01, key="pz_ext",
                                    help="クーポン/紹介pt等ガチャ外で配るpt。末広がり判定に使用。既定0.02")
-        progress = d3.number_input("売れ止まり想定(進捗率)", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key="pz_pg",
+        progress = d3.number_input("売れ止まり想定(進捗率)", min_value=0.0, max_value=1.0, step=0.05, key="pz_pg",
                                    help="途中終了リスク判定用の想定売上進捗。既定0.3")
 
     # ---------- 🎯 確率ゴール（任意・顧客の見え方=表示pt基準）----------
@@ -518,8 +584,14 @@ with tab_design:
                     newrows.append({"賞ランク": pz_add_rank, "カード名": it.name, "型番": (it.card_no or it.series or ""),
                                     "口数": 1, "実価値/枚": int(_val_for(it)), "送料/件": 500,
                                     "受取方法": _method_for, "上乗せ倍率": 1.5, "表示PT直接(任意)": None, "除外": False})
+                # 同じ賞の「空プレースホルダ行（カード名なし）」は追加時に置き換える
+                # → 空の1等 + 追加カードの1等 の2行になる不具合を防ぐ
+                _base = st.session_state.pz_df
+                _empty_same = (_base["賞ランク"] == pz_add_rank) & \
+                    (_base["カード名"].fillna("").astype(str).str.strip() == "")
+                _base = _base[~_empty_same]
                 st.session_state.pz_df = _sort_pz(pd.concat(
-                    [st.session_state.pz_df, pd.DataFrame(newrows, columns=PZ_COLS)], ignore_index=True))
+                    [_base, pd.DataFrame(newrows, columns=PZ_COLS)], ignore_index=True))
                 st.rerun()
             ab2.caption("💡 賞（1等→2等→…）を選んでカードをチェック→追加。追加したカードはその賞の位置に並びます。")
 
@@ -547,15 +619,20 @@ with tab_design:
     if lc4.button("テーブルをリセット", key="pz_reset", use_container_width=True):
         st.session_state.pz_df = _pz_default_df()
         st.rerun()
-    lc5, lc6, _lcx = st.columns([1.2, 1.4, 1.4])
+    lc5, lc6, lc7, lc8 = st.columns([1.3, 0.9, 1.0, 1.6])
     if lc5.button("🏅 ラストワン賞を追加", key="pz_add_lastone", use_container_width=True,
                   help="最後の1口に確定で当たる賞。賞ランク=ラストワン・1口の行を追加。カード名は②検索/テーブルで入れてください"):
         _nr = {"賞ランク": "ラストワン", "カード名": "", "型番": "", "口数": 1, "実価値/枚": 0,
                "送料/件": 500, "受取方法": METHOD_SHIP, "上乗せ倍率": 2.0, "表示PT直接(任意)": None, "除外": False}
         st.session_state.pz_df = _sort_pz(pd.concat([st.session_state.pz_df, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True))
         st.rerun()
-    if lc6.button("🧩 残り口数を交換専用で埋める", key="pz_fill_remain", use_container_width=True,
-                  help="総口数−現在の口数 を『pt限定(交換専用)・表示PT=単価』1行で埋める。目玉を積んだ後の外れ枠に便利"):
+    # pt交換専用の pt/口数を指定して追加（1pt以外＝2pt/3pt交換専用もここで作れる）
+    _fill_pt = lc6.number_input("交換専用のpt", min_value=1, value=1, step=1, key="pz_fill_pt",
+                                help="作る交換専用枠の表示pt。1pt以外(2pt・3pt・最低保証=単価 等)もここで指定")
+    _fill_cnt = lc7.number_input("口数(0=残り全部)", min_value=0, value=0, step=1, key="pz_fill_cnt",
+                                 help="0なら『総口数−現在の口数』を全部この交換専用で埋めます。数字を入れればその口数だけ追加")
+    if lc8.button(f"🧩 {int(_fill_pt)}pt交換専用を追加", key="pz_fill_remain", use_container_width=True,
+                  help="指定ptの交換専用(pt限定)枠を1行追加。口数=0なら残りを全部埋めます。目玉を積んだ後の外れ枠に便利"):
         _cur = 0
         for i in range(len(st.session_state.pz_df)):
             _ex = bool(st.session_state.pz_df.iat[i, PZ_COLS.index("除外")])
@@ -567,9 +644,10 @@ with tab_design:
             if (not _ex) and _nm and _c > 0:   # 実在賞(名前あり)のみ＝口数一致チェックと同じ数え方
                 _cur += _c
         _rem = int(total_tickets) - _cur
-        if _rem > 0:
-            _nr = {"賞ランク": "その他", "カード名": "交換専用", "型番": "", "口数": _rem, "実価値/枚": 1,
-                   "送料/件": 0, "受取方法": METHOD_PT, "上乗せ倍率": 0.0, "表示PT直接(任意)": int(unit_price), "除外": False}
+        _add_cnt = int(_fill_cnt) if int(_fill_cnt) > 0 else _rem
+        if _add_cnt > 0:
+            _nr = {"賞ランク": "その他", "カード名": f"{int(_fill_pt)}pt交換専用", "型番": "", "口数": _add_cnt, "実価値/枚": int(_fill_pt),
+                   "送料/件": 0, "受取方法": METHOD_PT, "上乗せ倍率": 0.0, "表示PT直接(任意)": int(_fill_pt), "除外": False}
             st.session_state.pz_df = _sort_pz(pd.concat([st.session_state.pz_df, pd.DataFrame([_nr], columns=PZ_COLS)], ignore_index=True))
             st.rerun()
         else:
