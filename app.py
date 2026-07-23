@@ -13,7 +13,6 @@ st.set_page_config(
     page_title="みんなのトレカ オリパ設計ツール",
     page_icon="assets/icon.png",
     layout="wide",
-    initial_sidebar_state="expanded",  # 計算結果サマリーを常時表示
 )
 
 # ログイン認証
@@ -314,33 +313,6 @@ def _fetch_price_for_url(snk_url, card_name, rarity):
 ])
 
 
-@st.fragment  # サイドバー常時表示の計算結果（スクロールしても見える）。設計fragmentがstateに書いた値を読む
-def _design_sidebar():
-    s = st.session_state.get("pz_summary")
-    st.markdown("### 📊 計算結果")
-    if not s:
-        st.caption("設計するとここに表示されます")
-        return
-    _vmark = {"OK": "🟢 OK 公開可", "注意": "🟡 注意（公開可）", "NG": "🔴 NG 公開不可"}[s["verdict"]]
-    st.markdown(f"**{_vmark}**")
-    st.caption(f"**{s['title'] or '（無題）'}**　単価{s['unit_price']:,}pt×{s['total_tickets']:,}口")
-    st.metric("顧客還元率(表示pt)", f"{s['coin_return']:.1%}")
-    st.metric("実利益率(運営)", f"{s['real_profit_rate']:.1%}")
-    st.metric("当たり率(現物)", f"1/{s['total_tickets']/s['card_win_count']:.1f}" if s["card_win_count"] else "-")
-    if s["goal_label"]:
-        st.markdown(f"{'🟢' if s['goal_ok'] else '🔴'} **{s['goal_label']}**")
-        st.caption(s["goal_value"])
-    st.metric("S2 全員pt(最悪)", f"¥{s['s2']:,}")
-    st.metric("最低保証(pt)", f"{s['min_guarantee']:,}")
-    _cnt_ok = "✅" if s["count_sum"] == s["total_tickets"] else "⚠️"
-    st.caption(f"{_cnt_ok} 口数 {s['count_sum']:,} / {s['total_tickets']:,}")
-    st.caption(f"末広がりEV {s['effective_pt_ev']:.0%}（1.0以上NG）")
-    if st.button("🔄 最新の計算に更新", key="pz_sidebar_refresh", use_container_width=True, type="primary",
-                 help="表やカードを編集した後、押すとこのサマリーを最新の計算結果に更新します"):
-        st.rerun(scope="fragment")
-    st.caption("💡 表を編集したら↑を押すと最新に更新（軽さ優先のため手動更新です）")
-
-
 @st.fragment  # 設計タブだけを隔離＝表の編集で他タブ(景品設計/競合リサーチ)を再実行しない＝軽くなる
 def _design_fragment():
     import pandas as pd
@@ -495,6 +467,23 @@ def _design_fragment():
                 _frag_rerun()
             except (ValueError, KeyError) as e:
                 st.error(f"読み込めませんでした: {e}")
+
+    # 📊 計算結果サマリー：画面上部に固定（sticky）。スクロールしても常に見える＝fragment内なので自動更新。
+    # 中身は下の計算後に流し込む（_summary_ph）。
+    st.markdown("""
+    <style>
+    /* キー付きコンテナの外側ラッパ(stLayoutWrapper)にstickyを付ける＝親が十分高く固定が効く。
+       コンテナ自身に付けると親と同じ高さで固定できないため :has() で1つ外を狙う。 */
+    div[data-testid="stLayoutWrapper"]:has(> .st-key-pz_sticky_summary) {
+        position: sticky; top: 0; z-index: 999;
+        background: var(--background-color, #ffffff);
+        box-shadow: 0 3px 8px rgba(0,0,0,0.08);
+        border-bottom: 2px solid rgba(128,128,128,0.28);
+    }
+    .st-key-pz_sticky_summary { background: var(--background-color, #ffffff); padding: 0.35rem 0.6rem; }
+    </style>
+    """, unsafe_allow_html=True)
+    _summary_ph = st.container(key="pz_sticky_summary")
 
     # ---------- ① 基本情報 ----------
     st.markdown("### ① 基本情報")
@@ -794,15 +783,31 @@ def _design_fragment():
         goal_label = "🎯 カードが当たる確率"
         goal_value = (f"現在 1/{_y:.1f} ／ 目標 1/{goal_n:,}" if _y else f"現在 該当なし ／ 目標 1/{goal_n:,}")
 
-    # ---------- 📊 計算結果サマリーをサイドバー用にstateへ保存（サイドバーfragmentが読む）----------
-    st.session_state["pz_summary"] = {
-        "verdict": res.verdict, "title": pz_title, "unit_price": int(unit_price),
-        "total_tickets": int(total_tickets), "coin_return": res.coin_return,
-        "real_profit_rate": res.real_profit_rate, "card_win_count": res.card_win_count,
-        "min_guarantee": res.min_guarantee, "s2": res.s2, "count_sum": res.count_sum,
-        "effective_pt_ev": res.effective_pt_ev,
-        "goal_label": goal_label, "goal_ok": goal_ok, "goal_value": goal_value,
-    }
+    # ---------- 📊 上部固定サマリー（sticky）に流し込む。fragment内なので編集ごとに自動更新 ----------
+    with _summary_ph:
+        _vmark = {"OK": "🟢 OK 公開可", "注意": "🟡 注意", "NG": "🔴 NG 公開不可"}[res.verdict]
+        _vcolor = {"OK": "#1a7f37", "注意": "#9a6700", "NG": "#cf222e"}[res.verdict]
+        _cnt_icon = "✅" if res.count_sum == total_tickets else "⚠️"
+        _win = (f"1/{total_tickets/res.card_win_count:.1f}" if res.card_win_count else "-")
+        _goal = ""
+        if goal_label:
+            _gm = "🟢" if goal_ok else "🔴"
+            _goal = (f'<span>{_gm} {goal_label.replace("🎯 ", "")}'
+                     f' <b>{goal_value.split("／")[0].strip() if "／" in goal_value else goal_value}</b></span>')
+        st.markdown(
+            '<div style="display:flex;flex-wrap:wrap;gap:0.15rem 1.05rem;align-items:baseline;font-size:0.9rem;line-height:1.5;">'
+            f'<span style="font-weight:700;color:{_vcolor};">📊 {_vmark}</span>'
+            f'<span>顧客還元率 <b>{res.coin_return:.1%}</b></span>'
+            f'<span>実利益率 <b>{res.real_profit_rate:.1%}</b></span>'
+            f'<span>当たり率 <b>{_win}</b></span>'
+            f'<span>最低保証 <b>{res.min_guarantee:,}pt</b></span>'
+            f'<span>S2最悪 <b>¥{res.s2:,}</b></span>'
+            f'<span>口数 <b>{res.count_sum:,}/{total_tickets:,}</b>{_cnt_icon}</span>'
+            f'<span>末広EV <b>{res.effective_pt_ev:.0%}</b></span>'
+            f'{_goal}'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
     with pz_result:
         # ---------- ④ 計算結果 ----------
@@ -921,9 +926,6 @@ def _design_fragment():
 
 with tab_design:
     _design_fragment()
-# 計算結果サマリーはサイドバーに常時表示（スクロールしても見える・設計fragmentがstateへ書いた値を読む）
-with st.sidebar:
-    _design_sidebar()
 
 
 # ---------- 景品設計タブ（競合コピー型） ----------
