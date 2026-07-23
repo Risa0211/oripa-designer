@@ -466,6 +466,8 @@ def render_make(uploaded, category="交換専用"):
                             if is_box_like(h.get("title", ""), h.get("name", ""), name):
                                 picked["カテゴリ"] = "BOX"
                                 picked["バッジ"] = "未開封"
+                                # バッジ欄(widget)側にも反映しないと再描画で消える
+                                st.session_state[f"badge2_{row}"] = ["未開封"]
                             elif adm_cat in cat_opts:     # 実カテゴリが有効フォルダーなら採用
                                 picked["カテゴリ"] = adm_cat
                             elif h.get("rarity", "") in cat_opts:  # レアが有効フォルダーなら採用
@@ -485,13 +487,14 @@ def render_make(uploaded, category="交換専用"):
                 manual.setdefault(row, {})["カテゴリ"] = gsel
             elif "カテゴリ" in cur and cur.get("カテゴリ") not in cat_opts:
                 manual[row].pop("カテゴリ", None)
-            # バッジ(L)：BOX/未開封は「未開封」、鑑定品は「PSA10」等。複数はカンマ。
-            badge_opts = ["（なし）", "未開封", "PSA10", "PSA9", "PSA8", "発送のみ", "シングルカード", "傷あり"]
-            cb = cur.get("バッジ", "")
-            bi = badge_opts.index(cb) if cb in badge_opts else 0
-            bsel = gc2.selectbox("バッジ(L)（BOXは未開封など）", badge_opts, index=bi, key=f"badge_{row}")
-            if bsel != "（なし）":
-                manual.setdefault(row, {})["バッジ"] = bsel
+            # バッジ(L)：BOX/未開封は「未開封」、鑑定品は「PSA10」等。
+            # 「PSA10＋発送のみ」のように2つ併用する賞があるので最大2つ選べる（管理画面はカンマ区切り）。
+            badge_opts = ["未開封", "PSA10", "PSA9", "PSA8", "発送のみ", "シングルカード", "傷あり"]
+            cb = [b.strip() for b in (cur.get("バッジ", "") or "").split(",") if b.strip() in badge_opts]
+            bsel = gc2.multiselect("バッジ(L)（最大2つ・BOXは未開封など）", badge_opts,
+                                   default=cb[:2], max_selections=2, key=f"badge2_{row}")
+            if bsel:
+                manual.setdefault(row, {})["バッジ"] = ",".join(bsel)
             elif "バッジ" in cur:
                 manual[row].pop("バッジ", None)
             with st.expander("正しい画像が無い時（アップロード / URL / 演出パレット）"):
