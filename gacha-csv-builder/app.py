@@ -77,8 +77,8 @@ def _prize_worthy(row, values, min_value=PRIZE_MIN_VALUE):
     画像URL末尾の a{id}（例 089-063-ex-a25989.webp → id 25989）で card_db_export の還元ptを引く。"""
     import re as _re
     src = B.get(row, "source") or ""
-    if src.startswith("DOPA") or src.startswith("公式"):
-        return True   # 綺麗ソース（DOPA/公式）は常に残す
+    if src.startswith("DOPA") or src.startswith("公式") or src.startswith("カードラッシュ"):
+        return True   # 綺麗ソース（DOPA/公式/カードラッシュ）は常に残す
     m = _re.search(r"a(\d+)\.\w+$", B.get(row, "画像URL", "image_url", "image") or "")
     if not m:
         return True

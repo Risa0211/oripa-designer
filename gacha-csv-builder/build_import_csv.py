@@ -345,7 +345,7 @@ def _master_prefer(a, b):
     def score(r):
         s = 0
         src = (get(r, "source") or "")
-        if src.startswith("DOPA") or src.startswith("公式"):
+        if src.startswith("DOPA") or src.startswith("公式") or src.startswith("カードラッシュ"):
             s += 4
         if "minnano-toreka.com" in (get(r, "画像URL", "image_url", "image") or "").lower():
             s += 2
@@ -375,10 +375,10 @@ def dedupe_master_rows(rows):
 
 
 def _is_clean_source(row):
-    """綺麗画像ソース（DOPA＝サイトから引っ張った / 公式＝pokemon-card.com）か。
-    これらに同じカードがあれば管理画面(粗い)版は載せない＝優先 DOPA/公式 ＞ 管理画面。"""
+    """綺麗画像ソース（DOPA / 公式=pokemon-card.com / カードラッシュ）か。
+    これらに同じカードがあれば管理画面(粗い)版は載せない＝優先 綺麗ソース ＞ 管理画面。"""
     s = get(row, "source") or ""
-    return s.startswith("DOPA") or s.startswith("公式")
+    return s.startswith("DOPA") or s.startswith("公式") or s.startswith("カードラッシュ")
 
 
 def drop_admin_dupes_of_clean(rows):
