@@ -76,8 +76,9 @@ def _prize_worthy(row, values, min_value=PRIZE_MIN_VALUE):
     """管理画面由来の行を価値でふるう。DOPAは常に残す。値が引けない行も安全側で残す。
     画像URL末尾の a{id}（例 089-063-ex-a25989.webp → id 25989）で card_db_export の還元ptを引く。"""
     import re as _re
-    if (B.get(row, "source") or "").startswith("DOPA"):
-        return True
+    src = B.get(row, "source") or ""
+    if src.startswith("DOPA") or src.startswith("公式"):
+        return True   # 綺麗ソース（DOPA/公式）は常に残す
     m = _re.search(r"a(\d+)\.\w+$", B.get(row, "画像URL", "image_url", "image") or "")
     if not m:
         return True
@@ -92,7 +93,7 @@ def load_master():
     低額カード（オリパ賞にならない）は事前ロードしない（要追加で都度検索は可能＝カバレッジ維持）。
     保管庫の画像自体は一切消さない。最後に同一カード（型番＋名前）はDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
-    for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
+    for extra in (ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv", HERE / "master_db_admin.csv"):
         if extra.exists():
             rows = rows + B.read_csv_dict(str(extra))
     vals = load_prize_values()
@@ -129,7 +130,7 @@ def load_store():
     DOPA重複＋還元pt≤¥1,000の低額カードはツールに載せない＝軽量化（保管庫の画像は消さない）。
     その後、同一カード（型番＋名前）の残り重複もDOPA優先で1件に集約。"""
     rows = B.read_csv_dict(str(MASTER_CSV))
-    for extra in (ONEPIECE_CSV, HERE / "master_db_admin.csv"):
+    for extra in (ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv", HERE / "master_db_admin.csv"):
         if extra.exists():
             rows = rows + B.read_csv_dict(str(extra))
     vals = load_prize_values()

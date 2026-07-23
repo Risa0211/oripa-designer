@@ -345,7 +345,7 @@ def _master_prefer(a, b):
     def score(r):
         s = 0
         src = (get(r, "source") or "")
-        if src.startswith("DOPA"):
+        if src.startswith("DOPA") or src.startswith("公式"):
             s += 4
         if "minnano-toreka.com" in (get(r, "画像URL", "image_url", "image") or "").lower():
             s += 2
@@ -374,14 +374,20 @@ def dedupe_master_rows(rows):
     return [seen[cid] for cid in order] + out_nok
 
 
+def _is_clean_source(row):
+    """綺麗画像ソース（DOPA＝サイトから引っ張った / 公式＝pokemon-card.com）か。
+    これらに同じカードがあれば管理画面(粗い)版は載せない＝優先 DOPA/公式 ＞ 管理画面。"""
+    s = get(row, "source") or ""
+    return s.startswith("DOPA") or s.startswith("公式")
+
+
 def drop_admin_dupes_of_clean(rows):
-    """『サイトから引っ張ってきた綺麗な画像(DOPA)』と同じカードの管理画面(粗い)画像は、
-    ツールの照合リストに載せない＝表示を軽くする。保管庫(WP)からは削除しない（安全）。
-    DOPAに無いカードの管理画面画像は残す（外すと足りなくなるため）。
+    """綺麗版(DOPA/公式)と同じカードの管理画面(粗い)画像は、ツールの照合リストに載せない
+    ＝表示を軽くする。保管庫(WP)からは削除しない（安全）。綺麗版に無いカードの管理画面画像は残す。
     重複判定: 型番一致 or カード名一致（どちらかが綺麗版に在れば管理画面版を落とす）。"""
     clean_katas, clean_names = set(), set()
     for r in rows:
-        if (get(r, "source") or "").startswith("DOPA"):
+        if _is_clean_source(r):
             k = norm_key(get(r, "型番", "kataban", "card_number", "number"))
             if k:
                 clean_katas.add(k)
@@ -390,7 +396,7 @@ def drop_admin_dupes_of_clean(rows):
                 clean_names.add(nm)
     out = []
     for r in rows:
-        if (get(r, "source") or "").startswith("DOPA"):
+        if _is_clean_source(r):
             out.append(r)
             continue
         k = norm_key(get(r, "型番", "kataban", "card_number", "number"))
