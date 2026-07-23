@@ -13,6 +13,7 @@ st.set_page_config(
     page_title="みんなのトレカ オリパ設計ツール",
     page_icon="assets/icon.png",
     layout="wide",
+    initial_sidebar_state="expanded",  # 計算結果サマリーを常時表示
 )
 
 # ログイン認証
@@ -109,9 +110,8 @@ with header_cols[0]:
 with header_cols[1]:
     st.markdown(
         """
-        <div style='padding-top: 20px;'>
+        <div style='padding-top: 28px;'>
           <h2 style='margin:0; color:#1a1a1a;'>オリパ商品設計ツール</h2>
-          <p style='margin:0; color:#666; font-size:14px;'>競合設計を参考に、在庫から商品構成を自動生成します</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -305,12 +305,45 @@ def _fetch_price_for_url(snk_url, card_name, rarity):
 # ---------- メインタブ ----------
 (tab_design, tab_template,
  tab_research,
- tab_products, tab_inventory) = st.tabs([
+ tab_products) = st.tabs([
     "🎯 ガチャ設計",
     "📋 景品設計（競合コピー）",
     "🔎 競合リサーチ",
-    "🎰 作成済みガチャ", "🃏 商品一覧"
+    "🎰 作成済みガチャ"
 ])
+
+
+@st.fragment(run_every="1s")  # サイドバーの計算結果を約1秒ごとに自動更新（設計fragmentがstateに書いた値を読む）
+def _design_sidebar():
+    s = st.session_state.get("pz_summary")
+    st.markdown("### 📊 計算結果")
+    if not s:
+        st.caption("設計するとここに表示されます")
+        return
+    _vmark = {"OK": "🟢 OK 公開可", "注意": "🟡 注意（公開可）", "NG": "🔴 NG 公開不可"}[s["verdict"]]
+    _win = f"1/{s['total_tickets']/s['card_win_count']:.1f}" if s["card_win_count"] else "-"
+    _cnt_ok = s["count_sum"] == s["total_tickets"]
+    _cnt_mk = "🟢" if _cnt_ok else "🔴"
+    st.markdown(f"**{_vmark}**")
+    st.caption(f"**{s['title'] or '（無題）'}**")
+    st.caption(f"単価{s['unit_price']:,}pt × {s['total_tickets']:,}口 ＝ 売上¥{s['revenue']:,}")
+    # 1行=1指標のコンパクト表示（サイドバー幅で数値が切れないように）
+    st.markdown(
+        f"<div style='line-height:1.9;font-size:0.9rem;'>"
+        f"顧客還元率 <b style='font-size:1.05rem;'>{s['coin_return']:.1%}</b><br>"
+        f"実利益率(運営) <b style='font-size:1.05rem;'>{s['real_profit_rate']:.1%}</b><br>"
+        f"当たり率(現物) <b>{_win}</b><br>"
+        f"最低保証 <b>{s['min_guarantee']:,}pt</b><br>"
+        f"S2 全員pt(最悪) <b>¥{s['s2']:,}</b><br>"
+        f"口数 <b>{s['count_sum']:,}/{s['total_tickets']:,}</b> {_cnt_mk}<br>"
+        f"末広がりEV <b>{s['effective_pt_ev']:.0%}</b>（1.0以上NG）"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    if s["goal_label"]:
+        st.markdown(f"{'🟢' if s['goal_ok'] else '🔴'} **{s['goal_label']}**")
+        st.caption(s["goal_value"])
+    st.caption("🔄 編集すると約1秒で自動更新")
 
 
 @st.fragment  # 設計タブだけを隔離＝表の編集で他タブ(景品設計/競合リサーチ)を再実行しない＝軽くなる
@@ -467,23 +500,6 @@ def _design_fragment():
                 _frag_rerun()
             except (ValueError, KeyError) as e:
                 st.error(f"読み込めませんでした: {e}")
-
-    # 📊 計算結果サマリー：画面上部に固定（sticky）。スクロールしても常に見える＝fragment内なので自動更新。
-    # 中身は下の計算後に流し込む（_summary_ph）。
-    st.markdown("""
-    <style>
-    /* キー付きコンテナの外側ラッパ(stLayoutWrapper)にstickyを付ける＝親が十分高く固定が効く。
-       コンテナ自身に付けると親と同じ高さで固定できないため :has() で1つ外を狙う。 */
-    div[data-testid="stLayoutWrapper"]:has(> .st-key-pz_sticky_summary) {
-        position: sticky; top: 0; z-index: 999;
-        background: var(--background-color, #ffffff);
-        box-shadow: 0 3px 8px rgba(0,0,0,0.08);
-        border-bottom: 2px solid rgba(128,128,128,0.28);
-    }
-    .st-key-pz_sticky_summary { background: var(--background-color, #ffffff); padding: 0.35rem 0.6rem; }
-    </style>
-    """, unsafe_allow_html=True)
-    _summary_ph = st.container(key="pz_sticky_summary")
 
     # ---------- ① 基本情報 ----------
     st.markdown("### ① 基本情報")
@@ -783,31 +799,16 @@ def _design_fragment():
         goal_label = "🎯 カードが当たる確率"
         goal_value = (f"現在 1/{_y:.1f} ／ 目標 1/{goal_n:,}" if _y else f"現在 該当なし ／ 目標 1/{goal_n:,}")
 
-    # ---------- 📊 上部固定サマリー（sticky）に流し込む。fragment内なので編集ごとに自動更新 ----------
-    with _summary_ph:
-        _vmark = {"OK": "🟢 OK 公開可", "注意": "🟡 注意", "NG": "🔴 NG 公開不可"}[res.verdict]
-        _vcolor = {"OK": "#1a7f37", "注意": "#9a6700", "NG": "#cf222e"}[res.verdict]
-        _cnt_icon = "✅" if res.count_sum == total_tickets else "⚠️"
-        _win = (f"1/{total_tickets/res.card_win_count:.1f}" if res.card_win_count else "-")
-        _goal = ""
-        if goal_label:
-            _gm = "🟢" if goal_ok else "🔴"
-            _goal = (f'<span>{_gm} {goal_label.replace("🎯 ", "")}'
-                     f' <b>{goal_value.split("／")[0].strip() if "／" in goal_value else goal_value}</b></span>')
-        st.markdown(
-            '<div style="display:flex;flex-wrap:wrap;gap:0.15rem 1.05rem;align-items:baseline;font-size:0.9rem;line-height:1.5;">'
-            f'<span style="font-weight:700;color:{_vcolor};">📊 {_vmark}</span>'
-            f'<span>顧客還元率 <b>{res.coin_return:.1%}</b></span>'
-            f'<span>実利益率 <b>{res.real_profit_rate:.1%}</b></span>'
-            f'<span>当たり率 <b>{_win}</b></span>'
-            f'<span>最低保証 <b>{res.min_guarantee:,}pt</b></span>'
-            f'<span>S2最悪 <b>¥{res.s2:,}</b></span>'
-            f'<span>口数 <b>{res.count_sum:,}/{total_tickets:,}</b>{_cnt_icon}</span>'
-            f'<span>末広EV <b>{res.effective_pt_ev:.0%}</b></span>'
-            f'{_goal}'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+    # ---------- 📊 計算結果サマリーをstateへ保存（サイドバーfragmentが約1秒毎に自動反映）----------
+    st.session_state["pz_summary"] = {
+        "verdict": res.verdict, "title": pz_title, "unit_price": int(unit_price),
+        "total_tickets": int(total_tickets), "coin_return": res.coin_return,
+        "real_profit_rate": res.real_profit_rate, "card_win_count": res.card_win_count,
+        "min_guarantee": res.min_guarantee, "s2": res.s2, "count_sum": res.count_sum,
+        "effective_pt_ev": res.effective_pt_ev, "sum_display_pt": res.sum_display_pt,
+        "total_markup": res.total_markup, "revenue": res.revenue,
+        "goal_label": goal_label, "goal_ok": goal_ok, "goal_value": goal_value,
+    }
 
     with pz_result:
         # ---------- ④ 計算結果 ----------
@@ -926,6 +927,9 @@ def _design_fragment():
 
 with tab_design:
     _design_fragment()
+# 計算結果は左サイドバーに常時表示（スクロールしても見える・約1秒ごとに自動更新）
+with st.sidebar:
+    _design_sidebar()
 
 
 # ---------- 景品設計タブ（競合コピー型） ----------
@@ -2748,58 +2752,3 @@ with tab_products:
                     st.cache_data.clear()
                     st.rerun()
 
-
-# ---------- 商品一覧タブ（スニダン相場） ----------
-with tab_inventory:
-    import pandas as _pd_inv
-    st.subheader("🃏 商品一覧（スニダン取得カード・BOX・パックと相場）")
-    st.caption("ガチャに入れられるカード/BOX/パックの一覧と相場（スニダン・毎朝自動更新）。『📝 新規設計』の検索と同じデータです。")
-    idx = cached_snkrdunk_index()
-
-    def _inv_kind(tab):
-        if tab.endswith("BOX"):
-            return "BOX"
-        if tab.endswith("パック"):
-            return "パック"
-        if tab.endswith("デッキ"):
-            return "デッキ"
-        return "シングル"
-
-    def _inv_game(tab):
-        return "ワンピ" if tab.startswith("ワンピ") else "ポケカ"
-
-    fc1, fc2, fc3, fc4 = st.columns([3, 2, 2, 2])
-    inv_q = fc1.text_input("カード名・型番で検索", key="inv_q", placeholder="例: リザードン / VSTARユニバース / OP01")
-    inv_game = fc2.multiselect("カテゴリー", ["ポケカ", "ワンピ"], default=["ポケカ", "ワンピ"], key="inv_game")
-    inv_kind = fc3.multiselect("種別", ["シングル", "BOX", "パック", "デッキ"],
-                               default=["シングル", "BOX", "パック", "デッキ"], key="inv_kind")
-    inv_sort = fc4.selectbox("並び", ["相場が高い順", "相場が安い順", "名前順"], key="inv_sort")
-
-    filtered = [it for it in idx if _inv_game(it.tab) in inv_game and _inv_kind(it.tab) in inv_kind]
-    if inv_q:
-        _q = inv_q.lower()
-        filtered = [it for it in filtered
-                    if _q in (it.name or "").lower() or _q in (it.card_no or "").lower()
-                    or _q in (it.series or "").lower()]
-    if inv_sort == "相場が高い順":
-        filtered.sort(key=lambda x: -x.price)
-    elif inv_sort == "相場が安い順":
-        filtered.sort(key=lambda x: x.price)
-    else:
-        filtered.sort(key=lambda x: x.name)
-
-    CAP = 800
-    st.caption(f"該当 {len(filtered):,} 件（表示は先頭 {min(CAP, len(filtered)):,} 件・検索で絞り込めます）｜相場は2系統表示")
-    df_inv = _pd_inv.DataFrame([{
-        "カテゴリー": _inv_game(it.tab), "種別": _inv_kind(it.tab), "カード名": it.name,
-        "レア": it.grade, "型番": it.card_no,
-        "直近取引": (getattr(it, "price_recent", 0) or it.price),
-        "相場": (getattr(it, "price_souba", 0) or None),
-        "スニダン": it.snkrdunk_url,
-    } for it in filtered[:CAP]])
-    st.dataframe(df_inv, use_container_width=True, hide_index=True, column_config={
-        "直近取引": st.column_config.NumberColumn("直近取引", format="¥%d"),
-        "相場": st.column_config.NumberColumn("相場", format="¥%d"),
-        "スニダン": st.column_config.LinkColumn("スニダン", display_text="開く"),
-    })
-    st.caption("💡 毎朝JST6:00に自動更新。**直近取引=PSA10の直近販売価格／相場=スニダンの相場（シングル=PSA10出品最安・BOX等=下限）**。空欄=相場なし（PSA10出品ゼロ）。設計は『📝 新規設計』でこのカードから積めます。")
