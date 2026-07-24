@@ -530,10 +530,11 @@ def render_make(uploaded, category="交換専用"):
     st.subheader("確定してCSVに出力される賞")
     if out_rows:
         st.caption("表の値を直接編集できます。『削除』にチェックした賞はCSVから外れます"
-                   "（カード名・カテゴリ・還元pt・在庫はダブルクリックで書き換え）。")
+                   "（ランク・カード名・カテゴリ・バッジ・還元pt・在庫・画像URLはダブルクリックで書き換え）。"
+                   "画像を差し替えたい時は『画像URL』を新しいURLに書き換えてください。")
         edit_src = [{"_i": i, "削除": False, "画像": r[5],
                      "ランク": r[10], "カード名": r[1], "カテゴリ(G)": r[6],
-                     "還元pt": r[4], "在庫": r[7]}
+                     "バッジ": r[11], "還元pt": r[4], "在庫": r[7], "画像URL": r[5]}
                     for i, r in enumerate(out_rows)]
         edited = st.data_editor(
             edit_src, use_container_width=True, hide_index=True, key="confirm_editor",
@@ -541,11 +542,15 @@ def render_make(uploaded, category="交換専用"):
                 "_i": None,
                 "削除": st.column_config.CheckboxColumn("削除", width="small"),
                 "画像": st.column_config.ImageColumn("画像", width="small"),
-                "ランク": st.column_config.TextColumn("ランク", disabled=True),
+                "ランク": st.column_config.TextColumn("ランク"),
                 "カード名": st.column_config.TextColumn("カード名"),
                 "カテゴリ(G)": st.column_config.TextColumn("カテゴリ(G)"),
+                "バッジ": st.column_config.TextColumn(
+                    "バッジ", help="PSA10,発送のみ のようにカンマで最大2つ"),
                 "還元pt": st.column_config.TextColumn("還元pt"),
                 "在庫": st.column_config.TextColumn("在庫"),
+                "画像URL": st.column_config.TextColumn(
+                    "画像URL", help="書き換えると左の画像プレビューも更新されます", width="large"),
             })
         # 編集・削除を out_rows に反映して最終行を作る
         final_rows = []
@@ -553,10 +558,17 @@ def render_make(uploaded, category="交換専用"):
             if e.get("削除"):
                 continue
             r = list(out_rows[int(e["_i"])])
+            r[10] = str(e.get("ランク", r[10]) or "")
             r[1] = str(e.get("カード名", r[1]) or "")
             r[6] = str(e.get("カテゴリ(G)", r[6]) or "")
+            r[11] = str(e.get("バッジ", r[11]) or "")
             r[4] = str(e.get("還元pt", r[4]) or "")
             r[7] = str(e.get("在庫", r[7]) or "")
+            new_url = str(e.get("画像URL", r[5]) or "")
+            if new_url and new_url != r[5]:
+                r[5] = new_url
+                if not r[0]:      # A URL(非表示)が空なら画像URLで補完
+                    r[0] = new_url
             final_rows.append(r)
         dropped = len(out_rows) - len(final_rows)
         if dropped:
