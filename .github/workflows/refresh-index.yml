@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # 価格CSVを書き戻す際の rebase が浅いクローンだと失敗するため全履歴
 
       - name: Set up Python
         uses: actions/setup-python@v5
