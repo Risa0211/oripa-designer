@@ -61,8 +61,24 @@ def wp_creds():
 PRIZE_MIN_VALUE = 1000   # 還元pt(≒価値)がこれ以下の管理画面カードは事前ロードしない（賞にならない＝要追加で都度検索は可能）
 
 
+def csv_sig(*paths):
+    """★キャッシュ用のファイル署名（更新時刻＋サイズ）。
+    Streamlit Cloud の「Updated app!」はプロセスを再起動しないホットリロードで、
+    @st.cache_data のキーは**関数のコード**から作られる。そのため app.py が変わらず
+    CSVだけ差し替わった時（毎朝の価格自動コミット等）にキャッシュが無効化されず、
+    古いデータを読み続ける。署名を引数に渡してファイルが変わったら読み直させる。"""
+    sig = []
+    for p in paths:
+        try:
+            s = Path(p).stat()
+            sig.append((str(p), s.st_mtime_ns, s.st_size))
+        except OSError:
+            sig.append((str(p), 0, 0))
+    return tuple(sig)
+
+
 @st.cache_data(show_spinner=False)
-def load_prize_values():
+def _load_prize_values(sig):
     """card_db_export の還元pt(≒カード価値)。id→pt。低額カードを事前ロードから外す判定に使う。"""
     vals = {}
     if ADMIN_CSV.exists():
@@ -72,6 +88,10 @@ def load_prize_values():
             except Exception:
                 pass
     return vals
+
+
+def load_prize_values():
+    return _load_prize_values(csv_sig(ADMIN_CSV))
 
 
 def _prize_worthy(row, values, min_value=PRIZE_MIN_VALUE):
@@ -89,7 +109,7 @@ def _prize_worthy(row, values, min_value=PRIZE_MIN_VALUE):
 
 
 @st.cache_data(show_spinner=False)
-def load_master():
+def _load_master(sig):
     """①照合用のカード原簿（DOPA綺麗 ＋ DOPAに無い『賞になりうる』管理画面カード）。
     軽量化: (1)DOPAに綺麗版があるカードの管理画面(粗い)重複は載せない (2)還元pt≤¥1,000の
     低額カード（オリパ賞にならない）は事前ロードしない（要追加で都度検索は可能＝カバレッジ維持）。
@@ -103,13 +123,21 @@ def load_master():
     return B.dedupe_master_rows(B.drop_admin_dupes_of_clean(rows))
 
 
+def load_master():
+    return _load_master(csv_sig(MASTER_CSV, ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv", HERE / "master_db_admin.csv", ADMIN_CSV))
+
+
 @st.cache_data(show_spinner="管理画面ダンプ読込中…")
-def load_admin():
+def _load_admin(sig):
     return SH.load_admin(str(ADMIN_CSV))
 
 
+def load_admin():
+    return _load_admin(csv_sig(ADMIN_CSV))
+
+
 @st.cache_data(show_spinner=False)
-def load_categories():
+def _load_categories(sig):
     """管理画面に実在するカードフォルダー名（G Categoryの有効値）を件数順で返す。
     CSVインポートはこの名前と完全一致しないと弾かれるため、選択式にして事故を防ぐ。"""
     from collections import Counter
@@ -121,18 +149,27 @@ def load_categories():
     return ["未登録"] + opts
 
 
+def load_categories():
+    return _load_categories(csv_sig(ADMIN_CSV))
+
+
 @st.cache_data(show_spinner=False)
-def load_snk_prices():
+def _load_snk_prices(sig):
     """スニダン価格（型番→直近取引価格/相場）。約580KBの軽量CSVなので初期読込は一瞬。
-    ファイルが無ければ空＝価格表示だけOFFになり、他の機能は今まで通り動く。"""
-    return SP.load(str(SNK_PRICE_CSV))
+    ファイルが無ければ空＝価格表示だけOFFになり、他の機能は今まで通り動く。
+    戻り値 (型番→行リスト, 基準日=一番新しい更新日)。"""
+    prices = SP.load(str(SNK_PRICE_CSV))
+    days = {r.get("updated", "") for rows in prices.values() for r in rows}
+    return prices, max((d for d in days if d), default="")
 
 
-@st.cache_data(show_spinner=False)
+def load_snk_prices():
+    return _load_snk_prices(csv_sig(SNK_PRICE_CSV))[0]
+
+
 def snk_updated_on():
-    """価格データの基準日（一番新しい更新日）。画面に出して鮮度が分かるようにする。"""
-    days = {r.get("updated", "") for rows in load_snk_prices().values() for r in rows}
-    return max((d for d in days if d), default="")
+    """価格データの基準日。画面に出して鮮度が分かるようにする。"""
+    return _load_snk_prices(csv_sig(SNK_PRICE_CSV))[1]
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,7 +178,7 @@ def load_palette():
 
 
 @st.cache_data(show_spinner=False)
-def load_store():
+def _load_store(sig):
     """保管庫マスター（DOPA綺麗 ＋ DOPAに無い『賞になりうる』管理画面カード）。カード名/型番/URL/媒体id付き。
     DOPA重複＋還元pt≤¥1,000の低額カードはツールに載せない＝軽量化（保管庫の画像は消さない）。
     その後、同一カード（型番＋名前）の残り重複もDOPA優先で1件に集約。"""
@@ -152,6 +189,10 @@ def load_store():
     vals = load_prize_values()
     rows = [r for r in rows if _prize_worthy(r, vals)]
     return B.dedupe_master_rows(B.drop_admin_dupes_of_clean(rows))
+
+
+def load_store():
+    return _load_store(csv_sig(MASTER_CSV, ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv", HERE / "master_db_admin.csv", ADMIN_CSV))
 
 
 def parse_design(uploaded):
