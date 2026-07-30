@@ -97,6 +97,36 @@ def load_csv(game):
         return list(csv.DictReader(f))
 
 
+# 書き戻す列＝repriceが実際に取り直すものだけ。souba等はrecomputeの計算列なので触らない
+# （非singleのsoubaを計算値で上書きすると snkrdunk_index のBOX/パック候補が消える）。
+REPRICE_COLS = ("psa10_price", "ask_price", "min_price", "note", "priced_at")
+
+
+def save_csv(game, rows):
+    """再取得した価格を元CSVに書き戻す。★これをしないと毎朝の再取得がシートにしか残らず、
+    リポジトリ同梱CSVを使う側（ガチャ登録CSVビルダー / 無在庫モードの景品候補）が古い値のままになる。
+    apparel_id で突き合わせ、価格列だけ差し替える（列構成・行順・他の値は元のまま）。"""
+    path = os.path.join(DATA, CSV_BY_GAME[game])
+    with open(path, encoding="utf-8") as f:
+        rd = csv.DictReader(f)
+        fields = rd.fieldnames or []
+        base = list(rd)
+    if not fields:
+        return
+    by_id = {r.get("apparel_id"): r for r in rows}
+    for b in base:
+        u = by_id.get(b.get("apparel_id"))
+        if not u:
+            continue
+        for col in REPRICE_COLS:
+            if col in fields and col in u:
+                b[col] = u[col]
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(base)
+
+
 def _int(v):
     try:
         return int(v or 0)
@@ -154,6 +184,8 @@ def reprice(rows):
                 mp = fetch_min_price(r["url"])               # 相場(表記下限)
                 if mp:
                     upd["min_price"] = str(mp)
+            if upd:
+                upd["priced_at"] = now_jst()                 # いつ時点の価格かをCSVに残す
         except Exception:
             pass
         return r, upd
@@ -318,6 +350,7 @@ def main():
             recompute(rows)  # CSV baselineから souba_sort等を先に確定(repriceの高額判定に必要)
             if args.reprice:
                 tg, ok = reprice(rows); detail = f"価格再取得 {ok}/{tg}"
+                save_csv(game, rows)   # 再取得結果をCSVに永続化(CSVを使う他ツールにも反映される)
             recompute(rows)  # 再取得分を反映
         except Exception as e:
             ok_flag = False; overall_ok = False; detail = str(e)[:80]

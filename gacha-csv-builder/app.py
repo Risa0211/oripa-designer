@@ -25,12 +25,14 @@ import storehouse as SH
 import wp_client as WP
 import wp_admin as WPA
 import gacha_api as G   # WPプラグイン経由（Xserver国外IP制限を回避してアップ/検索/編集/削除）
+import snkrdunk_price as SP   # スニダンの直近取引価格/相場を型番で引く（画像を選ぶ画面に併記）
 from auth import check_password
 
 HERE = Path(__file__).parent
 MASTER_CSV = HERE / "master_db_dopa.csv"
 ONEPIECE_CSV = HERE / "master_db_onepiece.csv"   # DOPAワンピ由来（自社WP保管）
 ADMIN_CSV = HERE / "card_db_export.csv"
+SNK_PRICE_CSV = HERE / "snkrdunk_prices.csv"     # 価格インデックスの軽量版（毎朝GitHub Actionsが更新）
 PALETTE_CSVS = [HERE / "palette_pseudo.csv", HERE / "palette_extra.csv"]
 LOGO = HERE / "assets" / "logo.png"
 ICON = HERE / "assets" / "icon.png"
@@ -119,6 +121,20 @@ def load_categories():
     return ["未登録"] + opts
 
 
+@st.cache_data(show_spinner=False)
+def load_snk_prices():
+    """スニダン価格（型番→直近取引価格/相場）。約580KBの軽量CSVなので初期読込は一瞬。
+    ファイルが無ければ空＝価格表示だけOFFになり、他の機能は今まで通り動く。"""
+    return SP.load(str(SNK_PRICE_CSV))
+
+
+@st.cache_data(show_spinner=False)
+def snk_updated_on():
+    """価格データの基準日（一番新しい更新日）。画面に出して鮮度が分かるようにする。"""
+    days = {r.get("updated", "") for rows in load_snk_prices().values() for r in rows}
+    return max((d for d in days if d), default="")
+
+
 @st.cache_resource(show_spinner=False)
 def load_palette():
     return palette_lookup.load_palette(*[str(p) for p in PALETTE_CSVS if p.exists()])
@@ -167,6 +183,25 @@ def palette_options(palette):
 master_rows = load_master()
 palette = load_palette()
 pal_opts = palette_options(palette)
+# 確定表の行（A〜L 12列）から元のカードを引き戻す索引。CSVには型番列が無いので画像URL→原簿で辿る。
+CARD_BY_URL = {}
+CARD_BY_NAME = {}
+for _r in master_rows:
+    _u = B.get(_r, "画像URL", "image_url", "image")
+    if _u:
+        CARD_BY_URL.setdefault(_u, _r)
+    _n = B._name_key(B.get(_r, "カード名", "name"))
+    if _n:
+        CARD_BY_NAME.setdefault(_n, []).append(_r)
+
+
+def card_of_row(image_url, title):
+    """確定行から原簿のカードを特定（画像URL優先→カード名が1件に決まる時のみ名前）。"""
+    m = CARD_BY_URL.get(image_url)
+    if m:
+        return m
+    cands = CARD_BY_NAME.get(B._name_key(title)) or []
+    return cands[0] if len(cands) == 1 else None
 def _load_gacha_api_env():
     """受け口の設定を Streamlit Secrets → 環境変数 の順で読み、gacha_api が拾えるよう os.environ に載せる。
     （Streamlit Cloud の Secrets は os.environ に自動で入らないため）。"""
@@ -254,6 +289,75 @@ with st.sidebar:
     st.markdown(f"照合カード（綺麗な画像優先）: **{len(master_rows):,}**　演出パレット: **{len(pal_opts)}**")
     st.markdown(("画像の追加/編集/削除: **有効**" if can_write
                  else "画像の追加/編集/削除: **停止中**（Secretsに WP_USER / WP_APP_PASS を設定すると有効）"))
+    _snk_n = len(load_snk_prices())
+    if _snk_n:
+        st.markdown(f"スニダン価格: **{_snk_n:,}型番**（{snk_updated_on() or '日付不明'}時点）")
+        st.caption("画像の下に「直近取引＝PSA10の直近成約／相場＝PSA10の出品最安」を併記します。"
+                   "今この瞬間の値が見たい時は各セクションの🔄で取り直せます。")
+    else:
+        st.markdown("スニダン価格: **なし**（snkrdunk_prices.csv 未配置）")
+
+
+# ---- スニダン価格（画像の横に併記）----
+def snk_price(kata, name="", rarity=""):
+    """型番＋カード名でスニダン価格を引く（誤マッチ防止のため名前が合わない時は価格を出さない）。"""
+    return SP.lookup(load_snk_prices(), kata, name, rarity)
+
+
+def snk_live_of(res):
+    """🔄で取り直した『今の値』があれば (sale, ask) を返す。無ければNone。"""
+    if not res or res.get("status") != "ok" or not res.get("aid"):
+        return None
+    v = st.session_state.get("snk_live", {}).get(res["aid"])
+    if not v or (v[0] is None and v[1] is None):
+        return None
+    return (res["sale"] if v[0] is None else v[0], res["ask"] if v[1] is None else v[1])
+
+
+def snk_show(res):
+    """候補サムネの下に価格2行を出す。"""
+    html = SP.caption_html(res, live=snk_live_of(res))
+    if html:
+        st.markdown(html, unsafe_allow_html=True)
+
+
+def snk_cell(res, which):
+    """確定表のセル表示（which="sale" 直近取引価格 / "ask" 相場）。"""
+    if not res or res["status"] in ("off", "nohit"):
+        return ""
+    if res["status"] == "namemismatch":
+        return "要確認"
+    live = snk_live_of(res)
+    v = (live[0] if which == "sale" else live[1]) if live else res[which]
+    txt = f"¥{int(v):,}" if v else ""
+    if res["status"] == "multi":
+        lo, hi = res.get(f"{which}_range", (0, 0))
+        txt = (f"¥{lo:,}〜¥{hi:,}" if lo != hi else (f"¥{hi:,}" if hi else "")) + "?"
+    return ("⚡" + txt) if (live and txt) else txt
+
+
+def snk_live_button(aids, key):
+    """押した時だけスニダンに問い合わせて『今の値』を取り直す（既定は毎朝更新のキャッシュ値を表示）。"""
+    aids = [a for a in dict.fromkeys(aids) if a]
+    if not aids:
+        return
+    if st.button(f"🔄 スニダンの今の価格を取り直す（{len(aids)}枚）", key=f"snklive_{key}",
+                 help="押した時だけスニダンに問い合わせます（1枚あたり約1秒）。普段は毎朝更新の値を表示。"):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        store = st.session_state.setdefault("snk_live", {})
+        bar = st.progress(0.0, text="スニダンから取得中…")
+        done = 0
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            futs = {ex.submit(SP.fetch_live, a): a for a in aids}
+            for fut in as_completed(futs):
+                try:
+                    store[futs[fut]] = fut.result()
+                except Exception:
+                    pass
+                done += 1
+                bar.progress(done / len(aids), text=f"スニダンから取得中… {done}/{len(aids)}枚")
+        bar.empty()
+        st.rerun()
 
 
 def resolve_image_url(row, src_url, filename, title):
@@ -405,6 +509,10 @@ def render_make(uploaded, category="交換専用"):
     # ---- 要選択：同名で絵柄が複数 ----
     if ambiguous:
         st.subheader("画像を選ぶ（同名で絵柄が複数）")
+        # 候補ごとのスニダン価格を先に引く（ローカルCSV参照なので通信なし＝軽い）
+        amb_res = {(a["row"], i): snk_price(c["型番"], c["カード名"], c["レアリティ"])
+                   for a in ambiguous for i, c in enumerate(a["候補"])}
+        snk_live_button([r.get("aid") for r in amb_res.values()], "ambiguous")
         for a in ambiguous:
             row = a["row"]
             st.markdown(f"**{a['ランク']}　{a['設計上の名前']}**　"
@@ -417,6 +525,7 @@ def render_make(uploaded, category="交換専用"):
                     if c["画像URL"]:
                         show_img(c["画像URL"])
                     st.caption(f'{c["型番"]}｜{c["レアリティ"]}')
+                    snk_show(amb_res[(row, idx)])
                 labels.append(f'{c["型番"]}｜{c["レアリティ"]}｜{c["カード名"]}')
             choice = st.radio("絵柄を選択", ["（未選択）"] + labels,
                               key=f"radio_{row}", horizontal=True, label_visibility="collapsed")
@@ -446,6 +555,9 @@ def render_make(uploaded, category="交換専用"):
                              "image_url": w["image_url"], "title": w["name"],
                              "category": "", "id": "", "source": "保管庫(WP)"})
             if hits:
+                hit_res = [snk_price(h.get("kata", ""), h.get("name", "") or h.get("title", ""),
+                                     h.get("rarity", "")) for h in hits]
+                snk_live_button([r.get("aid") for r in hit_res], f"unmatched_{row}")
                 cols = st.columns(6)
                 for idx, h in enumerate(hits):
                     with cols[idx % 6]:
@@ -453,6 +565,7 @@ def render_make(uploaded, category="交換専用"):
                             show_img(h["image_url"])
                         src = "保管庫" if h["image_url"].startswith(WP.WP_BASE) else "管理画面"
                         st.caption(f'{h["title"][:22]}\n［{src}］')
+                        snk_show(hit_res[idx])
                         if st.button("これを使う", key=f"use_{row}_{idx}"):
                             fn = SH.san_filename(h.get("kata", ""), name, f"a{idx}",
                                                  ext=os.path.splitext(h["image_url"])[1] or ".png")
@@ -531,10 +644,22 @@ def render_make(uploaded, category="交換専用"):
     if out_rows:
         st.caption("表の値を直接編集できます。『削除』にチェックした賞はCSVから外れます"
                    "（ランク・カード名・カテゴリ・バッジ・還元pt・在庫・画像URLはダブルクリックで書き換え）。"
-                   "画像を差し替えたい時は『画像URL』を新しいURLに書き換えてください。")
+                   "画像を差し替えたい時は『画像URL』を新しいURLに書き換えてください。"
+                   "『直近取引価格』『相場』はスニダンの参考値（編集不可・還元ptを決める目安）。")
+        # 各確定行のスニダン価格（画像URL→原簿→型番で照合。通信なし）
+        conf_res = []
+        for r in out_rows:
+            m = card_of_row(r[5], r[1])
+            conf_res.append(snk_price(B.get(m or {}, "型番", "kataban"),
+                                      B.get(m or {}, "カード名", "name") or r[1],
+                                      B.get(m or {}, "レアリティ", "rarity")) if m else None)
+        snk_live_button([(x or {}).get("aid") for x in conf_res], "confirm")
         edit_src = [{"_i": i, "削除": False, "画像": r[5],
                      "ランク": r[10], "カード名": r[1], "カテゴリ(G)": r[6],
-                     "バッジ": r[11], "還元pt": r[4], "在庫": r[7], "画像URL": r[5]}
+                     "バッジ": r[11], "還元pt": r[4], "在庫": r[7],
+                     "直近取引価格": snk_cell(conf_res[i], "sale"),
+                     "相場": snk_cell(conf_res[i], "ask"),
+                     "画像URL": r[5]}
                     for i, r in enumerate(out_rows)]
         edited = st.data_editor(
             edit_src, use_container_width=True, hide_index=True, key="confirm_editor",
@@ -549,6 +674,12 @@ def render_make(uploaded, category="交換専用"):
                     "バッジ", help="PSA10,発送のみ のようにカンマで最大2つ"),
                 "還元pt": st.column_config.TextColumn("還元pt"),
                 "在庫": st.column_config.TextColumn("在庫"),
+                "直近取引価格": st.column_config.TextColumn(
+                    "直近取引価格", disabled=True, width="medium",
+                    help="スニダンPSA10の直近成約価格（成約が無い＝空欄）。編集不可の参考値"),
+                "相場": st.column_config.TextColumn(
+                    "相場", disabled=True, width="medium",
+                    help="スニダンPSA10の出品最安（今出ている売り希望の下限。成約より高めに出る）。編集不可の参考値"),
                 "画像URL": st.column_config.TextColumn(
                     "画像URL", help="書き換えると左の画像プレビューも更新されます", width="large"),
             })
@@ -624,6 +755,7 @@ def card_cell(h):
         show_img(h["image_url"])
     st.markdown(f"**{h['name'][:20]}**", unsafe_allow_html=True)
     st.code(h["kata"] or "—", language=None)     # 型番＝一番使うのですぐコピー
+    snk_show(snk_price(h.get("kata", ""), h.get("name", ""), h.get("rarity", "")))
     with st.expander("コピー / 編集"):
         st.caption("カード名"); st.code(h["name"], language=None)
         st.caption("レア"); st.code(h["rarity"] or "—", language=None)
