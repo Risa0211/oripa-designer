@@ -17,6 +17,27 @@ def norm(s):
     return re.sub(r"\s+", "", s).upper()
 
 
+def _query_tokens(query):
+    """検索語を『語ごとのAND一致』用トークンに分解する。
+    設計名の但し書き（例『VSTARユニバース(1BOX)』の(1BOX)）は括弧ごと外す。
+    括弧外に残った空白区切りの各語をトークンにし、正規化(NFKC/空白除去/大文字)して返す。
+    括弧内しか語が無い場合(例『(◯◯pt)』)は、括弧内も語として拾って空振りを防ぐ。"""
+    s = unicodedata.normalize("NFKC", str(query or ""))
+    stripped = re.sub(r"[（(\[［【｛{].*?[）)\]］】｝}]", " ", s)   # 括弧＋中身を除去
+    toks = [norm(t) for t in re.split(r"\s+", stripped) if norm(t)]
+    if not toks:  # 括弧しか無かった → 中身を語として使う
+        inner = re.sub(r"[（(\[［【｛{）)\]］】｝}]", " ", s)
+        toks = [norm(t) for t in re.split(r"\s+", inner) if norm(t)]
+    return toks
+
+
+def _matches(query, text):
+    """text(タイトル等)が検索語に一致するか。語ごとのAND一致（全トークンが含まれる）。"""
+    nt = norm(text)
+    toks = _query_tokens(query)
+    return bool(toks) and all(tok in nt for tok in toks)
+
+
 def san_filename(*parts, ext=".png"):
     """型番/名前などからASCIIの安全なファイル名を作る（競合名や日本語を避ける）。"""
     base = "_".join(str(p) for p in parts if p)
@@ -61,13 +82,12 @@ def base_name(title):
 def search_admin(admin_rows, query, limit=24):
     """管理画面ダンプをタイトル部分一致で検索（画像URLありのみ）。
     戻り値: [{"name","rarity","kata","image_url","title","category","id","source"}]"""
-    q = norm(query)
-    if not q:
+    if not _query_tokens(query):
         return []
     out = []
     for r in admin_rows:
         t = r.get("title", "")
-        if q in norm(t) and (r.get("image_url") or "").strip():
+        if _matches(query, t) and (r.get("image_url") or "").strip():
             out.append({
                 "name": base_name(t) or t,
                 "rarity": extract_rarity(t),
@@ -94,12 +114,11 @@ def load_dopa_master(path):
 def search_dopa(master_rows, query, limit=24):
     """自社保管庫(DOPA由来)をカード名/型番の部分一致で検索。
     戻り値: [{"name","rarity","kata","image_url","title","source"}]"""
-    q = norm(query)
-    if not q:
+    if not _query_tokens(query):
         return []
     out = []
     for r in master_rows:
-        if q in norm(r.get("カード名", "")) or q in norm(r.get("型番", "")):
+        if _matches(query, r.get("カード名", "")) or _matches(query, r.get("型番", "")):
             out.append({
                 "name": r.get("カード名", ""),
                 "rarity": r.get("レアリティ", ""),
