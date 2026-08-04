@@ -800,31 +800,39 @@ def render_make(uploaded, category="交換専用"):
                                     format_func=lambda k: labels[k], key="chg_pick")
                 row, name, _rk = conf[sidx]
                 cur_ov = manual.get(row, {}).get("画像URL上書き", "")
-                cc1, cc2 = st.columns([3, 1])
+                cc1, cc2, cc3 = st.columns([3, 1, 1])
                 q = cc1.text_input("検索ワード（部分一致）", value=name, key=f"chg_q_{row}")
-                if cur_ov and cc2.button("元の画像に戻す", key=f"chg_reset_{row}"):
+                # ★検索は押した時だけ実行（既定では走らせない＝CSV出力までを軽く保つ）。
+                if cc2.button("🔍 検索して選ぶ", key=f"chg_go_{row}"):
+                    st.session_state["chg_show"] = (row, q)
+                if cur_ov and cc3.button("元の画像に戻す", key=f"chg_reset_{row}"):
                     for k in ("画像URL上書き", "レアリティ", "型番", "カテゴリ", "バッジ"):
                         manual.get(row, {}).pop(k, None)
+                    st.session_state.pop("chg_show", None)
                     st.rerun()
-                cat_opts = load_categories()
-                hits = list(search_static(q, _search_sig()))   # クエリ単位でキャッシュ
-                for w in wp_live_search(q, limit=12):
-                    hits.append({"name": w["name"], "rarity": w["rarity"], "kata": w["kata"],
-                                 "image_url": w["image_url"], "title": w["name"],
-                                 "category": "", "id": "", "source": "保管庫(WP)"})
-                if not hits:
-                    st.caption("該当なし。検索ワードを短くしてください。")
-                else:
-                    cols = st.columns(6)
-                    for idx, h in enumerate(hits):
-                        with cols[idx % 6]:
-                            if h["image_url"]:
-                                show_img(h["image_url"])
-                            src = "保管庫" if h["image_url"].startswith(WP.WP_BASE) else "管理画面"
-                            st.caption(f'{h["title"][:22]}\n［{src}］')
-                            if st.button("これを使う", key=f"chg_use_{row}_{idx}"):
-                                apply_image_pick(row, h, name, cat_opts)
-                                st.rerun()
+                shown = st.session_state.get("chg_show")
+                if shown and shown[0] == row:
+                    sq = shown[1] or q
+                    cat_opts = load_categories()
+                    hits = list(search_static(sq, _search_sig()))   # クエリ単位でキャッシュ
+                    for w in wp_live_search(sq, limit=12):
+                        hits.append({"name": w["name"], "rarity": w["rarity"], "kata": w["kata"],
+                                     "image_url": w["image_url"], "title": w["name"],
+                                     "category": "", "id": "", "source": "保管庫(WP)"})
+                    if not hits:
+                        st.caption("該当なし。検索ワードを短くして再検索してください。")
+                    else:
+                        cols = st.columns(6)
+                        for idx, h in enumerate(hits):
+                            with cols[idx % 6]:
+                                if h["image_url"]:
+                                    show_img(h["image_url"])
+                                src = "保管庫" if h["image_url"].startswith(WP.WP_BASE) else "管理画面"
+                                st.caption(f'{h["title"][:22]}\n［{src}］')
+                                if st.button("これを使う", key=f"chg_use_{row}_{idx}"):
+                                    apply_image_pick(row, h, name, cat_opts)
+                                    st.session_state.pop("chg_show", None)
+                                    st.rerun()
     else:
         final_rows = []
         st.info("まだ確定した賞がありません。上で画像を選ぶ／指定すると増えます。")
