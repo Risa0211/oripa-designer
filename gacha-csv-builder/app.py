@@ -496,9 +496,12 @@ tab_make, tab_view, tab_add = st.tabs(
     ["① ガチャCSV作成", "② 保管庫（検索・コピー・編集）", "③ 画像を追加"])
 
 
+@st.cache_data(ttl=120, show_spinner=False)
 def wp_live_search(query, limit=40):
     """WPメディアをライブ検索して store 形式で返す（新着アップ分の同期）。
-    受け口(G)経由なら海外からも読める。ダメなら空リストで安全にフォールバック。"""
+    受け口(G)経由なら海外からも読める。ダメなら空リストで安全にフォールバック。
+    ★毎rerunで各検索ボックスがネットワーク問い合わせして重くなるため、クエリ単位で
+    120秒キャッシュ（新着アップは最長2分で反映／採用時はrerunで即反映され検索非依存）。"""
     if not query:
         return []
     hits = sh_search(query, per_page=limit)
@@ -508,6 +511,20 @@ def wp_live_search(query, limit=40):
         out.append({"name": nm or m.get("title", ""), "rarity": rar, "kata": kata,
                     "image_url": m.get("url", ""), "wp_id": m.get("id", ""), "source": "保管庫(WP)"})
     return out
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def search_static(query, sig, n_dopa=8, n_admin=16):
+    """静的DB(保管庫DOPA＋管理画面ダンプ2.6万件)を賞名で検索。
+    ★毎rerunで各検索ボックスが全件スキャンして重くなるため、クエリ+ファイル署名で
+    キャッシュ（sig=対象CSVのstat署名。差し替え時だけ再スキャン）。"""
+    return SH.search_dopa(master_rows, query, limit=n_dopa) + SH.search_admin(load_admin(), query, limit=n_admin)
+
+
+def _search_sig():
+    """search_static のキャッシュ無効化用：照合対象CSVのstat署名。"""
+    return csv_sig(MASTER_CSV, ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv",
+                   HERE / "master_db_admin.csv", ADMIN_CSV)
 
 
 def merge_by_wpid(csv_rows, wp_rows):
@@ -602,7 +619,6 @@ def render_make(uploaded, category="交換専用"):
     if unmatched:
         st.subheader("保管庫に無い賞（管理画面から探して1クリックで移行）")
         st.caption("既定で賞品名を検索します。正しい画像の『これを使う』を押すと、その1枚だけ保管庫にコピーしてCSVに入ります。")
-        admin_rows = load_admin()
         pal_labels = ["（パレットから選ばない）"] + [o[0] for o in pal_opts]
         cat_opts = load_categories()   # G列カテゴリの有効フォルダー（要追加の上書き用）
         for u in unmatched:
@@ -611,7 +627,7 @@ def render_make(uploaded, category="交換専用"):
             st.markdown(f"**{name}**　<span style='color:#888'>{u['種別']}</span>",
                         unsafe_allow_html=True)
             q = st.text_input("検索ワード（部分一致）", value=name, key=f"q_{row}")
-            hits = SH.search_dopa(master_rows, q, limit=8) + SH.search_admin(admin_rows, q, limit=16)
+            hits = list(search_static(q, _search_sig()))   # クエリ単位でキャッシュ（毎rerunの全件再スキャンを回避）
             # WPライブ検索の新着分もマージ（アップしたばかりの画像もここで選べる）
             for w in wp_live_search(q, limit=12):
                 hits.append({"name": w["name"], "rarity": w["rarity"], "kata": w["kata"],
@@ -791,7 +807,7 @@ def render_make(uploaded, category="交換専用"):
                         manual.get(row, {}).pop(k, None)
                     st.rerun()
                 cat_opts = load_categories()
-                hits = SH.search_dopa(master_rows, q, limit=8) + SH.search_admin(load_admin(), q, limit=16)
+                hits = list(search_static(q, _search_sig()))   # クエリ単位でキャッシュ
                 for w in wp_live_search(q, limit=12):
                     hits.append({"name": w["name"], "rarity": w["rarity"], "kata": w["kata"],
                                  "image_url": w["image_url"], "title": w["name"],
