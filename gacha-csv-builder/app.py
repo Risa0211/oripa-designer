@@ -427,6 +427,28 @@ def is_box_like(*texts):
     return any(k.upper() in blob for k in kw)
 
 
+def apply_image_pick(row, h, name, cat_opts=None):
+    """検索結果 h をこの賞(row)の画像として採用し、manual上書きに反映する。
+    保管庫に無いS3画像は保管庫へ移行してからURLを入れる。レア/型番/カテゴリも一緒に更新。
+    要追加・確定差し替えの両方で使う共通処理。"""
+    if cat_opts is None:
+        cat_opts = load_categories()
+    fn = SH.san_filename(h.get("kata", ""), name, f"a{row}",
+                         ext=os.path.splitext(h["image_url"])[1] or ".png")
+    url = resolve_image_url(row, h["image_url"], fn, name)
+    picked = {"画像URL上書き": url, "レアリティ": h.get("rarity", ""), "型番": h.get("kata", "")}
+    adm_cat = h.get("category", "")
+    if is_box_like(h.get("title", ""), h.get("name", ""), name):
+        picked["カテゴリ"] = "BOX"
+        picked["バッジ"] = "未開封"
+        st.session_state[f"badge2_{row}"] = ["未開封"]
+    elif adm_cat in cat_opts:
+        picked["カテゴリ"] = adm_cat
+    elif h.get("rarity", "") in cat_opts:
+        picked["カテゴリ"] = h.get("rarity", "")
+    st.session_state["manual"].setdefault(row, {}).update(picked)
+
+
 def img_tag(url, radius=6):
     """全画面ボタンの付かないHTML画像（st.imageの拡大トラップを回避）。"""
     if not url:
@@ -745,6 +767,48 @@ def render_make(uploaded, category="交換専用"):
         dropped = len(out_rows) - len(final_rows)
         if dropped:
             st.caption(f"（{dropped}件を削除中。CSVには {len(final_rows)}件 が出力されます）")
+
+        # ---- 確定した賞の画像を、カード名で検索して差し替える（URL手入力の代わり）----
+        with st.expander("🔄 確定した賞の画像を差し替える（カード名などで検索して選ぶ）"):
+            st.caption("URLを手で貼らなくても、カード名で保管庫/管理画面を検索して画像を選び直せます。"
+                       "『これを使う』を押すと、その賞の画像が差し替わります（保管庫に無ければコピーして使用）。")
+            unresolved = {u["row"] for u in unmatched} | {a["row"] for a in ambiguous}
+            conf = [(i, B.get(inject[i - 2], "カード名", "name"),
+                     B._norm_rank(B.get(inject[i - 2], "ランク", "rank")))
+                    for i in range(2, len(inject) + 2) if i not in unresolved]
+            if not conf:
+                st.caption("差し替えできる確定賞がありません。")
+            else:
+                labels = [f"{rk or '—'}｜{nm}" for (_i, nm, rk) in conf]
+                sidx = st.selectbox("差し替える賞を選ぶ", list(range(len(conf))),
+                                    format_func=lambda k: labels[k], key="chg_pick")
+                row, name, _rk = conf[sidx]
+                cur_ov = manual.get(row, {}).get("画像URL上書き", "")
+                cc1, cc2 = st.columns([3, 1])
+                q = cc1.text_input("検索ワード（部分一致）", value=name, key=f"chg_q_{row}")
+                if cur_ov and cc2.button("元の画像に戻す", key=f"chg_reset_{row}"):
+                    for k in ("画像URL上書き", "レアリティ", "型番", "カテゴリ", "バッジ"):
+                        manual.get(row, {}).pop(k, None)
+                    st.rerun()
+                cat_opts = load_categories()
+                hits = SH.search_dopa(master_rows, q, limit=8) + SH.search_admin(load_admin(), q, limit=16)
+                for w in wp_live_search(q, limit=12):
+                    hits.append({"name": w["name"], "rarity": w["rarity"], "kata": w["kata"],
+                                 "image_url": w["image_url"], "title": w["name"],
+                                 "category": "", "id": "", "source": "保管庫(WP)"})
+                if not hits:
+                    st.caption("該当なし。検索ワードを短くしてください。")
+                else:
+                    cols = st.columns(6)
+                    for idx, h in enumerate(hits):
+                        with cols[idx % 6]:
+                            if h["image_url"]:
+                                show_img(h["image_url"])
+                            src = "保管庫" if h["image_url"].startswith(WP.WP_BASE) else "管理画面"
+                            st.caption(f'{h["title"][:22]}\n［{src}］')
+                            if st.button("これを使う", key=f"chg_use_{row}_{idx}"):
+                                apply_image_pick(row, h, name, cat_opts)
+                                st.rerun()
     else:
         final_rows = []
         st.info("まだ確定した賞がありません。上で画像を選ぶ／指定すると増えます。")
