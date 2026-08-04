@@ -324,6 +324,26 @@ def _strip_box_qual(name_key):
     return _BOX_QUAL.sub("", name_key)
 
 
+def _to_number(s):
+    """管理画面の数値列(価格D/還元ptE/在庫H等)向けに素の数字へ正規化。
+    例『¥31,000』→31000 / 『45,570』→45570 / 『3,540口』→3540。数値が無ければ空。
+    設計シートの¥記号・カンマ・単位付き表記(pt/円/口)が混じるとインポートが弾かれるため。"""
+    s = unicodedata.normalize("NFKC", str(s or ""))
+    s = s.replace(",", "").replace("，", "")
+    m = _re.search(r"-?\d+(?:\.\d+)?", s)
+    if not m:
+        return ""
+    v = m.group(0)
+    # 小数第一位が0だけ(31000.0)なら整数化。ptや円・在庫は整数運用。
+    if "." in v:
+        try:
+            f = float(v)
+            v = str(int(f)) if f.is_integer() else v
+        except ValueError:
+            pass
+    return v
+
+
 def _card_identity(c):
     """カードの同一性キー。型番があれば型番+名前、無ければ名前+レア。
     同じキー＝同じカード（画像ファイルが違うだけ）とみなす。"""
@@ -622,6 +642,13 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
         if not category:
             # 分からないものは無理に決めず「未指定」（管理画面の選択肢）。人が後で直せる。
             category = UNSPECIFIED_CATEGORY
+
+        # 数値列(価格D/還元ptE/在庫H/口数I)は¥記号・カンマ・単位を除いた素の数字に統一
+        # （設計シートの『¥31,000』『45,570』『3,540』はそのままだと管理画面インポートで弾かれる）
+        price = _to_number(price)
+        redeem = _to_number(redeem)
+        inventory = _to_number(inventory)
+        usage_lim = _to_number(usage_lim) or "0"
 
         record = {
             "URL": a_url,
