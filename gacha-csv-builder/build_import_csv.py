@@ -169,13 +169,19 @@ def _find_header_row(rows):
 
 def _rows_to_designs(rows, hdr_i):
     """賞ランクヘッダ行以降を DESIGN_XLSX_MAP でビルダー内部キーの辞書リストに変換。
-    xlsx/csv共通。『合計』行 or A列空で終端。"""
+    xlsx/csv共通。『合計』行で終端。A列空行は、賞を1件も読む前(ヘッダ直後の余白行)なら
+    読み飛ばし、賞を読み始めた後の空行をテーブル終端とする（新テンプレはヘッダ直後に
+    スペーサー行が入るため）。"""
     headers = [("" if c is None else str(c).strip()) for c in rows[hdr_i]]
     out = []
     for r in rows[hdr_i + 1:]:
         a = "" if (not len(r) or r[0] is None) else str(r[0]).strip()
-        if a in ("", "合計"):
+        if a == "合計":
             break
+        if a == "":
+            if out:      # 賞を読み始めた後の空行＝テーブル終端
+                break
+            continue     # ヘッダ直後の余白行（テンプレのスペーサー）は読み飛ばす
         d = {}
         for c_i, h in enumerate(headers):
             key = DESIGN_XLSX_MAP.get(h)
