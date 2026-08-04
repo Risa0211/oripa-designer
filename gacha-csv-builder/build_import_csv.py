@@ -312,6 +312,18 @@ def _strip_rarity(name_key):
     return _RAR_SUFFIX.sub("", name_key)
 
 
+# BOX/パック賞の末尾但し書き（例『VSTARユニバース(1BOX)』の(1BOX)、『◯◯ ×2パック』）。
+# 設計シート特有の口数表記でありカード名の一部ではないので、照合時だけ剥がして基底名で当てる。
+_BOX_QUAL = _re.compile(
+    r"[（(\[【｛{]?\s*\d*\s*(BOX|ボックス|パック|PACK|カートン|CARTON)\s*[×xX*]?\s*\d*\s*[）)\]】｝}]?$",
+    _re.I)
+
+
+def _strip_box_qual(name_key):
+    """BOX/パック賞名の末尾口数但し書きを落として基底名にする（例 VSTARユニバース(1BOX)→VSTARユニバース）。"""
+    return _BOX_QUAL.sub("", name_key)
+
+
 def _card_identity(c):
     """カードの同一性キー。型番があれば型番+名前、無ければ名前+レア。
     同じキー＝同じカード（画像ファイルが違うだけ）とみなす。"""
@@ -511,8 +523,9 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
         #   （型番が賞品名と食い違う場合は型番を信用せず、無関係な型番仲間は候補に出さない）
         else:
             nk = _name_key(design_name)
-            # まず賞品名で照合（末尾レア表記を剥がした基底名も試す）
-            cands = name_index.get(nk) or name_index.get(_strip_rarity(nk)) or []
+            # まず賞品名で照合（末尾レア表記／BOX口数但し書きを剥がした基底名も試す）
+            cands = (name_index.get(nk) or name_index.get(_strip_rarity(nk))
+                     or name_index.get(_strip_box_qual(nk)) or [])
             # レアで絞り込み：新テンプレの独立レア列を優先、無ければ賞品名末尾のレア表記。
             dr = norm_key(get(d, "レアリティ", "rarity")) or _design_rarity(design_name)
             if dr and len(cands) > 1:

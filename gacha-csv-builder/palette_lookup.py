@@ -74,10 +74,13 @@ def infer_shubetsu_from_name(name):
         return "福袋", None
     if "PSA10" in su or "PSA１０" in s:
         return "PSA10", None
-    if "パック" in s or "PACK" in su:
+    # BOX/パックは「なにか」始まりの汎用プレースホルダ名の時だけ演出カード扱い。
+    # 実商品名（例『黒炎の支配者(1BOX)』『VSTARユニバース(1BOX)』）は "" を返して
+    # 実カードとして保管庫/管理画面検索に回す（(1BOX)等の但し書きのBOXで誤爆させない）。
+    if ("パック" in s or "PACK" in su) and "なにか" in s:
         m = re.search(r"[×xX*](\d+)", su)
         return "パック", (int(m.group(1)) if m else None)
-    if "BOX" in su or "ボックス" in s:
+    if ("BOX" in su or "ボックス" in s) and "なにか" in s:
         return "BOX", None
     if "最低保証" in s:
         return "最低保証", None
