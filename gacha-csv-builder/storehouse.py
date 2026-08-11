@@ -195,7 +195,9 @@ def admin_card_rows(admin_rows):
             "画像URL": url,
             "画像タイトル": t,
             "カテゴリ": (r.get("category_name") or "").strip(),
-            "参照価格": (r.get("price") or "").strip(),
+            # ★参照価格(D列)は入れない。管理画面の価格は過去の登録値なので、
+            #   D列は設計シートの「実価値/枚」を使う（仕様どおり）。ここで入れると
+            #   確定表の『実価値(設計)』が設計の値と食い違って混乱する。
             "source": "管理画面",
         })
     return out

@@ -243,15 +243,26 @@ master_rows = load_master()
 palette = load_palette()
 pal_opts = palette_options(palette)
 # 確定表の行（A〜L 12列）から元のカードを引き戻す索引。CSVには型番列が無いので画像URL→原簿で辿る。
-CARD_BY_URL = {}
-CARD_BY_NAME = {}
-for _r in master_rows:
-    _u = B.get(_r, "画像URL", "image_url", "image")
-    if _u:
-        CARD_BY_URL.setdefault(_u, _r)
-    _n = B._name_key(B.get(_r, "カード名", "name"))
-    if _n:
-        CARD_BY_NAME.setdefault(_n, []).append(_r)
+@st.cache_resource(show_spinner=False)
+def _card_indexes(sig):
+    """画像URL→カード / カード名→カード の索引。確定表で『その画像が何のカードか』を
+    引き戻して型番・スニダン相場を出すために使う。
+    ★原簿(綺麗ソース)だけでなく管理画面由来の画像も入れる（管理画面の画像で確定した賞の
+      相場が出ないと、画像の取り違えを値段で見つけられないため）。"""
+    by_url, by_name = {}, {}
+    for _r in list(master_rows) + list(load_admin_cards()):
+        _u = B.get(_r, "画像URL", "image_url", "image")
+        if _u:
+            by_url.setdefault(_u, _r)
+        _n = B._name_key(B.get(_r, "カード名", "name"))
+        if _n:
+            by_name.setdefault(_n, []).append(_r)
+    return by_url, by_name
+
+
+CARD_BY_URL, CARD_BY_NAME = _card_indexes(
+    csv_sig(MASTER_CSV, ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv",
+            HERE / "master_db_admin.csv", ADMIN_CSV))
 
 
 def card_of_row(image_url, title):
@@ -827,30 +838,40 @@ def _render_confirm_and_download(uploaded, out_rows, unmatched, ambiguous, warni
         st.caption("表の値を直接編集できます。『削除』にチェックした賞はCSVから外れます"
                    "（ランク・カード名・カテゴリ・バッジ・還元pt・在庫・画像URLはダブルクリックで書き換え）。"
                    "画像を差し替えたい時は『画像URL』を新しいURLに書き換えてください。"
-                   "『直近取引価格』『相場』はスニダンの参考値（編集不可・還元ptを決める目安）。")
+                   "『実価値(設計)』は設計シートの実価値/枚、『直近取引』『相場』は"
+                   "**採用した画像のカード**のスニダン価格。桁がズレていたら画像の取り違えを疑ってください。")
         # 各確定行のスニダン価格（画像URL→原簿→型番で照合。通信なし）
-        conf_res = []
+        conf_res, conf_card = [], []
         for r in out_rows:
             m = card_of_row(r[5], r[1])
+            conf_card.append(m or {})
             conf_res.append(snk_price(B.get(m or {}, "型番", "kataban"),
                                       B.get(m or {}, "カード名", "name") or r[1],
                                       B.get(m or {}, "レアリティ", "rarity")) if m else None)
         snk_live_button([(x or {}).get("aid") for x in conf_res], "confirm")
         edit_src = [{"_i": i, "削除": False, "画像": thumb_url(r[5]),
-                     "ランク": r[10], "カード名": r[1], "カテゴリ(G)": r[6],
-                     "バッジ": r[11], "還元pt": r[4], "在庫": r[7],
+                     "ランク": r[10], "カード名": r[1],
+                     "照合した型番": B.get(conf_card[i], "型番", "kataban"),
+                     "カテゴリ(G)": r[6],
+                     "バッジ": r[11], "実価値(設計)": r[3], "還元pt": r[4], "在庫": r[7],
                      "直近取引価格": snk_cell(conf_res[i], "sale"),
                      "相場": snk_cell(conf_res[i], "ask"),
                      "画像URL": r[5]}
                     for i, r in enumerate(out_rows)]
         edited = st.data_editor(
             edit_src, use_container_width=True, hide_index=True, key="confirm_editor",
+            row_height=110,            # ★画像を大きく見せる（同じサムネなので通信量は増えない）
             column_config={
                 "_i": None,
                 "削除": st.column_config.CheckboxColumn("削除", width="small"),
-                "画像": st.column_config.ImageColumn("画像", width="small"),
-                "ランク": st.column_config.TextColumn("ランク"),
+                "画像": st.column_config.ImageColumn("画像", width="medium"),
+                "ランク": st.column_config.TextColumn("ランク", width="small"),
                 "カード名": st.column_config.TextColumn("カード名"),
+                "照合した型番": st.column_config.TextColumn(
+                    "照合した型番", disabled=True, width="small",
+                    help="採用した画像が原簿/管理画面でどのカードだったか。設計の型番と違えば取り違えです"),
+                "実価値(設計)": st.column_config.TextColumn(
+                    "実価値(設計)", help="設計シートの実価値/枚。CSVのD列(参照価格)になります"),
                 "カテゴリ(G)": st.column_config.TextColumn("カテゴリ(G)"),
                 "バッジ": st.column_config.TextColumn(
                     "バッジ", help="PSA10,発送のみ のようにカンマで最大2つ"),
@@ -874,6 +895,7 @@ def _render_confirm_and_download(uploaded, out_rows, unmatched, ambiguous, warni
             r[10] = str(e.get("ランク", r[10]) or "")
             r[1] = str(e.get("カード名", r[1]) or "")
             r[6] = str(e.get("カテゴリ(G)", r[6]) or "")
+            r[3] = str(e.get("実価値(設計)", r[3]) or "")
             r[11] = str(e.get("バッジ", r[11]) or "")
             r[4] = str(e.get("還元pt", r[4]) or "")
             r[7] = str(e.get("在庫", r[7]) or "")
@@ -886,6 +908,30 @@ def _render_confirm_and_download(uploaded, out_rows, unmatched, ambiguous, warni
         dropped = len(out_rows) - len(final_rows)
         if dropped:
             st.caption(f"（{dropped}件を削除中。CSVには {len(final_rows)}件 が出力されます）")
+
+        # ---- 大きい画像で最終確認（画像の取り違え防止）----
+        # 表と同じサムネURLなので通信量は増えない（ブラウザのキャッシュがそのまま効く）。
+        with st.expander("🖼 大きい画像で確認する（設計の値とスニダン相場を並べて表示）", expanded=True):
+            st.caption("設計シートの実価値と、採用した画像のカードのスニダン相場が"
+                       "大きくズレていたら、別の絵柄を拾っている可能性があります。"
+                       "画像をクリックすると原寸で開きます。")
+            gcols = st.columns(5)
+            for gi, e in enumerate(edited):
+                if e.get("削除"):
+                    continue
+                r = out_rows[int(e["_i"])]
+                card = conf_card[int(e["_i"])]
+                res = conf_res[int(e["_i"])]
+                with gcols[gi % 5]:
+                    show_img(str(e.get("画像URL", r[5]) or ""))
+                    st.markdown(
+                        f'<div style="font-size:0.82rem;line-height:1.45">'
+                        f'<b>{e.get("ランク","")}</b>　{str(e.get("カード名",""))[:22]}<br>'
+                        f'<span style="color:#888">型番 {B.get(card, "型番", "kataban") or "—"}</span><br>'
+                        f'実価値 <b>{e.get("実価値(設計)","") or "—"}</b>／還元 {e.get("還元pt","")}pt<br>'
+                        f'<span style="color:#c67">相場 {snk_cell(res, "ask") or "—"}</span>'
+                        f'</div>', unsafe_allow_html=True)
+                    st.divider()
 
         # ---- 確定した賞の画像を、カード名で検索して差し替える（URL手入力の代わり）----
         with st.expander("🔄 確定した賞の画像を差し替える（カード名などで検索して選ぶ）"):
