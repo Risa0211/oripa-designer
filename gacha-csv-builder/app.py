@@ -64,9 +64,14 @@ PRIZE_MIN_VALUE = 1000   # 還元pt(≒価値)がこれ以下の管理画面カ�
 def csv_sig(*paths):
     """★キャッシュ用のファイル署名（更新時刻＋サイズ）。
     Streamlit Cloud の「Updated app!」はプロセスを再起動しないホットリロードで、
-    @st.cache_data のキーは**関数のコード**から作られる。そのため app.py が変わらず
+    キャッシュのキーは**関数のコード**から作られる。そのため app.py が変わらず
     CSVだけ差し替わった時（毎朝の価格自動コミット等）にキャッシュが無効化されず、
-    古いデータを読み続ける。署名を引数に渡してファイルが変わったら読み直させる。"""
+    古いデータを読み続ける。署名を引数に渡してファイルが変わったら読み直させる。
+
+    ★大きな表（原簿4千件/管理画面2.6万件/価格6千件）のローダーは cache_data ではなく
+    cache_resource を使う。cache_data は**呼ぶたびに中身を丸ごとコピー**して返すため、
+    1回の再実行で何十回も呼ぶ本ツールでは待ち時間の大きな割合を占めていた。
+    これらは読むだけ（書き換えない）のでコピー不要。"""
     sig = []
     for p in paths:
         try:
@@ -77,7 +82,7 @@ def csv_sig(*paths):
     return tuple(sig)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def _load_prize_values(sig):
     """card_db_export の還元pt(≒カード価値)。id→pt。低額カードを事前ロードから外す判定に使う。"""
     vals = {}
@@ -108,7 +113,7 @@ def _prize_worthy(row, values, min_value=PRIZE_MIN_VALUE):
     return True if v is None else v > min_value
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def _load_master(sig):
     """①照合用のカード原簿（DOPA綺麗 ＋ DOPAに無い『賞になりうる』管理画面カード）。
     軽量化: (1)DOPAに綺麗版があるカードの管理画面(粗い)重複は載せない (2)還元pt≤¥1,000の
@@ -127,7 +132,7 @@ def load_master():
     return _load_master(csv_sig(MASTER_CSV, ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv", HERE / "master_db_admin.csv", ADMIN_CSV))
 
 
-@st.cache_data(show_spinner="管理画面ダンプ読込中…")
+@st.cache_resource(show_spinner="管理画面ダンプ読込中…")
 def _load_admin(sig):
     return SH.load_admin(str(ADMIN_CSV))
 
@@ -136,7 +141,7 @@ def load_admin():
     return _load_admin(csv_sig(ADMIN_CSV))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def _load_categories(sig):
     """管理画面に実在するカードフォルダー名（G Categoryの有効値）を件数順で返す。
     CSVインポートはこの名前と完全一致しないと弾かれるため、選択式にして事故を防ぐ。"""
@@ -153,7 +158,7 @@ def load_categories():
     return _load_categories(csv_sig(ADMIN_CSV))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def _load_snk_prices(sig):
     """スニダン価格（型番→直近取引価格/相場）。約580KBの軽量CSVなので初期読込は一瞬。
     ファイルが無ければ空＝価格表示だけOFFになり、他の機能は今まで通り動く。
@@ -177,7 +182,7 @@ def load_palette():
     return palette_lookup.load_palette(*[str(p) for p in PALETTE_CSVS if p.exists()])
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def _load_store(sig):
     """保管庫マスター（DOPA綺麗 ＋ DOPAに無い『賞になりうる』管理画面カード）。カード名/型番/URL/媒体id付き。
     DOPA重複＋還元pt≤¥1,000の低額カードはツールに載せない＝軽量化（保管庫の画像は消さない）。
@@ -449,13 +454,42 @@ def apply_image_pick(row, h, name, cat_opts=None):
     st.session_state["manual"].setdefault(row, {}).update(picked)
 
 
+@st.cache_resource(show_spinner=False)
+def _load_thumb_map(sig):
+    """画像URL→サムネイルURL（WPが自動生成する中サイズ・高さ300px前後で約20KB）。
+    ★一覧のサムネに原寸(200〜700KB)を読ませると1画面で数十MBになり「候補が出るまで数分」に
+    なっていた。表示だけサムネに差し替える（CSVに出す画像URLは原寸のまま）。
+    表に無いURL（アップしたて等）は原寸にフォールバックするので壊れない。
+    更新: ~/minnatoreca-gacha-csv/build_thumb_map.py を日本のIPから実行して差し替え。"""
+    m = {}
+    p = HERE / "thumb_map.csv"
+    if p.exists():
+        for r in B.read_csv_dict(str(p)):
+            u = (r.get("画像URL") or "").strip()
+            t = (r.get("サムネURL") or "").strip()
+            if u and t:
+                m[u] = t
+    return m
+
+
+def thumb_url(url):
+    """一覧表示用の軽い画像URL（無ければ原寸そのまま）。"""
+    u = (url or "").strip()
+    return _load_thumb_map(csv_sig(HERE / "thumb_map.csv")).get(u, u)
+
+
 def img_tag(url, radius=6):
-    """全画面ボタンの付かないHTML画像（st.imageの拡大トラップを回避）。"""
+    """全画面ボタンの付かないHTML画像（st.imageの拡大トラップを回避）。
+    一覧はサムネ（軽い）を表示し、クリックで原寸を別タブで開けるようにする。"""
     if not url:
         return ""
-    return (f'<img src="{url}" loading="lazy" '
-            f'style="width:100%;border-radius:{radius}px;display:block;'
-            f'border:1px solid #eee">')
+    t = thumb_url(url)
+    img = (f'<img src="{t}" loading="lazy" decoding="async" '
+           f'style="width:100%;max-width:200px;border-radius:{radius}px;display:block;'
+           f'border:1px solid #eee">')
+    if t != url:
+        return f'<a href="{url}" target="_blank" rel="noopener" title="原寸で開く">{img}</a>'
+    return img
 
 
 def show_img(url):
@@ -496,7 +530,7 @@ tab_make, tab_view, tab_add = st.tabs(
     ["① ガチャCSV作成", "② 保管庫（検索・コピー・編集）", "③ 画像を追加"])
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_resource(ttl=120, show_spinner=False, max_entries=200)
 def wp_live_search(query, limit=40):
     """WPメディアをライブ検索して store 形式で返す（新着アップ分の同期）。
     受け口(G)経由なら海外からも読める。ダメなら空リストで安全にフォールバック。
@@ -513,7 +547,7 @@ def wp_live_search(query, limit=40):
     return out
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_resource(ttl=600, show_spinner=False, max_entries=200)
 def search_static(query, sig, n_dopa=8, n_admin=16):
     """静的DB(保管庫DOPA＋管理画面ダンプ2.6万件)を賞名で検索。
     ★毎rerunで各検索ボックスが全件スキャンして重くなるため、クエリ+ファイル署名で
@@ -598,10 +632,12 @@ def render_make(uploaded, category="交換専用"):
             st.markdown(f"**{a['ランク']}　{a['設計上の名前']}**　"
                         f"<span style='color:#888'>還元{a['還元pt']}pt・{len(a['候補'])}候補</span>",
                         unsafe_allow_html=True)
-            cols = st.columns(min(len(a["候補"]), 6))
+            if a.get("注意"):
+                st.caption("⚠ " + a["注意"])
+            cols = st.columns(6)   # 候補1件でも列幅を固定（1列だと画像が全幅に伸びて見づらい）
             labels = []
             for idx, c in enumerate(a["候補"]):
-                with cols[idx % len(cols)]:
+                with cols[idx % 6]:
                     if c["画像URL"]:
                         show_img(c["画像URL"])
                     st.caption(f'{c["型番"]}｜{c["レアリティ"]}')
@@ -613,20 +649,58 @@ def render_make(uploaded, category="交換専用"):
                 picks[row] = a["候補"][labels.index(choice)]["型番"]
             else:
                 picks.pop(row, None)
+            # この絵柄でよくない時は、下の「保管庫に無い賞」と同じ検索/追加をここでも開ける
+            if a.get("注意"):
+                _render_pick_ui(a["row"], a["設計上の名前"], manual, key="amb")
             st.divider()
 
     # ---- 要追加：保管庫に無し → 管理画面を検索して使う分だけ移行 ----
     if unmatched:
         st.subheader("保管庫に無い賞（管理画面から探して1クリックで移行）")
-        st.caption("既定で賞品名を検索します。正しい画像の『これを使う』を押すと、その1枚だけ保管庫にコピーしてCSVに入ります。")
-        pal_labels = ["（パレットから選ばない）"] + [o[0] for o in pal_opts]
-        cat_opts = load_categories()   # G列カテゴリの有効フォルダー（要追加の上書き用）
+        st.caption("賞をひとつ開くと、その賞の候補だけを読み込みます"
+                   "（全部の候補を一度に出すと画像が数十MBになり重くなるため）。"
+                   "正しい画像の『これを使う』を押すと、その1枚だけ保管庫にコピーしてCSVに入ります。")
         for u in unmatched:
             row = u["row"]
             name = u["設計上の名前"]
             st.markdown(f"**{name}**　<span style='color:#888'>{u['種別']}</span>",
                         unsafe_allow_html=True)
-            q = st.text_input("検索ワード（部分一致）", value=name, key=f"q_{row}")
+            _render_pick_ui(row, name, manual, key="um", open_default=(u is unmatched[0]))
+            st.divider()
+
+    _render_confirm_and_download(uploaded, out_rows, unmatched, ambiguous, warnings,
+                                 inject, manual)
+
+
+def _render_pick_ui(row, name, manual, key="um", open_default=False):
+    """賞ひとつ分の「画像を探して選ぶ／追加する」UI。★開いた時だけ検索・描画する。
+    以前は全賞ぶんを常に描画していたため、賞が20〜30ある設計シートでは
+    1回の操作ごとに 保管庫API検索×賞の数 と 数十MBのサムネイル読込 が走って重かった。"""
+    state_key = f"pick_open_{key}"
+    if state_key not in st.session_state and open_default:
+        st.session_state[state_key] = row     # 最初の1件だけ既定で開く（閉じたら閉じたまま）
+    is_open = st.session_state.get(state_key) == row
+    bc1, bc2 = st.columns([1, 4])
+    if bc1.button("閉じる" if is_open else "🔍 画像を探す", key=f"open_{key}_{row}"):
+        st.session_state[state_key] = None if is_open else row
+        st.rerun()
+    cur_url = manual.get(row, {}).get("画像URL上書き", "")
+    if cur_url and not is_open:
+        bc2.markdown(f'<img src="{thumb_url(cur_url)}" style="height:70px;border-radius:4px">'
+                     '　<span style="color:#888">この画像を使用中</span>', unsafe_allow_html=True)
+    if not is_open:
+        return
+    with st.container():
+        _render_pick_body(row, name, manual, key)
+
+
+SHOW_FIRST = 12   # 候補サムネの初期表示枚数（残りは「もっと見る」で。画像の読込量を抑える）
+
+
+def _render_pick_body(row, name, manual, key="um"):
+            pal_labels = ["（パレットから選ばない）"] + [o[0] for o in pal_opts]
+            cat_opts = load_categories()   # G列カテゴリの有効フォルダー（要追加の上書き用）
+            q = st.text_input("検索ワード（部分一致）", value=name, key=f"q_{key}_{row}")
             hits = list(search_static(q, _search_sig()))   # クエリ単位でキャッシュ（毎rerunの全件再スキャンを回避）
             # WPライブ検索の新着分もマージ（アップしたばかりの画像もここで選べる）
             for w in wp_live_search(q, limit=12):
@@ -634,6 +708,12 @@ def render_make(uploaded, category="交換専用"):
                              "image_url": w["image_url"], "title": w["name"],
                              "category": "", "id": "", "source": "保管庫(WP)"})
             if hits:
+                more_key = f"more_{key}_{row}"
+                if len(hits) > SHOW_FIRST and not st.session_state.get(more_key):
+                    if st.button(f"残り{len(hits)-SHOW_FIRST}件も表示", key=f"morebtn_{key}_{row}"):
+                        st.session_state[more_key] = True
+                        st.rerun()
+                    hits = hits[:SHOW_FIRST]
                 hit_res = [snk_price(h.get("kata", ""), h.get("name", "") or h.get("title", ""),
                                      h.get("rarity", "")) for h in hits]
                 snk_live_button([r.get("aid") for r in hit_res], f"unmatched_{row}")
@@ -716,8 +796,11 @@ def render_make(uploaded, category="交換専用"):
                     manual.setdefault(row, {})["画像URL上書き"] = mu.strip()
                 elif sel != "（パレットから選ばない）":
                     manual.setdefault(row, {})["演出キー"] = pal_opts[pal_labels.index(sel) - 1][1]
-            st.divider()
 
+
+def _render_confirm_and_download(uploaded, out_rows, unmatched, ambiguous, warnings,
+                                 inject, manual):
+    """確定プレビュー（編集・削除）と管理画面インポートCSVのダウンロード。"""
     # ---- 確定プレビュー（その場で編集・削除できる）& ダウンロード ----
     st.subheader("確定してCSVに出力される賞")
     if out_rows:
@@ -733,7 +816,7 @@ def render_make(uploaded, category="交換専用"):
                                       B.get(m or {}, "カード名", "name") or r[1],
                                       B.get(m or {}, "レアリティ", "rarity")) if m else None)
         snk_live_button([(x or {}).get("aid") for x in conf_res], "confirm")
-        edit_src = [{"_i": i, "削除": False, "画像": r[5],
+        edit_src = [{"_i": i, "削除": False, "画像": thumb_url(r[5]),
                      "ランク": r[10], "カード名": r[1], "カテゴリ(G)": r[6],
                      "バッジ": r[11], "還元pt": r[4], "在庫": r[7],
                      "直近取引価格": snk_cell(conf_res[i], "sale"),
@@ -877,6 +960,9 @@ with tab_make:
         render_make(uploaded)
 
 # ============================================================ ② 保管庫（検索・コピー・編集）
+VIEW_FIRST = 48   # 保管庫タブの初期表示枚数（残りは「もっと見る」）
+
+
 def card_cell(h):
     """グリッド1マス：サムネ＋名前＋型番コピー＋（開くと）全コピー/編集。省スペース。"""
     mid = h.get("wp_id", "")
@@ -891,7 +977,13 @@ def card_cell(h):
         st.caption("名前/型番/レア(1行)")
         st.code(f'{h["name"]}\t{h["kata"]}\t{h["rarity"]}', language=None)
         st.caption("画像URL"); st.code(h["image_url"], language=None)
-        if can_write and mid:
+        # ★編集欄は「編集する」を押したカードにだけ出す。全カードぶん常に作ると
+        #   1画面で数百個の入力欄になり、表示・操作が目に見えて重くなるため。
+        if can_write and mid and st.session_state.get("edit_mid") != mid:
+            if st.button("✏️ 編集する", key=f"editbtn_{mid}"):
+                st.session_state["edit_mid"] = mid
+                st.rerun()
+        elif can_write and mid:
             st.divider()
             n_name = st.text_input("カード名", value=h["name"], key=f"an_{mid}")
             n_kata = st.text_input("型番", value=h["kata"], key=f"ak_{mid}")
@@ -942,8 +1034,17 @@ with tab_view:
         hits = SH.search_store(store_rows, q, limit=120)
         # WPライブ検索をマージ（新着アップ分もヒット＝CSVとWPを同期）
         hits = merge_by_wpid(hits, wp_live_search(q, limit=40))[:120]
-        tc1.write(f"**{len(hits)} 件**（保管庫 {len(store_rows):,} 枚＋WP新着）　"
+        n_all = len(hits)
+        # ★初期表示は48件まで（1画面に何百枚も出すと重い）。残りはボタンで。
+        # 「もっと見る」は検索ワードごと（別の語を入れたらまた48件から）。
+        if n_all > VIEW_FIRST and st.session_state.get("view_more") != q:
+            hits = hits[:VIEW_FIRST]
+        tc1.write(f"**{n_all} 件**（保管庫 {len(store_rows):,} 枚＋WP新着）　"
                   f"多すぎる時は型番や正式名で絞り込むと見やすいです")
+        if n_all > len(hits):
+            if st.button(f"残り{n_all - len(hits)}件も表示", key="view_more_btn"):
+                st.session_state["view_more"] = q
+                st.rerun()
         cols = st.columns(ncol)
         for i, h in enumerate(hits):
             with cols[i % ncol]:

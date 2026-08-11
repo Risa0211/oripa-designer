@@ -324,6 +324,34 @@ def _strip_box_qual(name_key):
     return _BOX_QUAL.sub("", name_key)
 
 
+# 賞品名の末尾に型番を書く運用（例『ピカチュウV 001/015』『イーブイ SM-P 399』）。
+# 型番列が空でも名前から拾えれば自動確定できるので、照合前に切り出す。
+_KATA_TAIL = _re.compile(
+    r"[\s　]*[（(\[【｛{]?\s*"
+    r"(?:(?P<num>\d{1,3}\s*/\s*[0-9A-Za-z\-\+]{1,12})"          # 001/015・119/114 形式
+    r"|(?P<promo>(?P<set>[A-Za-z]{1,3}-?P)[\s　]+(?P<no>\d{1,4})))"  # SM-P 399 形式
+    r"\s*[）)\]】｝}]?[\s　]*$")
+
+
+def split_kata_from_name(design_name):
+    """賞品名の末尾に埋め込まれた型番を切り出す。
+    戻り値 (型番を外した名前, 型番)。埋め込みが無ければ (元の名前, '')。
+    例: 『ピカチュウV 001/015』→ ('ピカチュウV', '001/015')
+        『イーブイ SM-P 399』  → ('イーブイ',   '399/SM-P')"""
+    s = unicodedata.normalize("NFKC", str(design_name or ""))
+    m = _KATA_TAIL.search(s)
+    if not m:
+        return str(design_name or ""), ""
+    if m.group("num"):
+        kata = m.group("num").replace(" ", "")
+    else:
+        kata = f'{m.group("no")}/{m.group("set").upper()}'
+    base = s[:m.start()].strip("　 　-・:：")
+    if not base:
+        return str(design_name or ""), ""   # 型番だけの名前は切り出さない
+    return base, kata
+
+
 def _to_number(s):
     """管理画面の数値列(価格D/還元ptE/在庫H等)向けに素の数字へ正規化。
     例『¥31,000』→31000 / 『45,570』→45570 / 『3,540口』→3540。数値が無ければ空。
@@ -543,22 +571,46 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
         #   （型番が賞品名と食い違う場合は型番を信用せず、無関係な型番仲間は候補に出さない）
         else:
             nk = _name_key(design_name)
-            # まず賞品名で照合（末尾レア表記／BOX口数但し書きを剥がした基底名も試す）
+            # ★賞品名の末尾に型番を書く運用（例『ピカチュウV 001/015』）に対応。
+            #   型番列が空でも名前から型番を拾い、名前は型番を外した基底名でも照合する。
+            base_name_raw, kata_in_name = split_kata_from_name(design_name)
+            base_nk = _name_key(base_name_raw)
+            # 名前に型番が書いてある＝人が絵柄を指定している。型番違いの絵柄を勝手に採用しない。
+            kata_strict = bool(kata_in_name) and not has_kata
+            if kata_strict:
+                raw_kata = kata_in_name
+                key = norm_key(kata_in_name)
+                has_kata = True
+            # まず賞品名で照合（末尾レア表記／BOX口数但し書き／末尾型番を剥がした基底名も試す）
             cands = (name_index.get(nk) or name_index.get(_strip_rarity(nk))
-                     or name_index.get(_strip_box_qual(nk)) or [])
+                     or name_index.get(_strip_box_qual(nk))
+                     or (name_index.get(base_nk) if base_nk != nk else None)
+                     or (name_index.get(_strip_rarity(base_nk)) if base_nk != nk else None)
+                     or [])
             # レアで絞り込み：新テンプレの独立レア列を優先、無ければ賞品名末尾のレア表記。
-            dr = norm_key(get(d, "レアリティ", "rarity")) or _design_rarity(design_name)
+            dr = (norm_key(get(d, "レアリティ", "rarity")) or _design_rarity(design_name)
+                  or _design_rarity(base_name_raw))
             if dr and len(cands) > 1:
                 rared = [c for c in cands if norm_key(get(c, "レアリティ", "rarity")) == dr]
                 if rared:
                     cands = rared
+            force_pick = False   # 型番が食い違う＝人に絵柄を選ばせる（自動確定しない）
             if cands:
                 # 同名で絵柄が複数 → 型番があれば型番で1枚に絞る（型番＝絵柄の指定）
-                if has_kata and len(cands) > 1:
+                if has_kata:
                     both = [c for c in cands
                             if norm_key(get(c, "型番", "kataban", "card_number", "number")) == key]
                     if both:
                         cands = both
+                    elif kata_strict:
+                        # ★賞品名に書かれた型番の絵柄が保管庫に無い → 別型番の同名カードを
+                        #   勝手に入れず、候補を並べて人に選ばせる（誤った絵柄の登録を防ぐ）。
+                        force_pick = True
+                        warnings.append(
+                            f"設計 {i}行目「{design_name}」: 賞品名の型番{raw_kata}の絵柄が保管庫に無い"
+                            f"→ 同名の別絵柄{len(cands)}件から選ぶか画像を追加してください")
+                    elif len(cands) == 1:
+                        pass   # 型番列の表記ゆれ等。従来どおり名前一致の1枚を採用
                     elif key in type_index:
                         # 型番は原簿にあるが別カード＝賞品名と食い違い
                         warnings.append(
@@ -572,7 +624,8 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                 # 賞品名がマスターに無い → 型番で引くが、候補名が賞品名と一致する時だけ採用。
                 # 別カードの型番仲間（例: コダックに066/060=リーリエ等）は絶対に候補にしない。
                 kcands = type_index.get(key, [])
-                named = [c for c in kcands if _name_key(get(c, "カード名")) == nk]
+                ok_names = {nk, base_nk, _strip_rarity(nk), _strip_rarity(base_nk)}
+                named = [c for c in kcands if _name_key(get(c, "カード名")) in ok_names]
                 cands = named
                 if not named and kcands:
                     warnings.append(
@@ -583,7 +636,7 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
             if len(cands) > 1:
                 cands = _dedupe_same_card(cands)
 
-            if len(cands) == 1:
+            if len(cands) == 1 and not force_pick:
                 m = cands[0]
                 image_url  = get(m, "画像URL", "image_url", "image", "Image URL-src")
                 price      = get(m, "参照価格", "price", "Price")
@@ -595,10 +648,13 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                 # 「カードを選ぶとレアリティ欄が自動で入る」挙動と同じ。設計にカテゴリ指定があれば優先。
                 category   = (category or get(m, "カテゴリ", "category", "Category")
                               or get(m, "レアリティ", "rarity"))
-            elif len(cands) > 1:
-                # 複数の絵柄が該当 → 勝手に決めず picker へ（型番を入れれば一意化できる旨を案内）
+            elif cands:
+                # 複数の絵柄が該当（or 賞品名の型番と絵柄が食い違う）→ 勝手に決めず picker へ
                 ambiguous.append({"row": i, "ランク": rank, "設計上の名前": design_name,
-                                  "還元pt": redeem, "候補": [cand_dict(c) for c in cands]})
+                                  "還元pt": redeem, "候補": [cand_dict(c) for c in cands],
+                                  "注意": (f"賞品名の型番 {raw_kata} の絵柄は保管庫にありません。"
+                                           "同名の別絵柄から選ぶか、下の『保管庫に無い賞』で画像を追加してください。"
+                                           if force_pick else "")})
                 continue
             else:
                 unmatched.append({"row": i, "型番": raw_kata, "設計上の名前": design_name,
