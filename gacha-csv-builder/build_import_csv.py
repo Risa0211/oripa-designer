@@ -333,6 +333,15 @@ _KATA_TAIL = _re.compile(
     r"\s*[）)\]】｝}]?[\s　]*$")
 
 
+_NOTE_PAREN = _re.compile(r"[（(\[［【｛{][^）)\]］】｝}]*[）)\]］】｝}]")
+
+
+def _strip_note(name_key):
+    """カード名の括弧注記を外した基底名（例 ピカチュウV(未開封)→ピカチュウV、リザードン(ミラー)→リザードン）。
+    ★これ単独で照合すると別アートを取り違えるので、必ず**型番一致とセット**でだけ使う。"""
+    return _NOTE_PAREN.sub("", str(name_key or "")).strip()
+
+
 def split_kata_from_name(design_name):
     """賞品名の末尾に埋め込まれた型番を切り出す。
     戻り値 (型番を外した名前, 型番)。埋め込みが無ければ (元の名前, '')。
@@ -595,6 +604,15 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                 if rared:
                     cands = rared
             force_pick = False   # 型番が食い違う＝人に絵柄を選ばせる（自動確定しない）
+            # ★型番が一致し、名前も（括弧注記を外せば）一致する原簿カード。
+            #   原簿側が「ピカチュウV(未開封)」のように注記付きだと素の名前照合では拾えないため、
+            #   型番一致を条件に注記を外した名前でも拾う（型番一致とセットなので取り違えない）。
+            kata_named = []
+            if has_kata:
+                _bases = {_strip_note(nk), _strip_note(base_nk),
+                          _strip_note(_strip_rarity(nk)), _strip_note(_strip_rarity(base_nk))}
+                kata_named = [c for c in type_index.get(key, [])
+                              if _strip_note(_name_key(get(c, "カード名", "name", "title"))) in _bases]
             if cands:
                 # 同名で絵柄が複数 → 型番があれば型番で1枚に絞る（型番＝絵柄の指定）
                 if has_kata:
@@ -602,6 +620,8 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                             if norm_key(get(c, "型番", "kataban", "card_number", "number")) == key]
                     if both:
                         cands = both
+                    elif kata_named:
+                        cands = kata_named      # 型番一致の同名カード（注記違い）が原簿にある
                     elif kata_strict:
                         # ★賞品名に書かれた型番の絵柄が保管庫に無い → 別型番の同名カードを
                         #   勝手に入れず、候補を並べて人に選ばせる（誤った絵柄の登録を防ぐ）。
@@ -624,8 +644,7 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                 # 賞品名がマスターに無い → 型番で引くが、候補名が賞品名と一致する時だけ採用。
                 # 別カードの型番仲間（例: コダックに066/060=リーリエ等）は絶対に候補にしない。
                 kcands = type_index.get(key, [])
-                ok_names = {nk, base_nk, _strip_rarity(nk), _strip_rarity(base_nk)}
-                named = [c for c in kcands if _name_key(get(c, "カード名")) in ok_names]
+                named = kata_named
                 cands = named
                 if not named and kcands:
                     warnings.append(
