@@ -860,11 +860,12 @@ def _render_confirm_and_download(uploaded, out_rows, unmatched, ambiguous, warni
                     for i, r in enumerate(out_rows)]
         edited = st.data_editor(
             edit_src, use_container_width=True, hide_index=True, key="confirm_editor",
-            row_height=110,            # ★画像を大きく見せる（同じサムネなので通信量は増えない）
+            # ★表は一覧性優先でコンパクトなまま（画像以外の項目も確認するのに、行が高いと
+            #   スクロールが増えて見づらい）。画像の確認は下の「大きい画像で確認する」で。
             column_config={
                 "_i": None,
                 "削除": st.column_config.CheckboxColumn("削除", width="small"),
-                "画像": st.column_config.ImageColumn("画像", width="medium"),
+                "画像": st.column_config.ImageColumn("画像", width="small"),
                 "ランク": st.column_config.TextColumn("ランク", width="small"),
                 "カード名": st.column_config.TextColumn("カード名"),
                 "照合した型番": st.column_config.TextColumn(
