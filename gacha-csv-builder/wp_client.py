@@ -45,7 +45,8 @@ def search_media(query, *, base=WP_BASE, user=None, app_pass=None, per_page=40):
     if user and app_pass:
         headers["Authorization"] = auth_header(user, app_pass)
     try:
-        data = json.loads(_req(url, headers=headers).decode("utf-8", "replace"))
+        # 検索は画面描画の途中で呼ぶので短く切る（無応答時に画面が固まらないように）
+        data = json.loads(_req(url, headers=headers, timeout=8).decode("utf-8", "replace"))
     except Exception:
         return []
     out = []

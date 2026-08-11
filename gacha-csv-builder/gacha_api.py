@@ -16,7 +16,9 @@ import os
 import urllib.parse
 import urllib.request
 
-TIMEOUT = 60
+TIMEOUT = 60        # アップロード等（画像を送るので長め）
+READ_TIMEOUT = 8    # ★検索/pingの読み取り。海外(Streamlit Cloud)からは無応答になることがあり、
+                    #   60秒待つと画面が固まって見えるので短く切って静的CSVにフォールバックする。
 
 
 def _base_url():
@@ -37,7 +39,7 @@ def _endpoint():
     return _base_url() + "/?gacha_api=1"
 
 
-def _post(fields):
+def _post(fields, timeout=None):
     """multipart/form-data でPOST（画像はbase64のdataフィールドで送る＝WAF回避しやすい）。"""
     boundary = "----gachaapiFORMBOUNDARY7d81f"
     body = b""
@@ -49,12 +51,12 @@ def _post(fields):
     req = urllib.request.Request(_endpoint(), data=body, method="POST")
     req.add_header("Content-Type", "multipart/form-data; boundary=" + boundary)
     req.add_header("User-Agent", "gacha-tool/1.0")
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+    with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
 def ping():
-    return _post({"token": _token(), "action": "ping"})
+    return _post({"token": _token(), "action": "ping"}, timeout=READ_TIMEOUT)
 
 
 def upload(filename, data, title):
@@ -80,7 +82,7 @@ def replace(old_id, filename, data, title):
 def search(query, per_page=40):
     """名前でメディア検索。戻り値 [{"id","title","url","alt"}]。"""
     j = _post({"token": _token(), "action": "search",
-               "q": query or "", "per_page": str(per_page)})
+               "q": query or "", "per_page": str(per_page)}, timeout=READ_TIMEOUT)
     return j.get("items", []) if isinstance(j, dict) else []
 
 

@@ -700,13 +700,18 @@ SHOW_FIRST = 12   # 候補サムネの初期表示枚数（残りは「もっと
 def _render_pick_body(row, name, manual, key="um"):
             pal_labels = ["（パレットから選ばない）"] + [o[0] for o in pal_opts]
             cat_opts = load_categories()   # G列カテゴリの有効フォルダー（要追加の上書き用）
-            q = st.text_input("検索ワード（部分一致）", value=name, key=f"q_{key}_{row}")
+            qc1, qc2 = st.columns([3, 2])
+            q = qc1.text_input("検索ワード（部分一致）", value=name, key=f"q_{key}_{row}")
             hits = list(search_static(q, _search_sig()))   # クエリ単位でキャッシュ（毎rerunの全件再スキャンを回避）
-            # WPライブ検索の新着分もマージ（アップしたばかりの画像もここで選べる）
-            for w in wp_live_search(q, limit=12):
-                hits.append({"name": w["name"], "rarity": w["rarity"], "kata": w["kata"],
-                             "image_url": w["image_url"], "title": w["name"],
-                             "category": "", "id": "", "source": "保管庫(WP)"})
+            # ★保管庫へのライブ問い合わせは既定でしない。海外(Streamlit Cloud)からだと
+            #   無応答で数十秒待たされることがあり、それが「1件なのに遅い」の主因だった。
+            #   保管庫の画像は同梱CSVで検索できるので、ここに出ないのは「ツールから今アップしたて」だけ。
+            if qc2.checkbox("今アップした画像も探す", key=f"live_{key}_{row}",
+                            help="保管庫に直接アップしたばかりの画像も探します（数秒〜十数秒かかることがあります）"):
+                for w in wp_live_search(q, limit=12):
+                    hits.append({"name": w["name"], "rarity": w["rarity"], "kata": w["kata"],
+                                 "image_url": w["image_url"], "title": w["name"],
+                                 "category": "", "id": "", "source": "保管庫(WP)"})
             if hits:
                 more_key = f"more_{key}_{row}"
                 if len(hits) > SHOW_FIRST and not st.session_state.get(more_key):
@@ -897,11 +902,7 @@ def _render_confirm_and_download(uploaded, out_rows, unmatched, ambiguous, warni
                 if shown and shown[0] == row:
                     sq = shown[1] or q
                     cat_opts = load_categories()
-                    hits = list(search_static(sq, _search_sig()))   # クエリ単位でキャッシュ
-                    for w in wp_live_search(sq, limit=12):
-                        hits.append({"name": w["name"], "rarity": w["rarity"], "kata": w["kata"],
-                                     "image_url": w["image_url"], "title": w["name"],
-                                     "category": "", "id": "", "source": "保管庫(WP)"})
+                    hits = list(search_static(sq, _search_sig()))   # 同梱CSVのみ＝通信なしで即答
                     if not hits:
                         st.caption("該当なし。検索ワードを短くして再検索してください。")
                     else:
@@ -1030,10 +1031,14 @@ with tab_view:
                       placeholder="例: リザードン / 066/060 / PSA10")
     tc1, tc2 = st.columns([3, 1])
     ncol = tc2.selectbox("表示列数", [4, 3, 5, 6], index=0, key="view_ncol")
+    st.checkbox("今アップした画像も探す（数秒かかります）", key="view_live",
+                help="同梱の保管庫データに無い＝アップしたばかりの画像も探します")
     if q:
         hits = SH.search_store(store_rows, q, limit=120)
-        # WPライブ検索をマージ（新着アップ分もヒット＝CSVとWPを同期）
-        hits = merge_by_wpid(hits, wp_live_search(q, limit=40))[:120]
+        # ★保管庫へのライブ問い合わせは既定でしない（海外からだと無応答で数十秒待つことがある）。
+        #   同梱CSVに無いのは「今アップしたて」だけなので、必要な時だけチェックを入れる。
+        if st.session_state.get("view_live"):
+            hits = merge_by_wpid(hits, wp_live_search(q, limit=40))[:120]
         n_all = len(hits)
         # ★初期表示は48件まで（1画面に何百枚も出すと重い）。残りはボタンで。
         # 「もっと見る」は検索ワードごと（別の語を入れたらまた48件から）。
