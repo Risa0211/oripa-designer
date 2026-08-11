@@ -166,6 +166,41 @@ def search_store(store_rows, query, limit=48):
     return out
 
 
+_KATA_ANY = re.compile(r"(?<![0-9A-Za-z/])(\d{1,3}\s*/\s*[0-9A-Za-z\-\+]{1,12})(?![0-9A-Za-z/])")
+
+
+def extract_kata_loose(title):
+    """管理画面タイトルのどこにあっても型番(001/015 等)を1つ取り出す。無ければ ''。
+    括弧の中でも裸でも拾う（例『ダークライGX(063/049 HR)』『ピカチュウV(ゴルピカ)001/015』）。"""
+    m = _KATA_ANY.search(unicodedata.normalize("NFKC", str(title or "")))
+    return m.group(1).replace(" ", "") if m else ""
+
+
+def admin_card_rows(admin_rows):
+    """管理画面ダンプ(2.6万件)を原簿と同じ形に整えて返す。
+    ★自動照合では『型番とカード名の両方が一致』した時だけ使う前提。
+      これが無いと、型番の合う正しいカードが管理画面にあるのに『保管庫に無し』になり、
+      名前だけ一致する別型番の絵柄が前に出てしまう（実運用で指摘を受けた）。"""
+    out = []
+    for r in admin_rows:
+        t = r.get("title", "")
+        url = (r.get("image_url") or "").strip()
+        kata = extract_kata_loose(t)
+        if not url or not kata:
+            continue
+        out.append({
+            "型番": kata,
+            "カード名": base_name(t) or t,
+            "レアリティ": extract_rarity(t),
+            "画像URL": url,
+            "画像タイトル": t,
+            "カテゴリ": (r.get("category_name") or "").strip(),
+            "参照価格": (r.get("price") or "").strip(),
+            "source": "管理画面",
+        })
+    return out
+
+
 _KATA_RE = re.compile(r"[\{｛]([^}｝]+)[\}｝]|[\(（]([0-9]{1,3}\s*/\s*[0-9A-Za-z\-]+)[\)）]")
 
 

@@ -489,10 +489,28 @@ def _design_rarity(design_name):
 
 
 def build(master_rows, design_rows, headers, generic_map=None, palette=None,
-          default_category=""):
+          default_category="", fallback_rows=None, valid_categories=None):
     """default_category: レアリティを持たない賞（演出/ポイント変換/最低保証等）のG列カテゴリ。
-    実カードは各カードのレアリティ（SR/P/AR…）を1枚ずつ自動でG列に入れる。"""
+    実カードは各カードのレアリティ（SR/P/AR…）を1枚ずつ自動でG列に入れる。
+    fallback_rows: 原簿(綺麗ソース)に無い時だけ見る予備の原簿（管理画面ダンプ2.6万件）。
+      ★誤爆を避けるため**型番とカード名の両方が一致した時だけ**使う。
+    valid_categories: 管理画面に実在するカードフォルダー名の一覧。渡すと、G列がこれに
+      無い値（レア「−」等）の時に『未登録』へ寄せてインポート弾かれを防ぐ。
+      ★管理画面のフォルダー名は『鑑定済カード』のように**濁点が分解された異体表記**で
+        入っていることがあるので、NFKCで正規化して突き合わせ、**出力は実在する表記そのまま**にする。"""
+    valid_map = {}
+    for _c in (valid_categories or []):
+        _c = str(_c).strip()
+        if _c:
+            valid_map.setdefault(unicodedata.normalize("NFKC", _c), _c)
     generic_map = generic_map or {}
+    # 予備原簿（管理画面）を (型番, 名前) で引けるようにする
+    fb_index = {}
+    for r in (fallback_rows or []):
+        k = norm_key(get(r, "型番", "kataban"))
+        nm = _name_key(get(r, "カード名", "name", "title"))
+        if k and nm:
+            fb_index.setdefault((k, nm), []).append(r)
     # マスターを型番でインデックス化（型番は重複するのでリストで保持＝2段階照合用）
     type_index = {}
     name_index = {}
@@ -608,11 +626,21 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
             #   原簿側が「ピカチュウV(未開封)」のように注記付きだと素の名前照合では拾えないため、
             #   型番一致を条件に注記を外した名前でも拾う（型番一致とセットなので取り違えない）。
             kata_named = []
+            fb_named = []
             if has_kata:
                 _bases = {_strip_note(nk), _strip_note(base_nk),
                           _strip_note(_strip_rarity(nk)), _strip_note(_strip_rarity(base_nk))}
                 kata_named = [c for c in type_index.get(key, [])
                               if _strip_note(_name_key(get(c, "カード名", "name", "title"))) in _bases]
+                if fb_index:
+                    # 管理画面（予備原簿）: 型番一致＋名前一致のものだけ拾う
+                    seen_u = set()
+                    for _nm in {nk, base_nk, _strip_rarity(nk), _strip_rarity(base_nk)}:
+                        for c in fb_index.get((key, _nm), []):
+                            u = get(c, "画像URL")
+                            if u not in seen_u:
+                                seen_u.add(u)
+                                fb_named.append(c)
             if cands:
                 # 同名で絵柄が複数 → 型番があれば型番で1枚に絞る（型番＝絵柄の指定）
                 if has_kata:
@@ -622,6 +650,10 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                         cands = both
                     elif kata_named:
                         cands = kata_named      # 型番一致の同名カード（注記違い）が原簿にある
+                    elif fb_named:
+                        # ★原簿(綺麗ソース)には無いが、管理画面に型番も名前も一致するカードがある。
+                        #   別型番の絵柄を出すより、正しい絵柄（管理画面の画像）を採る。
+                        cands = fb_named
                     elif kata_strict:
                         # ★賞品名に書かれた型番の絵柄が保管庫に無い → 別型番の同名カードを
                         #   勝手に入れず、候補を並べて人に選ばせる（誤った絵柄の登録を防ぐ）。
@@ -644,7 +676,7 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                 # 賞品名がマスターに無い → 型番で引くが、候補名が賞品名と一致する時だけ採用。
                 # 別カードの型番仲間（例: コダックに066/060=リーリエ等）は絶対に候補にしない。
                 kcands = type_index.get(key, [])
-                named = kata_named
+                named = kata_named or fb_named   # 原簿に無ければ管理画面（型番＋名前が一致するもの）
                 cands = named
                 if not named and kcands:
                     warnings.append(
@@ -717,6 +749,18 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
         if not category:
             # 分からないものは無理に決めず「未指定」（管理画面の選択肢）。人が後で直せる。
             category = UNSPECIFIED_CATEGORY
+        # ★G列は管理画面に実在するカードフォルダーでないとインポートが弾かれる。
+        #   レアリティ由来の値には「−」「SV-P」のようにフォルダーが無いものが混じるので、
+        #   実在しない値は「未登録」に寄せて弾かれないようにし、警告で人に知らせる。
+        if valid_map:
+            real = valid_map.get(unicodedata.normalize("NFKC", str(category).strip()))
+            if real:
+                category = real       # 管理画面に実在する表記そのままで出す
+            else:
+                warnings.append(
+                    f"設計 {i}行目「{design_name}」: カテゴリ(G)「{category}」は管理画面に無い"
+                    f"フォルダー名→『{UNSPECIFIED_CATEGORY}』にしました（必要なら確定表で直してください）")
+                category = valid_map.get(UNSPECIFIED_CATEGORY, UNSPECIFIED_CATEGORY)
 
         # 数値列(価格D/還元ptE/在庫H/口数I)は¥記号・カンマ・単位を除いた素の数字に統一
         # （設計シートの『¥31,000』『45,570』『3,540』はそのままだと管理画面インポートで弾かれる）
@@ -724,6 +768,23 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
         redeem = _to_number(redeem)
         inventory = _to_number(inventory)
         usage_lim = _to_number(usage_lim) or "0"
+        # 管理画面の 価格D/還元ptE/在庫H/口数I は整数欄。設計の計算値が小数（例 111718.6）だと
+        # 取り込みで弾かれるので切り捨てて整数にし、勝手に変えたことが分かるよう警告に残す。
+        for _lbl, _var in (("価格", "price"), ("還元pt", "redeem"),
+                           ("在庫", "inventory"), ("ラストワン口数", "usage_lim")):
+            _v = locals()[_var]
+            if "." in str(_v):
+                _iv = str(int(float(_v)))
+                warnings.append(f"設計 {i}行目「{design_name}」: {_lbl} {_v} は小数のため"
+                                f"{_iv} に切り捨てました（管理画面は整数のみ）")
+                if _var == "price":
+                    price = _iv
+                elif _var == "redeem":
+                    redeem = _iv
+                elif _var == "inventory":
+                    inventory = _iv
+                else:
+                    usage_lim = _iv
 
         record = {
             "URL": a_url,

@@ -142,6 +142,19 @@ def load_admin():
 
 
 @st.cache_resource(show_spinner=False)
+def _load_admin_cards(sig):
+    """★自動照合の予備原簿＝管理画面ダンプ(2.6万件)を原簿の形にしたもの。
+    綺麗ソース(DOPA/公式/カードラッシュ)に無くても、**型番とカード名の両方が一致**すれば
+    管理画面の画像を自動で当てる。これが無いと『管理画面に正しいカードがあるのに
+    保管庫に無し扱いになり、名前だけ一致する別型番の絵柄が前に出る』（実運用の指摘）。"""
+    return SH.admin_card_rows(SH.load_admin(str(ADMIN_CSV)))
+
+
+def load_admin_cards():
+    return _load_admin_cards(csv_sig(ADMIN_CSV))
+
+
+@st.cache_resource(show_spinner=False)
 def _load_categories(sig):
     """管理画面に実在するカードフォルダー名（G Categoryの有効値）を件数順で返す。
     CSVインポートはこの名前と完全一致しないと弾かれるため、選択式にして事故を防ぐ。"""
@@ -612,7 +625,9 @@ def render_make(uploaded, category="交換専用"):
     # 実カードはレアリティを1枚ずつ自動でG列に。categoryは演出/pt賞など
     # レアリティを持たない賞のフォールバックとしてのみ使う。
     out_rows, unmatched, warnings, ambiguous = B.build(
-        master_rows, inject, B.DEFAULT_HEADERS, {}, palette, default_category=category)
+        master_rows, inject, B.DEFAULT_HEADERS, {}, palette, default_category=category,
+        fallback_rows=load_admin_cards(),        # 型番＋名前が一致すれば管理画面の画像も自動で当てる
+        valid_categories=load_categories())      # G列は実在フォルダーに寄せる（インポート弾かれ防止）
 
     c1, c2, c3 = st.columns(3)
     c1.metric("確定（CSV出力）", len(out_rows))
