@@ -32,6 +32,10 @@ HERE = Path(__file__).parent
 MASTER_CSV = HERE / "master_db_dopa.csv"
 ONEPIECE_CSV = HERE / "master_db_onepiece.csv"   # DOPAワンピ由来（自社WP保管）
 ADMIN_CSV = HERE / "card_db_export.csv"
+ADDED_CSV = HERE / "master_db_added.csv"   # 手動で保管庫に足したぶん（カードラッシュ/公式/スニダン等）
+# 原簿に結合する追加マスター。1箇所で持たないと片方だけ足して不整合になる。
+EXTRA_MASTERS = (ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv",
+                 HERE / "master_db_admin.csv")
 SNK_PRICE_CSV = HERE / "snkrdunk_prices.csv"     # 価格インデックスの軽量版（毎朝GitHub Actionsが更新）
 PALETTE_CSVS = [HERE / "palette_pseudo.csv", HERE / "palette_extra.csv"]
 LOGO = HERE / "assets" / "logo.png"
@@ -119,8 +123,10 @@ def _load_master(sig):
     軽量化: (1)DOPAに綺麗版があるカードの管理画面(粗い)重複は載せない (2)還元pt≤¥1,000の
     低額カード（オリパ賞にならない）は事前ロードしない（要追加で都度検索は可能＝カバレッジ維持）。
     保管庫の画像自体は一切消さない。最後に同一カード（型番＋名前）はDOPA優先で1件に集約。"""
-    rows = B.read_csv_dict(str(MASTER_CSV))
-    for extra in (ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv", HERE / "master_db_admin.csv"):
+    # ADDED_CSV を先に読む＝同点(どちらも綺麗ソース)なら手で足した方が残る（低画質の自動取込を上書きするため）
+    rows = (B.read_csv_dict(str(ADDED_CSV)) if ADDED_CSV.exists() else [])
+    rows += B.read_csv_dict(str(MASTER_CSV))
+    for extra in EXTRA_MASTERS:
         if extra.exists():
             rows = rows + B.read_csv_dict(str(extra))
     vals = load_prize_values()
@@ -129,7 +135,7 @@ def _load_master(sig):
 
 
 def load_master():
-    return _load_master(csv_sig(MASTER_CSV, ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv", HERE / "master_db_admin.csv", ADMIN_CSV))
+    return _load_master(csv_sig(MASTER_CSV, *EXTRA_MASTERS, ADDED_CSV, ADMIN_CSV))
 
 
 @st.cache_resource(show_spinner="管理画面ダンプ読込中…")
@@ -200,8 +206,10 @@ def _load_store(sig):
     """保管庫マスター（DOPA綺麗 ＋ DOPAに無い『賞になりうる』管理画面カード）。カード名/型番/URL/媒体id付き。
     DOPA重複＋還元pt≤¥1,000の低額カードはツールに載せない＝軽量化（保管庫の画像は消さない）。
     その後、同一カード（型番＋名前）の残り重複もDOPA優先で1件に集約。"""
-    rows = B.read_csv_dict(str(MASTER_CSV))
-    for extra in (ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv", HERE / "master_db_admin.csv"):
+    # ADDED_CSV を先に読む＝同点(どちらも綺麗ソース)なら手で足した方が残る（低画質の自動取込を上書きするため）
+    rows = (B.read_csv_dict(str(ADDED_CSV)) if ADDED_CSV.exists() else [])
+    rows += B.read_csv_dict(str(MASTER_CSV))
+    for extra in EXTRA_MASTERS:
         if extra.exists():
             rows = rows + B.read_csv_dict(str(extra))
     vals = load_prize_values()
@@ -210,7 +218,7 @@ def _load_store(sig):
 
 
 def load_store():
-    return _load_store(csv_sig(MASTER_CSV, ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv", HERE / "master_db_admin.csv", ADMIN_CSV))
+    return _load_store(csv_sig(MASTER_CSV, *EXTRA_MASTERS, ADDED_CSV, ADMIN_CSV))
 
 
 def parse_design(uploaded):
@@ -261,8 +269,7 @@ def _card_indexes(sig):
 
 
 CARD_BY_URL, CARD_BY_NAME = _card_indexes(
-    csv_sig(MASTER_CSV, ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv",
-            HERE / "master_db_admin.csv", ADMIN_CSV))
+    csv_sig(MASTER_CSV, *EXTRA_MASTERS, ADDED_CSV, ADMIN_CSV))
 
 
 def card_of_row(image_url, title):
@@ -581,8 +588,7 @@ def search_static(query, sig, n_dopa=8, n_admin=16):
 
 def _search_sig():
     """search_static のキャッシュ無効化用：照合対象CSVのstat署名。"""
-    return csv_sig(MASTER_CSV, ONEPIECE_CSV, HERE / "master_db_pokemoncard_owned.csv",
-                   HERE / "master_db_admin.csv", ADMIN_CSV)
+    return csv_sig(MASTER_CSV, *EXTRA_MASTERS, ADDED_CSV, ADMIN_CSV)
 
 
 def merge_by_wpid(csv_rows, wp_rows):

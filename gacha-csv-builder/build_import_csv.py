@@ -416,11 +416,11 @@ def _dedupe_same_card(cands):
 
 
 def _master_prefer(a, b):
-    """同一カードが複数ソースにある時、残す1件を選ぶ。DOPA(レア/クリーン画像)＞WP＞レアあり。"""
+    """同一カードが複数ソースにある時、残す1件を選ぶ。綺麗ソース(DOPA/公式/カードラッシュ/スニダン)＞WP＞レアあり。"""
     def score(r):
         s = 0
         src = (get(r, "source") or "")
-        if src.startswith("DOPA") or src.startswith("公式") or src.startswith("カードラッシュ"):
+        if src.startswith(("DOPA", "公式", "カードラッシュ", "スニダン")):
             s += 4
         if "minnano-toreka.com" in (get(r, "画像URL", "image_url", "image") or "").lower():
             s += 2
@@ -450,10 +450,10 @@ def dedupe_master_rows(rows):
 
 
 def _is_clean_source(row):
-    """綺麗画像ソース（DOPA / 公式=pokemon-card.com / カードラッシュ）か。
+    """綺麗画像ソース（DOPA / 公式=pokemon-card.com / カードラッシュ / スニダン背景除去）か。
     これらに同じカードがあれば管理画面(粗い)版は載せない＝優先 綺麗ソース ＞ 管理画面。"""
     s = get(row, "source") or ""
-    return s.startswith("DOPA") or s.startswith("公式") or s.startswith("カードラッシュ")
+    return s.startswith(("DOPA", "公式", "カードラッシュ", "スニダン"))
 
 
 def drop_admin_dupes_of_clean(rows):
