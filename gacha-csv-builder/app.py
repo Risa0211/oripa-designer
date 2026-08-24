@@ -26,6 +26,7 @@ import wp_client as WP
 import wp_admin as WPA
 import gacha_api as G   # WPプラグイン経由（Xserver国外IP制限を回避してアップ/検索/編集/削除）
 import snkrdunk_price as SP   # スニダンの直近取引価格/相場を型番で引く（画像を選ぶ画面に併記）
+import verify_images as VI   # 出力CSVの画像取り違え検査（賞品名 vs 画像の出どころのカード名）
 from auth import check_password
 
 HERE = Path(__file__).parent
@@ -136,6 +137,19 @@ def _load_master(sig):
 
 def load_master():
     return _load_master(csv_sig(MASTER_CSV, *EXTRA_MASTERS, ADDED_CSV, ADMIN_CSV))
+
+
+@st.cache_resource(show_spinner=False)
+def _load_image_check_index(sig):
+    """画像取り違え検査用の索引（画像ファイル名→原簿の行）。
+    ★再実行のたびに原簿CSVを読み直すと1回あたり数十〜150msかかる。本ツールは
+    画像を1枚選ぶたびに再実行するので、他の原簿と同じく cache_resource に載せる。"""
+    return VI.load_master_index([HERE])[:2]
+
+
+def load_image_check_index():
+    return _load_image_check_index(
+        csv_sig(MASTER_CSV, *EXTRA_MASTERS, ADDED_CSV, ADMIN_CSV, *PALETTE_CSVS))
 
 
 @st.cache_resource(show_spinner="管理画面ダンプ読込中…")
@@ -1001,9 +1015,8 @@ def _render_confirm_and_download(uploaded, out_rows, unmatched, ambiguous, warni
     # 詳細は verify_images.py の冒頭。
     img_ng, img_warn = [], []
     try:
-        import verify_images as VI
         if final_rows:
-            _cards, _pal, _ = VI.load_master_index([Path(__file__).resolve().parent])
+            _cards, _pal = load_image_check_index()
             _res = VI.check([{"name": r[1], "url": r[5], "where": f"{i}行目"}
                              for i, r in enumerate(final_rows, start=1)], _cards, _pal)
             img_ng = [x for x in _res if x["verdict"].startswith("NG")]
