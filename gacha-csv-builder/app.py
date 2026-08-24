@@ -994,9 +994,41 @@ def _render_confirm_and_download(uploaded, out_rows, unmatched, ambiguous, warni
     w.writerow(B.DEFAULT_HEADERS)
     w.writerows(final_rows)
     csv_bytes = ("﻿" + buf.getvalue()).encode("utf-8")
+
+    # ---- ★景品画像の取り違え検査（2026-08-25 新設）----
+    # 画像URL→原簿→カード名 を突き合わせ、賞品名と違うカードの絵が入っていたらDLさせない。
+    # 2026-08-25、70%LOOPで カメール→キノココ／レックウザVMAX→デンボク が管理画面まで通った。
+    # 詳細は verify_images.py の冒頭。
+    img_ng, img_warn = [], []
+    try:
+        import verify_images as VI
+        if final_rows:
+            _cards, _pal, _ = VI.load_master_index([Path(__file__).resolve().parent])
+            _res = VI.check([{"name": r[1], "url": r[5], "where": f"{i}行目"}
+                             for i, r in enumerate(final_rows, start=1)], _cards, _pal)
+            img_ng = [x for x in _res if x["verdict"].startswith("NG")]
+            img_warn = [x for x in _res if x["verdict"].startswith("要確認")]
+            if img_ng:
+                st.error("**画像が賞品と違います。直すまでCSVは出さないでください。**\n\n"
+                         + "\n".join(f"- {x['where']}｜{x['detail']}" for x in img_ng))
+            elif img_warn:
+                st.warning("画像の出どころを原簿から辿れない賞があります（保管庫に足したら "
+                           "`master_db_added.csv` と `thumb_map.csv` にも追記してください）:\n\n"
+                           + "\n".join(f"- {x['where']}｜{x['name']}" for x in img_warn))
+            else:
+                st.caption(f"✅ 画像チェック: {len(_res)}件すべて賞品名と画像のカードが一致しています。")
+    except Exception as e:                      # 検査が壊れてもCSV生成自体は止めない
+        st.warning(f"画像チェックを実行できませんでした（{e}）。画像は目視で確認してください。")
+
+    force_dl = False
+    if img_ng:
+        force_dl = st.checkbox("取り違えの指摘を承知のうえでダウンロードする", value=False,
+                               help="原則チェックしない。指摘が誤りだと確認できた時だけ。")
+
     st.download_button(f"管理画面インポートCSVをダウンロード（{len(final_rows)}件）",
                        data=csv_bytes, file_name=Path(uploaded.name).stem + "_import.csv",
-                       mime="text/csv", type="primary", disabled=(len(final_rows) == 0))
+                       mime="text/csv", type="primary",
+                       disabled=(len(final_rows) == 0 or (bool(img_ng) and not force_dl)))
 
     # ---- 管理画面へのインポート手順（DLしたCSVをどこに貼るか）----
     with st.expander("▶ このCSVを管理画面に入れる手順", expanded=(len(out_rows) > 0)):

@@ -849,6 +849,13 @@ def main():
                     help="演出カードのパレットCSV(複数可)。種別＋表示pt/個数から画像を自動導出")
     ap.add_argument("--out", default="import.csv", help="出力CSV(A〜L)")
     ap.add_argument("--columns", help="ヘッダ名上書きJSON(任意)")
+    # ★出来上がったCSVの画像取り違え検査（2026-08-25 新設）。
+    #   『画像URL上書き』列を別スクリプトで埋める運用だと本体の型番＋名前照合を素通りするので、
+    #   最後に画像URL→原簿→カード名を突き合わせて必ず落とす。詳細は verify_images.py の冒頭。
+    ap.add_argument("--no-verify", action="store_true",
+                    help="出力CSVの画像取り違え検査を省く（既定は検査する）")
+    ap.add_argument("--allow-image-mismatch", action="store_true",
+                    help="取り違えが見つかっても終了コード0で終える（原則使わない）")
     args = ap.parse_args()
 
     if not args.design and not args.design_xlsx:
@@ -922,6 +929,23 @@ def main():
         for wmsg in warnings[:12]:
             print(f"     ! {wmsg}")
     print("=" * 56)
+
+    # ★最後の砦: 出力CSVの画像が本当にその賞品のカードか検査する（画像URL→原簿→カード名）
+    if not args.no_verify:
+        try:
+            import verify_images
+        except ImportError:
+            print("[WARN] verify_images.py が見つからないので画像検査を飛ばしました")
+            return
+        cards, palette, _loaded = verify_images.load_master_index(
+            [Path(args.master).resolve().parent, Path(__file__).resolve().parent])
+        results = verify_images.check(verify_images.from_import_csv(args.out), cards, palette)
+        ng = verify_images.report(results)
+        gallery = Path(args.out).with_name(Path(args.out).stem + "_images.html")
+        verify_images.write_gallery(gallery, results, title=f"景品画像チェック: {Path(args.out).name}")
+        print(f"目視用一覧: {gallery}")
+        if ng and not args.allow_image_mismatch:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
