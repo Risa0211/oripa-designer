@@ -14,6 +14,11 @@
   python3 scripts/build_card_master.py                 # 全件（続きから）
   python3 scripts/build_card_master.py --limit 2000    # 検証
   python3 scripts/build_card_master.py --workers 6 --delay 0.4
+
+★全ブランド版（遊戯王/ドラゴンボール/ヴァイス/デュエマ/MTG…を後から足せるように、
+  ブランドを捨てずに全部保存する）。ポケカ・ワンピは既存マスタがあるのでスキップする:
+  python3 scripts/build_card_master.py --keep all \
+      --out data/snkrdunk_all_brands_master.csv --processed data/.allbrand_processed_ids.txt
 """
 from __future__ import annotations
 import argparse, csv, html, os, re, sys, threading, time
@@ -31,7 +36,7 @@ OUT_CSV = os.path.join(DATA, "snkrdunk_pokemon_onepiece_master.csv")
 PROCESSED = os.path.join(DATA, ".master_processed_ids.txt")
 FIELDS = ["brand", "apparel_id", "url", "sitemap_type", "item_type", "name", "rarity",
           "set_code", "card_number", "product_number", "min_price", "released_at", "fetched_at"]
-KEEP_BRANDS = {"pokemon", "onepiece"}
+KEEP_BRANDS = {"pokemon", "onepiece"}   # --keep で上書き（"all"=全ブランドを保存）
 
 SINGLE_RE = re.compile(r'^(?P<name>.+?)\s+(?P<rarity>[A-Z]{1,4})\s*\[(?P<setnum>[^\]]+)\]')
 NUMONLY_RE = re.compile(r'^(?P<name>.+?)\s*\[(?P<setnum>[^\]]+)\]')
@@ -98,7 +103,7 @@ def fetch_one(pid: str, sitemap_type: str, retries: int = 3):
                 d = r.json()
                 brands = d.get("brands") or []
                 bid = brands[0].get("id") if brands else ""
-                if bid not in KEEP_BRANDS:
+                if KEEP_BRANDS != "all" and bid not in KEEP_BRANDS:
                     return None
                 info = parse_name(d.get("localizedName") or d.get("name") or "", sitemap_type)
                 return {"brand": bid, "apparel_id": pid,
@@ -126,17 +131,31 @@ def load_processed() -> set[str]:
 
 
 def main():
+    global KEEP_BRANDS, OUT_CSV, PROCESSED
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--delay", type=float, default=0.4, help="各リクエスト後のスリープ秒(worker内)")
     ap.add_argument("--limit", type=int, default=0, help="今回処理する最大件数(検証用)")
+    ap.add_argument("--keep", default="pokemon,onepiece", help='保存するブランド(カンマ区切り) / "all"=全部')
+    ap.add_argument("--out", default=OUT_CSV, help="出力CSV")
+    ap.add_argument("--processed", default=PROCESSED, help="済IDファイル(中断再開用)")
+    ap.add_argument("--skip-from", default="", help="このCSVのapparel_idは取得済みとして飛ばす(既存マスタの使い回し)")
     args = ap.parse_args()
+
+    KEEP_BRANDS = "all" if args.keep.strip() == "all" else set(b.strip() for b in args.keep.split(",") if b.strip())
+    OUT_CSV, PROCESSED = args.out, args.processed
 
     all_ids = []
     with open(IN_IDS) as f:
         for row in csv.DictReader(f):
             all_ids.append((row["id"], row["sitemap_type"]))
     done = load_processed()
+    if args.skip_from and os.path.exists(args.skip_from):
+        # 既に分類済みのブランド(ポケカ/ワンピ)は取り直さない
+        with open(args.skip_from, encoding="utf-8") as f:
+            before = len(done)
+            done |= {r["apparel_id"] for r in csv.DictReader(f)}
+            print(f"既存マスタから{len(done)-before}件を済み扱いにしました: {args.skip_from}", flush=True)
     todo = [(i, t) for i, t in all_ids if i not in done]
     if args.limit:
         todo = todo[:args.limit]
@@ -147,7 +166,7 @@ def main():
     w = csv.DictWriter(fout, fieldnames=FIELDS)
     if not out_exists:
         w.writeheader()
-    fproc = open(PROCESSED, "a")
+    fproc = open(PROCESSED, "a", buffering=1)   # ★行バッファ。まとめてflushするとスーパーバイザーが進捗を見失い誤killする
     lock = threading.Lock()
     kept = errs = 0
     t0 = time.time()
