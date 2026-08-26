@@ -16,6 +16,7 @@ import os
 from typing import List, Optional
 
 from inventory import InventoryItem
+from price_rules import usable_as_prize, value_price
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -56,8 +57,12 @@ def _load_file(game: str, path: str, include_unpriced: bool) -> List[InventoryIt
     seen_ids: set[int] = set()
     with open(path, newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
-            price = _to_int(row.get("souba"))
-            if price <= 0 and not include_unpriced:
+            # ★CSVのsouba列を読まず、その場で実価値を出す（列が古くても引きずられない）。
+            #   実価値＝相場（single=PSA10出品最安 / BOX等=表記下限）。0＝仕入れ不可
+            price = value_price(row)
+            # 景品に使える3条件（相場>0 / 直近成約あり / 相場÷成約が0.6〜1.5倍）で絞る。
+            # 上限額¥30,000,000のダミー出品などを実価値にすると設計が壊れるため
+            if not include_unpriced and not usable_as_prize(row):
                 continue
             apparel_id = _to_int(row.get("apparel_id"))
             if apparel_id <= 0 or apparel_id in seen_ids:

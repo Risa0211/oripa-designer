@@ -20,6 +20,7 @@ from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from price_rules import value_price_str
 from sheets_client import get_client
 
 JST = timezone(timedelta(hours=9))
@@ -103,8 +104,11 @@ def load_csv(game):
         return list(csv.DictReader(f))
 
 
-# 書き戻す列＝repriceが実際に取り直すものだけ。souba等はrecomputeの計算列なので触らない
-# （非singleのsoubaを計算値で上書きすると snkrdunk_index のBOX/パック候補が消える）。
+# 書き戻す列＝repriceが実際に取り直すもの。
+# ★souba列だけは別扱い：ここは設計ツールが実価値として読む列なので、price_rules の定義
+#   （single=相場/PSA10出品最安, BOX等=下限額）で毎回入れ直す。
+#   ※refresh_index内のrecompute()が作る souba（＝シート表示用の「直近取引価格」）とは意味が違う。
+#     recomputeの値を書き戻すと実価値が過去の成約価格になってしまうので混ぜないこと。
 REPRICE_COLS = ("psa10_price", "ask_price", "min_price", "note", "priced_at")
 
 
@@ -122,11 +126,12 @@ def save_csv(game, rows):
     by_id = {r.get("apparel_id"): r for r in rows}
     for b in base:
         u = by_id.get(b.get("apparel_id"))
-        if not u:
-            continue
-        for col in REPRICE_COLS:
-            if col in fields and col in u:
-                b[col] = u[col]
+        if u:
+            for col in REPRICE_COLS:
+                if col in fields and col in u:
+                    b[col] = u[col]
+        if "souba" in fields:
+            b["souba"] = value_price_str(b)   # 実価値＝相場。今日取り直さなかった行も入れ直す
     with open(path, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()

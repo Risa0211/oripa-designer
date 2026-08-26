@@ -21,6 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import config
+from price_rules import value_price_str
 from snkrdunk_client import fetch_psa10_sale, fetch_psa10_ask, fetch_min_price
 
 JST = timezone(timedelta(hours=9))
@@ -59,12 +60,9 @@ def price_one(r):
                 upd["min_price"] = str(mp)
         if upd:
             upd["priced_at"] = now_jst()
-            # souba列 = 設計ツール(snkrdunk_index)が景品候補の値付けに読む列。
-            # single はPSA10成約価格、BOX/パック等は表記下限。※refresh_index の
-            # 計算列(直近取引価格のみ)とは意味が違うので、ここで種別ごとに入れておく。
+            # souba列 = 設計ツールが実価値として読む列（single=相場/PSA10出品最安・BOX等=下限額）
             merged = dict(r); merged.update(upd)
-            upd["souba"] = merged.get("psa10_price", "") if r.get("item_type") == "single" \
-                else merged.get("min_price", "")
+            upd["souba"] = value_price_str(merged)
     except Exception:
         pass
     return r, upd
@@ -77,6 +75,8 @@ def main():
     ap.add_argument("--delay", type=float, default=0.12)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--all", action="store_true", help="取得済みも取り直す")
+    ap.add_argument("--recompute", action="store_true",
+                    help="通信せず souba列(実価値)だけ今ある価格から入れ直す")
     args = ap.parse_args()
 
     path = os.path.join(DATA, f"index_{args.game}.csv")
@@ -85,6 +85,16 @@ def main():
         rd = csv.DictReader(f)
         fields = rd.fieldnames
         rows = list(rd)
+    if args.recompute:   # 通信なし。souba列(実価値)を price_rules の定義で入れ直すだけ
+        before = sum(1 for r in rows if (r.get("souba") or "").strip())
+        for r in rows:
+            r["souba"] = value_price_str(r)
+        save_csv(path, rows, fields)
+        after = sum(1 for r in rows if (r.get("souba") or "").strip())
+        print(f"{config.INDEX_TABS[args.game]}: souba(実価値)を入れ直しました "
+              f"{before:,}件 → {after:,}件（全{len(rows):,}件中）", flush=True)
+        return
+
     done = set()
     if os.path.exists(prog_path) and not args.all:
         with open(prog_path) as f:
