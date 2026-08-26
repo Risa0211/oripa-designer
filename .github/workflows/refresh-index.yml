@@ -4,6 +4,10 @@ on:
   schedule:
     # JST 06:20 = UTC 21:20 (本体価格更新の後)
     - cron: '20 21 * * *'
+    # ★GitHubはスケジュールを取りこぼすことがある(2026-08-27に3本とも不発)。
+    #   追いかけを2本置く。既に今日の分が済んでいれば guard ジョブが即スキップするので二重実行にならない
+    - cron: '20 23 * * *'   # JST 08:20 追いかけ1
+    - cron: '20 1 * * *'    # JST 10:20 追いかけ2
   workflow_dispatch:
     inputs:
       reprice:
@@ -14,8 +18,38 @@ on:
 permissions:
   contents: write        # 再取得した価格CSVをリポジトリに書き戻すため
 
+# 追いかけと本番が重なっても同時に走らせない(スニダンを二重に叩かない)
+concurrency:
+  group: refresh-index
+  cancel-in-progress: false
+
 jobs:
+  # 今日の分が済んでいるかだけを見る軽いジョブ。済んでいれば本体を動かさない
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "手動起動 → そのまま実行する"
+            exit 0
+          fi
+          if python3 scripts/index_health.py; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "今日の更新は済んでいる → このrunはスキップ"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "今日の更新がまだ → 実行する"
+          fi
+
   refresh-index:
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
