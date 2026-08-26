@@ -1,6 +1,8 @@
 """スニダン価格インデックスを専用スプレッドシートへ書き込む。
 
-タブ: 使い方 / ポケカ / ワンピ
+タブ: 使い方 / ポケカ / ポケカ(価格なし) / ワンピ / ワンピ(価格なし)
+価格(直近取引価格・相場)がどちらも無い行は「(価格なし)」タブへ退避する。
+＝ブラウザが実際に読むのはメインタブだけになるので、開くのが速くなる。値が付けば翌朝メインへ戻る。
 2つの価格列(スニダンのカードページと同じ2指標):
   直近取引価格(souba)  = 直近に「売れた」価格(成約)。シングル=PSA10直近成約のみ(無ければ空欄・他グレードにフォールバックしない)。
   相場(souba_ask)      = 今「出ている」出品の最安値(現在値)。
@@ -26,6 +28,7 @@ CSV_BY_GAME = {"pokemon": "index_pokemon.csv", "onepiece": "index_onepiece.csv"}
 CHUNK = 8000
 HEADER_ROW = 5
 DATA_START = 6
+BLANK_SUFFIX = "(価格なし)"   # 価格が両方空欄の行を逃がすタブ名の接尾辞
 ITEM_JA = {"single": "シングル", "box": "BOX", "pack": "パック", "deck": "デッキ", "other": "その他", "sealed": "未開封"}
 
 # 表示列: (見出し, 元キー, 幅px, 種別 text/price/url/flag/item/tech)
@@ -55,7 +58,10 @@ USAGE = [
     ["スニダンにある全ポケカ・ワンピのカード相場を自動で集めた一覧です。"],
     [""],
     ["■ どのタブを見る？"],
-    ["   ・「ポケカ」…ポケモンカード / 「ワンピ」…ワンピースカード"],
+    ["   ・「ポケカ」「ワンピ」… 価格が付いているカード。普段はこの2つだけ見ればOKです。"],
+    ["   ・「ポケカ(価格なし)」「ワンピ(価格なし)」… スニダンに成約も出品も無いカード。"],
+    ["        シートが重くならないよう別タブに分けてあります（消したわけではありません）。"],
+    ["        価格が付いたら翌朝の更新で自動的に上のタブへ移ります。"],
     [""],
     ["■ 価格は2列あります（スニダンのカードページと同じ2つの数字）"],
     ["   ●「直近取引価格」… 直近に “売れた” 価格（成約）"],
@@ -66,7 +72,7 @@ USAGE = [
     ["        ・BOX/パック … スニダン表記の下限額（「¥1,000〜」なら¥1,000）"],
     ["   ※相場＝“売り希望の下限”なので、成約（直近取引価格）より高めに出ることがあります。"],
     ["     両方を見比べて判断してください。相場が空欄＝そのカードは今PSA10の出品ゼロ。"],
-    ["   ※両方とも空欄 … スニダンに取引も出品も無いカード（かなり希少）。備考に明記。"],
+    ["   ※両方とも空欄 … スニダンに取引も出品も無いカード（かなり希少）→「(価格なし)」タブへ。"],
     ["        価値が無いのではなく流通が少ないだけ。動きが出れば自動で入ります。"],
     [""],
     ["■ 更新頻度列（どのくらいの頻度で価格を取り直すか）"],
@@ -275,6 +281,24 @@ FREQ_COL = next(i for i, d in enumerate(DISPLAY) if d[1] == "freq")
 SORT_COL = next(i for i, d in enumerate(DISPLAY) if d[1] == "souba_sort")  # 並び/絞込キー(直近取引と相場の高い方・非表示列)
 
 
+def clear_filters(ss, ws):
+    """基本フィルタ／フィルタ表示を外す。★行数を縮める前に必ず呼ぶ（範囲が残っていると行削除が失敗する）。"""
+    reqs = []
+    try:
+        meta = ss.fetch_sheet_metadata()
+        for sh in meta.get("sheets", []):
+            if sh["properties"]["sheetId"] == ws.id:
+                for fv in sh.get("filterViews", []):
+                    reqs.append({"deleteFilterView": {"filterId": fv["filterViewId"]}})
+    except Exception:
+        pass
+    reqs.append({"clearBasicFilter": {"sheetId": ws.id}})
+    try:
+        ss.batch_update({"requests": reqs})
+    except Exception:
+        pass
+
+
 def setup_filters(ss, ws, nrows):
     """閲覧者向けプリセット: 見出しにフィルタ▼ + フィルタ表示(価格順/毎日のみ/空欄除く)。
     並び・絞込は souba_sort(直近取引と相場の高い方・非表示列)を基準にする。"""
@@ -283,21 +307,7 @@ def setup_filters(ss, ws, nrows):
     rng = {"sheetId": sid, "startRowIndex": HEADER_ROW - 1, "endRowIndex": HEADER_ROW + nrows,
            "startColumnIndex": 0, "endColumnIndex": SORT_COL + 1}
     sort_souba = [{"dimensionIndex": SORT_COL, "sortOrder": "DESCENDING"}]
-    # 既存フィルタ表示/基本フィルタを削除(重複防止)
-    dels = []
-    try:
-        meta = ss.fetch_sheet_metadata()
-        for sh in meta.get("sheets", []):
-            if sh["properties"]["sheetId"] == sid:
-                for fv in sh.get("filterViews", []):
-                    dels.append({"deleteFilterView": {"filterId": fv["filterViewId"]}})
-    except Exception:
-        pass
-    dels.append({"clearBasicFilter": {"sheetId": sid}})
-    try:
-        ss.batch_update({"requests": dels})
-    except Exception:
-        pass
+    clear_filters(ss, ws)   # 既存フィルタ表示/基本フィルタを削除(重複防止)
     adds = [
         {"setBasicFilter": {"filter": {"range": dict(rng)}}},
         {"addFilterView": {"filter": {"title": "価格が高い順", "range": dict(rng), "sortSpecs": sort_souba}}},
@@ -312,15 +322,17 @@ def setup_filters(ss, ws, nrows):
         pass
 
 
-def write_tab(ws, rows, status):
+def write_tab(ws, rows, status, presets=True):
     ss = ws.spreadsheet
+    clear_filters(ss, ws)          # 行数を縮める前にフィルタを外す
     ws.clear()
-    mainichi = sum(1 for r in rows if r.get("freq") == "毎日")
+    # ★グリッドを実データちょうどに縮める。使わない行/列が残るとその分だけブラウザが読み込む(書式も残る)
+    ws.resize(rows=max(len(rows) + DATA_START, HEADER_ROW + 2), cols=len(HEADERS))
     icon = "🟢 正常" if status["ok"] else "🔴 失敗"
     top = [
         [f"🎴 {status['label']} ｜ スニダン価格インデックス", "", "", "", f"状態: {icon}"],
         [f"最終更新: {status['ts']}（毎朝 6:20 自動更新）", "", "", "", status.get("detail", "")],
-        [f"総 {len(rows):,}件 ／ 毎日更新 {mainichi:,}件（価格>¥3,000）／ 週1巡回 {len(rows)-mainichi:,}件", "", "", "", ""],
+        [status.get("summary", ""), "", "", "", ""],
     ]
     ws.update("A1", top, value_input_option="RAW")
     matrix = build_matrix(rows)
@@ -328,7 +340,22 @@ def write_tab(ws, rows, status):
         ws.update(f"A{HEADER_ROW + start}", matrix[start:start + CHUNK], value_input_option="RAW")
         time.sleep(0.8)
     ss.batch_update({"requests": fmt_requests(ws.id, len(HEADERS), len(rows), status["ok"])})
-    setup_filters(ss, ws, len(rows))
+    if presets:
+        setup_filters(ss, ws, len(rows))
+    else:   # 価格なしタブは並べ替える価格が無いので見出しフィルタだけ
+        try:
+            ss.batch_update({"requests": [{"setBasicFilter": {"filter": {"range": {
+                "sheetId": ws.id, "startRowIndex": HEADER_ROW - 1, "endRowIndex": HEADER_ROW + len(rows),
+                "startColumnIndex": 0, "endColumnIndex": VISIBLE_COLS}}}}]})
+        except Exception:
+            pass
+
+
+def get_tab(ss, title, nrows):
+    try:
+        return ss.worksheet(title)
+    except Exception:
+        return ss.add_worksheet(title=title, rows=nrows + DATA_START, cols=len(HEADERS))
 
 
 def main():
@@ -341,10 +368,6 @@ def main():
     for game, tab in config.INDEX_TABS.items():
         t0 = time.time()
         rows = load_csv(game)
-        try:
-            ws = ss.worksheet(tab)
-        except Exception:
-            ws = ss.add_worksheet(title=tab, rows=len(rows) + 10, cols=len(HEADERS) + 2)
         detail = "ロードのみ"; ok_flag = True
         try:
             recompute(rows)  # CSV baselineから souba_sort等を先に確定(repriceの高額判定に必要)
@@ -355,9 +378,20 @@ def main():
         except Exception as e:
             ok_flag = False; overall_ok = False; detail = str(e)[:80]
             recompute(rows)
-        write_tab(ws, rows, {"label": tab, "ts": now_jst(), "ok": ok_flag, "detail": detail})
-        print(f"[{tab}] {'OK' if ok_flag else 'NG'} {detail} 書込{len(rows)}件 {time.time()-t0:.0f}s", flush=True)
-    keep = {"使い方"} | set(config.INDEX_TABS.values())
+        # ★価格(直近取引価格/相場)がどちらも無い行はメインタブから外し「(価格なし)」タブへ。
+        #   メインタブの行数が3分の1になり、ブラウザで開くのが速くなる。値が付けば翌朝ここへ戻る。
+        priced = [r for r in rows if r.get("souba_sort")]
+        blank = [r for r in rows if not r.get("souba_sort")]
+        mainichi = sum(1 for r in priced if r.get("freq") == "毎日")
+        base = {"ts": now_jst(), "ok": ok_flag, "detail": detail}
+        write_tab(get_tab(ss, tab, len(priced)), priced, dict(base, label=tab, summary=(
+            f"価格あり {len(priced):,}件 ／ 毎日更新 {mainichi:,}件（価格>¥3,000）／ 週1巡回 {len(priced)-mainichi:,}件"
+            f"　※価格なし {len(blank):,}件は「{tab}{BLANK_SUFFIX}」タブ")))
+        write_tab(get_tab(ss, tab + BLANK_SUFFIX, len(blank)), blank, dict(base, label=tab + BLANK_SUFFIX, summary=(
+            f"{len(blank):,}件 ／ スニダンに成約も出品も無いカード（週1で巡回チェック中）"
+            f"　※価格が付いたら翌朝「{tab}」タブへ自動で移ります")), presets=False)
+        print(f"[{tab}] {'OK' if ok_flag else 'NG'} {detail} 価格あり{len(priced)}件/価格なし{len(blank)}件 {time.time()-t0:.0f}s", flush=True)
+    keep = {"使い方"} | set(config.INDEX_TABS.values()) | {t + BLANK_SUFFIX for t in config.INDEX_TABS.values()}
     for ws in ss.worksheets():
         if ws.title not in keep:
             try:
@@ -365,7 +399,10 @@ def main():
             except Exception:
                 pass
     try:
-        ss.reorder_worksheets([ss.worksheet("使い方")] + [ss.worksheet(t) for t in config.INDEX_TABS.values()])
+        order = [ss.worksheet("使い方")]
+        for t in config.INDEX_TABS.values():
+            order += [ss.worksheet(t), ss.worksheet(t + BLANK_SUFFIX)]
+        ss.reorder_worksheets(order)
     except Exception:
         pass
     if not overall_ok:
