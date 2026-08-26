@@ -80,21 +80,23 @@ def fetch_psa10_ask(url: str) -> Optional[int]:
         return None
 
 
-def fetch_min_price(url: str) -> int:
+def fetch_min_price(url: str) -> Optional[int]:
     """/v1/apparels/{id} の minPrice(=スニダン表記の下限額) を返す。BOX・パックの「相場」。
-    取れなければ0。"""
+
+    戻り値: 金額 / 0=出品が無い(相場なし) / None=取得失敗。
+    ★0とNoneを混ぜないこと。混ぜると通信失敗のたびに相場を消してしまう。"""
     aid = extract_apparel_id(url)
     if not aid:
-        return 0
+        return None
     try:
         r = requests.get(f"https://snkrdunk.com/v1/apparels/{aid}",
                          headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=15)
         if r.status_code != 200:
-            return 0
+            return None
         d = r.json()
         return int(d.get("minPrice") or d.get("usedMinPrice") or 0)
     except Exception:
-        return 0
+        return None
 
 
 def fetch_recent_price(snkrdunk_url: str, grade: str = "", is_pack: bool = False, item_name: str = "") -> Tuple[Optional[int], str]:

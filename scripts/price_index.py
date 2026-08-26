@@ -56,8 +56,8 @@ def price_one(r):
                 upd["ask_price"] = str(ask) if ask else ""  # 0=出品ゼロ→空欄
         else:
             mp = fetch_min_price(r["url"])
-            if mp:
-                upd["min_price"] = str(mp)
+            if mp is not None:                               # None=取得失敗はstale保持
+                upd["min_price"] = str(mp) if mp else ""      # 0=出品なし→空欄
         if upd:
             upd["priced_at"] = now_jst()
             # souba列 = 設計ツールが実価値として読む列（single=相場/PSA10出品最安・BOX等=下限額）
@@ -75,6 +75,8 @@ def main():
     ap.add_argument("--delay", type=float, default=0.12)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--all", action="store_true", help="取得済みも取り直す")
+    ap.add_argument("--before", default="", metavar="YYYY-MM-DD",
+                    help="この日より前にしか取っていない行だけ取り直す(取り残しの掃除用)")
     ap.add_argument("--recompute", action="store_true",
                     help="通信せず souba列(実価値)だけ今ある価格から入れ直す")
     args = ap.parse_args()
@@ -99,7 +101,10 @@ def main():
     if os.path.exists(prog_path) and not args.all:
         with open(prog_path) as f:
             done = {l.strip() for l in f if l.strip()}
-    targets = [r for r in rows if args.all or (not r.get("priced_at") and r["apparel_id"] not in done)]
+    if args.before:
+        targets = [r for r in rows if (r.get("priced_at") or "")[:10] < args.before]
+    else:
+        targets = [r for r in rows if args.all or (not r.get("priced_at") and r["apparel_id"] not in done)]
     if args.limit:
         targets = targets[:args.limit]
     print(f"{config.INDEX_TABS[args.game]}: 全{len(rows):,}件 / 今回{len(targets):,}件 "

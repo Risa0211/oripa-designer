@@ -178,8 +178,8 @@ def reprice(rows):
                     upd["ask_price"] = str(ask) if ask else ""  # 0=出品ゼロは空欄化
             else:
                 mp = fetch_min_price(r["url"])               # 相場(表記下限)
-                if mp:
-                    upd["min_price"] = str(mp)
+                if mp is not None:                           # None=取得失敗はstale保持
+                    upd["min_price"] = str(mp) if mp else ""  # 0=出品なし→空欄
             if upd:
                 upd["priced_at"] = now_jst()                 # いつ時点の価格かをCSVに残す
         except Exception:
