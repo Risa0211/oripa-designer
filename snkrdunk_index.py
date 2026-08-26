@@ -19,10 +19,11 @@ from inventory import InventoryItem
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
-INDEX_FILES = {
-    "ポケカ": os.path.join(_DATA_DIR, "index_pokemon.csv"),
-    "ワンピ": os.path.join(_DATA_DIR, "index_onepiece.csv"),
-}
+import config
+
+# 対象ゲームは config.INDEX_TABS 一本（ゲームを足したらここも自動で増える）
+INDEX_FILES = {label: os.path.join(_DATA_DIR, f"index_{game}.csv")
+               for game, label in config.INDEX_TABS.items()}
 
 # item_type ごとの区分（タブ）ラベル。区分フィルタで使えるよう game と種別を合成する。
 _TYPE_SUFFIX = {

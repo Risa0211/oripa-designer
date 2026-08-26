@@ -31,7 +31,10 @@ import unicodedata
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
 OUT = os.path.join(ROOT, "gacha-csv-builder", "snkrdunk_prices.csv")
-SOURCES = [("ポケカ", "index_pokemon.csv"), ("ワンピ", "index_onepiece.csv")]
+sys.path.insert(0, ROOT)
+import config
+# 対象ゲームは config.INDEX_TABS 一本（ゲームを足したらここも自動で増える）
+SOURCES = [(label, f"index_{game}.csv") for game, label in config.INDEX_TABS.items()]
 HEADER = ["kata", "name", "rarity", "item_type", "sale", "ask", "updated", "aid"]
 
 
@@ -64,7 +67,8 @@ def build():
     for game, fn in SOURCES:
         path = os.path.join(DATA, fn)
         if not os.path.exists(path):
-            sys.exit(f"[ERROR] 見つかりません: {path}")
+            print(f"[skip] {game}: {fn} が未作成（価格インデックスに追加準備中のゲーム）")
+            continue
         for r in csv.DictReader(open(path, encoding="utf-8")):
             single = r.get("item_type") == "single"
             sale = _int(r.get("psa10_price")) if single else 0

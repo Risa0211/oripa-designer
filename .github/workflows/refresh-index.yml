@@ -61,7 +61,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/index_pokemon.csv data/index_onepiece.csv gacha-csv-builder/snkrdunk_prices.csv
+          git add data/index_*.csv gacha-csv-builder/snkrdunk_prices.csv
           if git diff --cached --quiet; then
             echo "変更なし（価格の動きなし）"
           else

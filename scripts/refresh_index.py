@@ -24,7 +24,7 @@ from sheets_client import get_client
 
 JST = timezone(timedelta(hours=9))
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-CSV_BY_GAME = {"pokemon": "index_pokemon.csv", "onepiece": "index_onepiece.csv"}
+CSV_BY_GAME = {g: f"index_{g}.csv" for g in config.INDEX_TABS}   # ゲームを足すのは config.INDEX_TABS だけでよい
 CHUNK = 8000
 HEADER_ROW = 5
 DATA_START = 6
@@ -140,21 +140,6 @@ def _int(v):
         return 0
 
 
-def fetch_min_price(url):
-    """/v1/apparels/{id} の minPrice(=表記下限) を取得。BOX/パック用。"""
-    import re, json, urllib.request
-    m = re.search(r"/apparels/(\d+)", url)
-    if not m:
-        return 0
-    try:
-        req = urllib.request.Request(f"https://snkrdunk.com/v1/apparels/{m.group(1)}",
-                                     headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-        d = json.load(urllib.request.urlopen(req, timeout=15))
-        return _int(d.get("minPrice")) or _int(d.get("usedMinPrice"))
-    except Exception:
-        return 0
-
-
 DAILY_THRESHOLD = 3000  # 相場>¥3,000=毎日 / それ以外=7日巡回
 
 
@@ -162,7 +147,7 @@ def reprice(rows):
     """毎日: 高額(souba_sort>¥3,000) + その他全カードを1/7ずつ巡回(希少含む・7日で一巡)。
     single → 直近取引価格(PSA10直近成約)と相場(PSA10出品最安)の両方を再取得。
     それ以外 → 相場=表記下限(minPrice)。"""
-    from snkrdunk_client import fetch_psa10_sale, fetch_psa10_ask
+    from snkrdunk_client import fetch_psa10_sale, fetch_psa10_ask, fetch_min_price
     from concurrent.futures import ThreadPoolExecutor, as_completed
     bucket = datetime.now(JST).timetuple().tm_yday % 7
 
@@ -367,6 +352,10 @@ def main():
     overall_ok = True
     for game, tab in config.INDEX_TABS.items():
         t0 = time.time()
+        # まだ価格CSVが無いゲーム(準備中)は飛ばす。1本欠けてもcron全体を落とさない
+        if not os.path.exists(os.path.join(DATA, CSV_BY_GAME[game])):
+            print(f"[{tab}] スキップ（{CSV_BY_GAME[game]} が未作成）", flush=True)
+            continue
         rows = load_csv(game)
         detail = "ロードのみ"; ok_flag = True
         try:
@@ -399,9 +388,10 @@ def main():
             except Exception:
                 pass
     try:
-        order = [ss.worksheet("使い方")]
-        for t in config.INDEX_TABS.values():
-            order += [ss.worksheet(t), ss.worksheet(t + BLANK_SUFFIX)]
+        have = {w.title: w for w in ss.worksheets()}
+        order = [have["使い方"]]
+        for t in config.INDEX_TABS.values():   # 未作成のゲームのタブは飛ばす
+            order += [have[x] for x in (t, t + BLANK_SUFFIX) if x in have]
         ss.reorder_worksheets(order)
     except Exception:
         pass

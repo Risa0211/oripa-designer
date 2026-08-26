@@ -139,4 +139,17 @@ SCOPES = [
 
 # スニダン価格インデックス 専用スプレッドシート
 INDEX_SHEET_ID = "17PBcnVbPZj935ZkRHFLMFzUw5nmNgpeTR8g0W7PAD5A"
-INDEX_TABS = {"pokemon": "ポケカ", "onepiece": "ワンピ"}
+INDEX_TABS = {"pokemon": "ポケカ", "onepiece": "ワンピ", "yugioh": "遊戯王", "dragonball": "ドラゴンボール"}
+
+# ゲーム → スニダンのブランドID。分類マスタから index_{game}.csv を作るときの振り分けに使う。
+# ブランドIDは https://snkrdunk.com/v1/brands の id。1ゲームに複数シリーズがぶら下がる。
+INDEX_GAME_BRANDS = {
+    "pokemon": ["pokemon"],
+    "onepiece": ["onepiece"],
+    "yugioh": ["yu-gi-oh", "yu-gi-oh-rushduel"],
+    "dragonball": ["dragon-ball-super-card-game",   # フュージョンワールド(現行の主力)
+                   "super-dragon-ball-heroes",
+                   "dragon-ball-carddass",
+                   "dragonball",
+                   "dragon-ball-super-divers"],
+}
