@@ -41,3 +41,10 @@ data/.master_processed_ids.txt
 data/.priced_ids.txt
 data/.*_pid
 data/*.log
+
+# スニダン分類マスタと進捗ファイル（ローカル生成物・巨大／他セッションの git add -A で巻き込まないため）
+data/snkrdunk_*master*.csv
+data/snkrdunk_all_ids.csv
+data/.*_ids.txt
+data/.priced_*.txt
+data/*.log
