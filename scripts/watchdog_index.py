@@ -94,7 +94,10 @@ def main():
            + "\n\n" + "\n".join(lines)
            + f"\n確認時刻(JST): {now:%Y-%m-%d %H:%M}\n[/info]")
     send_chatwork(msg)
-    print("更新が止まっている → Chatwork通知"); sys.exit(1)
+    # ★ここでエラー終了しない（代表指示 2026-08-28）。異常終了させるとGitHubから
+    #   「Run failed」メールが飛び、Chatworkの通知と二重になって紛らわしいため。
+    #   知らせる先はChatworkだけにする。
+    print("更新が止まっている → Chatwork通知（実行自体は正常終了させる）")
 
 
 if __name__ == "__main__":
