@@ -5,10 +5,13 @@
 cd "$(dirname "$0")/.." || exit 1
 CMD="$1"; PROG="$2"; TOTAL="$3"; LOG="${4:-data/supervise.log}"
 STALL=2
+DEAD=3   # 起動しても1件も進まないのがこの回数続いたら打ち切り(残りが全部失敗するIDのとき無限ループしない)
+dead=0
 echo "=== supervise start $(date '+%F %T') cmd=[$CMD] total=$TOTAL ===" >> "$LOG"
 while true; do
   d=$(wc -l < "$PROG" 2>/dev/null | tr -d ' '); d=${d:-0}
   if [ "$d" -ge "$TOTAL" ]; then echo "ALL DONE d=$d $(date '+%F %T')" >> "$LOG"; break; fi
+  before=$d
   bash -c "$CMD" >> "$LOG" 2>&1 &
   pid=$!; echo "launched pid=$pid d=$d $(date '+%F %T')" >> "$LOG"
   echo "$pid" > data/.sup_child_pid
@@ -23,6 +26,11 @@ while true; do
     else s=0; fi
     last=$n
   done
+  after=$(wc -l < "$PROG" 2>/dev/null | tr -d ' '); after=${after:-0}
+  if [ "$after" -le "$before" ]; then
+    dead=$((dead+1)); echo "no-gain launch $dead/$DEAD (d=$after) $(date '+%F %T')" >> "$LOG"
+    [ "$dead" -ge "$DEAD" ] && { echo "GIVE UP d=$after $(date '+%F %T')" >> "$LOG"; break; }
+  else dead=0; fi
   sleep 3
 done
 echo "=== supervise end $(date '+%F %T') ===" >> "$LOG"
