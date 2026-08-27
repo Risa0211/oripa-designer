@@ -39,7 +39,9 @@ jobs:
             echo "手動起動 → そのまま実行する"
             exit 0
           fi
-          if python3 scripts/index_health.py; then
+          # 「最後にまわってから18時間以内なら済み」。日付で見ると、GitHubがスケジュールを
+          # 大幅に遅らせて深夜に実行したときに誤判定するため、経過時間で見る
+          if python3 scripts/index_health.py --max-age 18; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "今日の更新は済んでいる → このrunはスキップ"
           else

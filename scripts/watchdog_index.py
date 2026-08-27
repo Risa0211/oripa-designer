@@ -1,12 +1,13 @@
 """スニダン価格インデックスの死活監視（＝静かな失敗を人に知らせる）。
 
 見るのは2つ。
-  ① 本物の指標 … 今日(JST)の priced_at が付いた行数（scripts/index_health.py）。
-     日次の巡回が動けば必ず数千行に今日の日付が入る。手動のロードでは増えないので誤魔化されない
+  ① 本物の指標 … **最後にちゃんと1回まわってからの経過時間**（scripts/index_health.py）。
+     日次の巡回が動けば数千行の priced_at が動く。手動のロードでは増えないので誤魔化されない
   ② 参考 … シート各タブの「最終更新」の古さ（表示が止まっていないかの確認）
 
-自動更新の取りこぼし自体は refresh-index.yml の追いかけcron(JST 08:20/10:20)が拾う。
-この監視はその後（JST 11:30 / 14:30）に走り、**追いかけでも直らなかったとき**に通知する。
+★「今日の分が来たか」を日付で見てはいけない。GitHubはスケジュールを数時間〜半日遅らせて
+  実行することがあり（2026-08-27は11時間遅れ）、**朝の更新前の深夜に走ると必ず0件**になって
+  誤報を出す。実際に2026-08-28 01:36に誤報を出した。だから経過時間で判断する。
 
 実行(GitHub Actions): python3 scripts/watchdog_index.py
 """
@@ -18,10 +19,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import config
-from index_health import MIN_ROWS, counts
+from index_health import MIN_ROWS, age_hours, counts
 
 JST = timezone(timedelta(hours=9))
-MAX_AGE_H = 25
+MAX_AGE_H = 26      # 最後の更新からこの時間を超えたら通知（毎朝1回なので通常は24時間以内）
 DISPATCH_URL = "https://github.com/Risa0211/oripa-designer/actions/workflows/refresh-index.yml"
 
 
@@ -63,32 +64,37 @@ def sheet_ages(now):
 
 def main():
     now = datetime.now(JST)
-    day = now.strftime("%Y-%m-%d")
-    c = counts(day)
-    total = sum(c.values())
-    detail = " / ".join(f"{k} {v:,}件" for k, v in c.items()) or "(CSVなし)"
-    print(f"{day} に取り直した行: {detail}　合計{total:,}件（下限{MIN_ROWS:,}）")
+    age, last = age_hours()
+    if last:
+        c = counts(last[0])
+        detail = " / ".join(f"{k} {v:,}件" for k, v in c.items())
+        print(f"最後にまわったのは {last[1]}（{detail}／合計{last[2]:,}件・{age:.1f}時間前）")
+    else:
+        print(f"{MIN_ROWS:,}件以上を取り直した日が見つかりません")
     lines, stale = sheet_ages(now)
     for l in lines:
         print(" ", l)
 
-    if total >= MIN_ROWS and not stale:
-        print("OK: 今朝の更新は済んでいます"); return
+    if age is not None and age <= MAX_AGE_H and not stale:
+        print(f"OK: 最後の更新から{age:.1f}時間（基準{MAX_AGE_H}時間）"); return
 
     why = []
-    if total < MIN_ROWS:
-        why.append(f"今日({day})に価格を取り直した行が {total:,}件しかありません（通常は6,000件以上）")
+    if age is None:
+        why.append(f"価格を{MIN_ROWS:,}件以上取り直した日が見つかりません")
+    elif age > MAX_AGE_H:
+        why.append(f"最後に価格を取り直したのは {last[1]}（{age:.0f}時間前・{last[2]:,}件）。"
+                   f"通常は24時間以内に1回まわります")
     if stale:
         why.append(f"シートの最終更新が{MAX_AGE_H}時間以上前: {', '.join(stale)}")
-    msg = ("[toall]\n[info][title]⚠️ スニダン価格インデックス 今朝の更新が来ていません[/title]\n"
+    msg = ("[toall]\n[info][title]⚠️ スニダン価格インデックス 更新が止まっています[/title]\n"
            + "\n".join(why)
-           + "\n\n追いかけ実行(JST 08:20/10:20)でも直りませんでした。"
-           + "\nGitHub側でスケジュールが取りこぼされている可能性があります。"
+           + "\n\n本番(JST 06:20)も追いかけ(08:20/10:20)も効いていません。"
+           + "\nGitHub側のスケジュールが取りこぼされている可能性があります。"
            + f"\n手動実行はこちら（reprice=true）→ {DISPATCH_URL}"
            + "\n\n" + "\n".join(lines)
            + f"\n確認時刻(JST): {now:%Y-%m-%d %H:%M}\n[/info]")
     send_chatwork(msg)
-    print("未更新 → Chatwork通知"); sys.exit(1)
+    print("更新が止まっている → Chatwork通知"); sys.exit(1)
 
 
 if __name__ == "__main__":
