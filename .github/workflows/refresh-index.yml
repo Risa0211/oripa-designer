@@ -32,6 +32,11 @@ jobs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # ★ref を明示してブランチの「今の先端」を取る。既定(イベント固定のSHA)だと、
+          #   concurrency の順番待ちをしている間に前のrunがpushした価格CSVが見えず、
+          #   guard が「まだ更新が来ていない」と誤判定して丸ごと取り直していた(8/29・8/31の失敗)
+          ref: ${{ github.ref_name }}
       - id: check
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
@@ -39,6 +44,7 @@ jobs:
             echo "手動起動 → そのまま実行する"
             exit 0
           fi
+          echo "判定に使うコミット: $(git log -1 --format='%h %ad %s' --date=iso)"
           # 「最後にまわってから18時間以内なら済み」。日付で見ると、GitHubがスケジュールを
           # 大幅に遅らせて深夜に実行したときに誤判定するため、経過時間で見る
           if python3 scripts/index_health.py --max-age 18; then
@@ -59,6 +65,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0     # 価格CSVを書き戻す際の rebase が浅いクローンだと失敗するため全履歴
+          ref: ${{ github.ref_name }}   # guard と同じ理由。順番待ち明けは必ず最新から始める
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -75,6 +82,7 @@ jobs:
           python3 -c "import json; d=json.load(open('credentials.json')); print('client_email:', d.get('client_email'))"
 
       - name: Refresh index sheet
+        id: refresh
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.reprice }}" = "true" ]; then
             echo "== reprice mode =="
@@ -90,21 +98,38 @@ jobs:
 
       # ガチャ登録CSVビルダー用の軽量価格CSV(型番→直近取引価格/相場)を作り直す
       - name: Rebuild price lookup for gacha-csv-builder
+        id: lookup
         run: python3 scripts/build_price_lookup.py
 
       # 再取得した価格をリポジトリに戻す。これでビルダー(Streamlit Cloud)が毎朝の値で再デプロイされる
       - name: Commit refreshed prices
+        id: commit
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/index_*.csv gacha-csv-builder/snkrdunk_prices.csv
           if git diff --cached --quiet; then
             echo "変更なし（価格の動きなし）"
-          else
-            git commit -m "スニダン価格を自動更新 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M') [skip ci]"
-            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+            exit 0
           fi
+          git commit -m "スニダン価格を自動更新 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M') [skip ci]"
+          # 走っている間に別のrunがpushしていることがある。価格CSVは毎回まるごと作り直す生成物なので、
+          # ぶつかったら「今回取り直した値」を採用して載せ直す(rebase中の -X theirs = 適用中の自分のコミット側)
+          for i in 1 2 3; do
+            git fetch origin "$GITHUB_REF_NAME"
+            if ! git rebase --autostash -X theirs "origin/$GITHUB_REF_NAME"; then
+              git rebase --abort || true
+              echo "rebase に失敗（$i回目）。取り直して再試行"
+              continue
+            fi
+            if git push origin "HEAD:$GITHUB_REF_NAME"; then
+              echo "push 完了（$i回目）"
+              exit 0
+            fi
+            echo "push が弾かれた（$i回目）。取り直して再試行"
+          done
+          echo "3回試しても push できませんでした" >&2
+          exit 1
 
       - name: Notify Chatwork on failure
         if: failure()
@@ -112,6 +137,10 @@ jobs:
           CHATWORK_API_TOKEN: ${{ secrets.CHATWORK_API_TOKEN }}
           CHATWORK_ROOM_ID: ${{ secrets.CHATWORK_ROOM_ID }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # どこで転んだかを通知に出す。以前は成功したログ末尾だけが貼られて原因が読めなかった
+          ST_REFRESH: ${{ steps.refresh.outcome }}
+          ST_LOOKUP: ${{ steps.lookup.outcome }}
+          ST_COMMIT: ${{ steps.commit.outcome }}
         run: |
           {
             echo "[toall]"
@@ -119,7 +148,9 @@ jobs:
             echo "Run: $RUN_URL"
             echo "時刻(JST): $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')"
             echo ""
-            echo "ログ末尾:"
+            echo "どこで転んだか: 価格取得=${ST_REFRESH:-未実行} / 価格表の作り直し=${ST_LOOKUP:-未実行} / 書き戻し=${ST_COMMIT:-未実行}"
+            echo ""
+            echo "価格取得のログ末尾:"
             tail -20 index.log 2>/dev/null || echo "(index.log なし)"
             echo "[/info]"
           } > body.txt
