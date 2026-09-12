@@ -22,6 +22,7 @@ python3 $G/upload.py  --work $WORK     # ④ 空撃ち（対象と台帳の行�
 python3 $G/upload.py  --work $WORK --go --label "第12陣"   # ④ 本番
 python3 $G/gallery.py --work $WORK     # ⑤ 確認ギャラリー   → gallery/
 cd $WORK/gallery && python3 -m http.server 8778
+python3 $G/thumbs.py  --work $WORK     # ⑥ サムネ依頼用の画像 → thumbs/
 ```
 
 ## 作業ディレクトリの中身
@@ -33,7 +34,7 @@ cd $WORK/gallery && python3 -m http.server 8778
 | `pick.json` | **人**（目視の結果。下を参照。無くても動く） |
 | `cand/snkr_{ID}.png` | 人（スニダン原寸を使うときだけ） |
 | `snkr.json` / `match.json` / `match.log` / `final.json` / `uploaded.json` | 道具が作る |
-| `sheets/` / `gallery/` | 道具が作る |
+| `sheets/` / `gallery/` / `thumbs/` | 道具が作る |
 
 ## pick.json（目視の結果を書く）
 
@@ -59,6 +60,23 @@ apparel ID をキーにする。**書かなかったカードは照合の1位が
 | カードラッシュ op | `https://www.cardrush-op.jp/data/cardrush-op/product/` |
 | カードラッシュ pokemon | `https://www.cardrush-pokemon.jp/data/cardrushpokemon/product/`（**ハイフン無し**） |
 | ポケカ公式 | `https://www.pokemon-card.com/assets/images/card_images/large/` |
+
+## サムネ依頼用の画像（`thumbs.py`）
+
+デザイナーへ渡す一式を本ごとのフォルダにまとめる。
+
+```
+{work}/thumbs/{ガチャ名 訴求}/
+    _一覧.txt                        1行目=ガチャ名、以降「等級 カード名 ×枚数」
+    01_1等_カード名 [型番].webp
+    02_ラストワン賞_…
+    03_2等_…
+```
+
+- 対象は **apparel ID のある実カードだけ**（PT交換専用・最低保証は入れない）
+- 並びは設計の順。同じカードが複数行にあるときは1枚だけ
+- フォルダ名はガチャ名から `!!` を外し、`/` を `-` にしたもの
+- 出力先を変えるなら `--out ~/Downloads/{案件名}_サムネ用当たりカード`
 
 ## 判定の基準（`match.py` の定数）
 
