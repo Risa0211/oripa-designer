@@ -101,5 +101,40 @@ def build():
     print(f"[OK] {OUT} 価格あり{len(rows):,}件 / 型番{katas:,}種 / {size:,.0f}KB（価格なし{skipped:,}件は除外）")
 
 
+MINTORE_OUT = os.path.join(ROOT, "gacha-csv-builder", "mintore_names.csv")
+# ビルダーに載せるのは、みんトレで扱うゲームだけ（全ゲームだと10万行を超えてビルダーが重くなる）。
+# シートのB列「みんトレ表記」は全ゲームに入る。扱うゲームが増えたらここに足す。
+MINTORE_SOURCES = {"index_pokemon.csv", "index_onepiece.csv"}
+MINTORE_HEADER = ["mintore_name", "aid", "kata", "name", "rarity", "item_type", "game"]
+
+
+def build_mintore():
+    """ビルダー用の「みんトレ表記」一覧（価格の有無に関係なく全商品）。
+    設計の賞品名がこの表記と一致するかをビルダーが確かめ、一致すれば型番・カード名・レアを引いて画像を照合する。"""
+    rows = []
+    for game, fn in SOURCES:
+        path = os.path.join(DATA, fn)
+        if not os.path.exists(path) or fn not in MINTORE_SOURCES:
+            continue
+        for r in csv.DictReader(open(path, encoding="utf-8")):
+            mn = (r.get("mintore_name") or "").strip()
+            if not mn:
+                continue
+            kata = join_key(r.get("card_number", ""), r.get("set_code", "")) if r.get("item_type") == "single" else ""
+            rows.append({"mintore_name": mn, "aid": r.get("apparel_id") or "", "kata": kata,
+                         "name": (r.get("name") or "").strip(), "rarity": (r.get("rarity") or "").strip(),
+                         "item_type": r.get("item_type") or "", "game": game})
+    if not rows:
+        print("[skip] みんトレ表記がまだCSVに無い（mintore_names.csv は作らない）")
+        return
+    rows.sort(key=lambda r: (r["game"], r["mintore_name"]))
+    with open(MINTORE_OUT, "w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=MINTORE_HEADER)
+        w.writeheader()
+        w.writerows(rows)
+    print(f"[OK] {MINTORE_OUT} {len(rows):,}件 / {os.path.getsize(MINTORE_OUT)/1024:,.0f}KB")
+
+
 if __name__ == "__main__":
     build()
+    build_mintore()

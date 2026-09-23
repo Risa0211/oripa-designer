@@ -191,6 +191,20 @@ def load_categories():
     return _load_categories(csv_sig(ADMIN_CSV))
 
 
+MINTORE_CSV = HERE / "mintore_names.csv"        # みんトレ表記の一覧（毎朝 build_price_lookup.py が作り直す）
+MINTORE_ALIAS_CSV = HERE / "mintore_aliases.csv"   # 古い表記 → みんトレ表記
+
+
+@st.cache_resource(show_spinner=False)
+def _load_mintore(sig):
+    """みんトレ表記（商品の正式な表記）。設計の賞品名がこれと違えば警告し、正しい表記を添える。"""
+    return B.load_mintore(MINTORE_CSV, MINTORE_ALIAS_CSV)
+
+
+def load_mintore():
+    return _load_mintore((csv_sig(MINTORE_CSV), csv_sig(MINTORE_ALIAS_CSV)))
+
+
 @st.cache_resource(show_spinner=False)
 def _load_snk_prices(sig):
     """スニダン価格（型番→直近取引価格/相場）。約580KBの軽量CSVなので初期読込は一瞬。
@@ -658,7 +672,8 @@ def render_make(uploaded, category="交換専用"):
     out_rows, unmatched, warnings, ambiguous = B.build(
         master_rows, inject, B.DEFAULT_HEADERS, {}, palette, default_category=category,
         fallback_rows=load_admin_cards(),        # 型番＋名前が一致すれば管理画面の画像も自動で当てる
-        valid_categories=load_categories())      # G列は実在フォルダーに寄せる（インポート弾かれ防止）
+        valid_categories=load_categories(),      # G列は実在フォルダーに寄せる（インポート弾かれ防止）
+        mintore=load_mintore())                  # 賞品名がみんトレ表記か確かめる（表記ゆれ防止）
 
     c1, c2, c3 = st.columns(3)
     c1.metric("確定（CSV出力）", len(out_rows))

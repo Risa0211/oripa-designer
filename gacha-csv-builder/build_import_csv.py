@@ -488,12 +488,58 @@ def _design_rarity(design_name):
     return m.group(1) if m else ""
 
 
+def mintore_key(s):
+    """みんトレ表記の照合キー（空白・全角半角・大文字小文字を無視）。scripts/mintore_name.key と同じ結果。
+    ★頭の鑑定・状態の印（【PSA10】【状態難】）は外して比べる＝鑑定品もカード本体の表記で照合できる。"""
+    s = unicodedata.normalize("NFKC", str(s or ""))
+    s = re.sub(r"^(?:【(?:PSA|BGS|ARS|CGC)[\d.]+】|【状態難】)+", "", s.strip())
+    return re.sub(r"\s+", "", s).lower()
+
+
+_CANON_PLAIN = re.compile(r"^(?:1ED|旧裏|プロモ|SA|再販|初版|争奪戦プロモ|争奪戦|アンリミ|PROMO)$", re.I)
+
+
+def canon_match_name(name):
+    """スニダン一覧のカード名（例「イーブイ C: マスターボールミラー」「AZ SR :1ED」「オーダイル R」）を
+    画像台帳の書き方（「イーブイ(マスターボールミラー)」「AZ」「オーダイル」）に寄せる。照合にだけ使う。
+    ★絵柄が変わる付記（ミラー・パラレル等）は括弧で残す＝通常版の画像を取り違えない。"""
+    s = unicodedata.normalize("NFKC", str(name or "")).strip()
+    base, _, var = s.partition(":")
+    base = re.sub(r"\s+(?:SAR|SIR|CSR|CHR|MUR|BWR|SSR|RRR|ACE|SEC|AR|SR|HR|UR|RR|MA|UC|TR|PR|L|R|C|U|K|A|S|H)$", "", base.strip())
+    var = var.strip().strip("/").strip()
+    if not var or _CANON_PLAIN.match(var):
+        return base
+    return f"{base}({var})"
+
+
+def load_mintore(names_csv=None, aliases_csv=None):
+    """みんトレ表記の一覧（mintore_names.csv）と、古い表記→みんトレ表記の対応（mintore_aliases.csv）を読む。
+    どちらも無ければ None（＝表記のチェックをしない。従来どおり動く）。"""
+    here = Path(__file__).resolve().parent
+    names_csv = Path(names_csv or here / "mintore_names.csv")
+    aliases_csv = Path(aliases_csv or here / "mintore_aliases.csv")
+    if not names_csv.exists():
+        return None
+    names = {}
+    for r in csv.DictReader(open(names_csv, encoding="utf-8-sig")):
+        names[mintore_key(r["mintore_name"])] = r
+    aliases = {}
+    if aliases_csv.exists():
+        for r in csv.DictReader(open(aliases_csv, encoding="utf-8-sig")):
+            if r.get("みんトレ表記"):
+                aliases[mintore_key(r["元の表記"])] = r["みんトレ表記"]
+    return {"names": names, "aliases": aliases}
+
+
 def build(master_rows, design_rows, headers, generic_map=None, palette=None,
-          default_category="", fallback_rows=None, valid_categories=None):
+          default_category="", fallback_rows=None, valid_categories=None, mintore=None):
     """default_category: レアリティを持たない賞（演出/ポイント変換/最低保証等）のG列カテゴリ。
     実カードは各カードのレアリティ（SR/P/AR…）を1枚ずつ自動でG列に入れる。
     fallback_rows: 原簿(綺麗ソース)に無い時だけ見る予備の原簿（管理画面ダンプ2.6万件）。
       ★誤爆を避けるため**型番とカード名の両方が一致した時だけ**使う。
+    mintore: load_mintore() の戻り値。渡すと ①賞品名がみんトレ表記ならそこから型番・カード名・レアを引いて照合し
+      ②みんトレ表記でない賞品名（スニダンにある商品なのに手打ち）を警告する（正しい表記が分かれば添える）。
+      Title（管理画面のカード名）は賞品名のまま＝みんトレ表記を貼ればそのまま管理画面に入る。
     valid_categories: 管理画面に実在するカードフォルダー名の一覧。渡すと、G列がこれに
       無い値（レア「−」等）の時に『未登録』へ寄せてインポート弾かれを防ぐ。
       ★管理画面のフォルダー名は『鑑定済カード』のように**濁点が分解された異体表記**で
@@ -540,6 +586,13 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
     for i, d in enumerate(design_rows, start=2):  # 2 = ヘッダ次の行番号(人が見やすいよう)
         raw_kata = get(d, "型番", "kataban", "card_number", "number")
         design_name = get(d, "カード名", "name", "title")
+        # ★みんトレ表記なら、照合にはその商品の型番・カード名・レアを使う（表記そのものは Title に残す）
+        canon = (mintore or {}).get("names", {}).get(mintore_key(design_name)) if design_name else None
+        match_name = design_name
+        if canon:
+            match_name = canon_match_name(canon.get("name")) or design_name
+            if not raw_kata.strip() and canon.get("kata"):
+                raw_kata = canon["kata"]
         key = norm_key(raw_kata)
         has_kata = bool(key) and raw_kata.strip() not in ("-", "ー", "―")
 
@@ -554,10 +607,23 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
 
         # 種別が未指定でも賞品名から演出種別を推定（テンプレに種別列が無い運用に対応）
         shu_from_name, kosu_from_name = palette_lookup.infer_shubetsu_from_name(design_name)
+        if canon:   # ★みんトレ表記＝実物の商品。【PSA10】付きでも「なにかのPSA10」のような演出カードとして扱わない
+            shu_from_name, kosu_from_name = "", None
         eff_shubetsu = shubetsu or shu_from_name
 
         m = {}          # マスター行（実カードのとき埋まる）
         title = get(d, "タイトル上書き", "title_override") or design_name
+        # ★管理画面に入るカード名（title）がみんトレ表記か。演出・ポイント交換は対象外。
+        #   画像の決め方（URL直指定・名前照合）に関係なく全行で見る。
+        if mintore and title and not enshutsu_key and not eff_shubetsu:
+            _tk = mintore_key(title)
+            _right = mintore.get("aliases", {}).get(_tk)
+            if _tk not in mintore.get("names", {}) and not (_right and mintore_key(_right) == _tk):
+                warnings.append(
+                    f"設計 {i}行目「{title}」: みんトレ表記ではありません"
+                    + (f" → 正しくは「{_right}」" if _right else
+                       " → スニダン一覧の「みんトレ表記」列からコピーしてください")
+                    + "（同じ商品を同じ表記にそろえるため）")
         image_url = price = source_url = ""
         category = get(d, "カテゴリ", "category")
         is_enshutsu = False   # 演出/ポイント交換/最低保証など（カテゴリは交換専用でよい賞）
@@ -597,10 +663,10 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
         # ④ 実カード：★名前を主キーに照合。型番は「同名で絵柄が複数」時の絞り込みだけに使う。
         #   （型番が賞品名と食い違う場合は型番を信用せず、無関係な型番仲間は候補に出さない）
         else:
-            nk = _name_key(design_name)
+            nk = _name_key(match_name)
             # ★賞品名の末尾に型番を書く運用（例『ピカチュウV 001/015』）に対応。
             #   型番列が空でも名前から型番を拾い、名前は型番を外した基底名でも照合する。
-            base_name_raw, kata_in_name = split_kata_from_name(design_name)
+            base_name_raw, kata_in_name = split_kata_from_name(match_name)
             base_nk = _name_key(base_name_raw)
             # 名前に型番が書いてある＝人が絵柄を指定している。型番違いの絵柄を勝手に採用しない。
             kata_strict = bool(kata_in_name) and not has_kata
@@ -615,8 +681,8 @@ def build(master_rows, design_rows, headers, generic_map=None, palette=None,
                      or (name_index.get(_strip_rarity(base_nk)) if base_nk != nk else None)
                      or [])
             # レアで絞り込み：新テンプレの独立レア列を優先、無ければ賞品名末尾のレア表記。
-            dr = (norm_key(get(d, "レアリティ", "rarity")) or _design_rarity(design_name)
-                  or _design_rarity(base_name_raw))
+            dr = (norm_key(get(d, "レアリティ", "rarity")) or norm_key((canon or {}).get("rarity"))
+                  or _design_rarity(match_name) or _design_rarity(base_name_raw))
             if dr and len(cands) > 1:
                 rared = [c for c in cands if norm_key(get(c, "レアリティ", "rarity")) == dr]
                 if rared:
@@ -881,7 +947,7 @@ def main():
     palette = palette_lookup.load_palette(*[p for p in (args.palette or []) if Path(p).exists()])
 
     out_rows, unmatched, warnings, ambiguous = build(
-        master_rows, design_rows, headers, generic_map, palette)
+        master_rows, design_rows, headers, generic_map, palette, mintore=load_mintore())
 
     # 出力（BOM付きutf-8: 管理画面/Excel互換のため）
     with Path(args.out).open("w", encoding="utf-8-sig", newline="") as f:

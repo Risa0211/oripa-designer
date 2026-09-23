@@ -156,8 +156,32 @@ def _row_kata(row: dict) -> str:
     return ""
 
 
-def check(items, cards, palette):
-    """items: [{"name":賞品名, "url":画像URL, "where":行の目印}] を検査して結果リストを返す。"""
+def load_mintore():
+    """みんトレ表記の一覧と対応表（ビルダーと同じファイル）。無ければ None＝表記は検査しない。"""
+    try:
+        import build_import_csv as B
+        return B.load_mintore()
+    except Exception:
+        return None
+
+
+def mintore_verdict(name, mintore):
+    """賞品名がみんトレ表記か。違えば (要確認の文言) を返す。一致・判定不能なら None。"""
+    if not mintore or not name:
+        return None
+    import build_import_csv as B
+    k = B.mintore_key(name)
+    if k in mintore["names"]:
+        return None
+    right = mintore["aliases"].get(k)
+    if right and B.mintore_key(right) == k:
+        return None   # スニダン外の商品（家電・なにかの〜）で、書き方が正式どおり
+    return ("みんトレ表記ではない → " + (f"正しくは『{right}』" if right else "スニダン一覧の「みんトレ表記」列からコピー"))
+
+
+def check(items, cards, palette, mintore=None):
+    """items: [{"name":賞品名, "url":画像URL, "where":行の目印}] を検査して結果リストを返す。
+    mintore を渡すと、画像がOKでも賞品名がみんトレ表記でなければ「要確認:表記」にする（取り違えではないので止めない）。"""
     out = []
     for it in items:
         name, url = (it.get("name") or "").strip(), (it.get("url") or "").strip()
@@ -189,6 +213,9 @@ def check(items, cards, palette):
         rec["master_name"], rec["csv"] = mname, hit["csv"]
         if names_agree(name, mname):
             rec["detail"] = _row_kata(hit["row"])
+            mv = mintore_verdict(name, mintore)
+            if mv:
+                rec.update(verdict="要確認:表記", detail=mv)
         else:
             rec.update(verdict="NG:画像が別のカード",
                        detail=f"賞品名『{name}』に対し画像は『{mname}』（{_row_kata(hit['row'])}）")
@@ -317,7 +344,7 @@ def main():
 
     cards, palette, loaded = load_master_index(args.dir)
     print(f"原簿: {', '.join(loaded)}（実カード {len(cards)}件 / 演出 {len(palette)}件）")
-    results = check(items, cards, palette)
+    results = check(items, cards, palette, load_mintore())
     ng = report(results)
     if args.gallery:
         write_gallery(args.gallery, results)

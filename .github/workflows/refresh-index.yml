@@ -81,6 +81,13 @@ jobs:
           echo '${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}' > credentials.json
           python3 -c "import json; d=json.load(open('credentials.json')); print('client_email:', d.get('client_email'))"
 
+      # ★スニダンに新しく出た商品を一覧に足す（みんトレ表記も付ける）。失敗しても価格の更新は止めない
+      - name: Add new products from sitemap
+        id: newprod
+        continue-on-error: true
+        timeout-minutes: 25
+        run: python3 scripts/add_new_products.py --max 3000 2>&1 | tee newprod.log
+
       - name: Refresh index sheet
         id: refresh
         run: |
@@ -107,7 +114,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/index_*.csv gacha-csv-builder/snkrdunk_prices.csv
+          git add data/index_*.csv data/snkrdunk_checked_ids.txt gacha-csv-builder/snkrdunk_prices.csv gacha-csv-builder/mintore_names.csv
           if git diff --cached --quiet; then
             echo "変更なし（価格の動きなし）"
             exit 0

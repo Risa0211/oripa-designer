@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from price_rules import value_price_str
 from sheets_client import get_client
+from mintore_name import mintore_name, assign
 
 JST = timezone(timedelta(hours=9))
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -35,6 +36,7 @@ ITEM_JA = {"single": "シングル", "box": "BOX", "pack": "パック", "deck": 
 # 表示列: (見出し, 元キー, 幅px, 種別 text/price/url/flag/item/tech)
 DISPLAY = [
     ("カード名", "name", 250, "text"),
+    ("みんトレ表記", "mintore_name", 420, "text"),   # ★商品の正式な表記。ガチャ設計・管理画面・発送・梱包はこれをコピーして使う
     ("レア", "rarity", 70, "text"),
     ("型番", "card_number", 110, "text"),
     ("種別", "item_type", 80, "item"),
@@ -67,6 +69,15 @@ USAGE = [
     [f"   ・「{_BLANK}」… スニダンに成約も出品も無いカード。"],
     ["        シートが重くならないよう別タブに分けてあります（消したわけではありません）。"],
     ["        価格が付いたら翌朝の更新で自動的に上のタブへ移ります。"],
+    [""],
+    ["■ 「みんトレ表記」列（B列）＝この商品の正式な表記"],
+    ["   ・ガチャ設計の賞品名・管理画面のカード名は、この列をそのままコピーして貼ってください（手で打ち直さない）。"],
+    ["   ・カード名・レアリティ・セット・型番・版（【英語版】など）・収録パックが全部入っていて、1つの商品に1つだけ決まります。"],
+    ["   ・同じ商品は、ガチャ設計から当選カード・発送・梱包まで全部この表記で揃えます。"],
+    ["   ・元はスニダンの正式な商品名です（空白と全角半角だけ揃えています）。新しいカードも翌朝に自動で入ります。"],
+    [""],
+    ["   ・既存の書き方（管理画面・梱包のシート）とみんトレ表記の対応は「表記の対応表」タブ。"],
+    ["   ・スニダンに無い商品（家電・なにかの〜・福袋）は「スニダン外の商品」タブ。"],
     [""],
     ["■ 価格は2列あります（スニダンのカードページと同じ2つの数字）"],
     ["   ●「直近取引価格」… 直近に “売れた” 価格（成約）"],
@@ -114,6 +125,7 @@ def load_csv(game):
 #   ※refresh_index内のrecompute()が作る souba（＝シート表示用の「直近取引価格」）とは意味が違う。
 #     recomputeの値を書き戻すと実価値が過去の成約価格になってしまうので混ぜないこと。
 REPRICE_COLS = ("psa10_price", "ask_price", "min_price", "note", "priced_at")
+NAME_COLS = ("official_name", "mintore_name")   # スニダン正式名とみんトレ表記。無ければCSVの右端に足す
 
 
 def save_csv(game, rows):
@@ -127,12 +139,13 @@ def save_csv(game, rows):
         base = list(rd)
     if not fields:
         return
+    fields = fields + [c for c in NAME_COLS if c not in fields]
     by_id = {r.get("apparel_id"): r for r in rows}
     for b in base:
         u = by_id.get(b.get("apparel_id"))
         if u:
-            for col in REPRICE_COLS:
-                if col in fields and col in u:
+            for col in REPRICE_COLS + NAME_COLS:
+                if col in fields and u.get(col):
                     b[col] = u[col]
         if "souba" in fields:
             b["souba"] = value_price_str(b)   # 実価値＝相場。今日取り直さなかった行も入れ直す
@@ -140,6 +153,43 @@ def save_csv(game, rows):
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         w.writerows(base)
+
+
+MINTORE_FETCH_MAX = 3000   # 1日に取りに行く正式名の上限（新弾の追加分だけのはず。初回はfetch_official_names.pyで全件）
+
+
+def fill_mintore(rows):
+    """みんトレ表記が空の行（新しく増えたカード）だけ、スニダンの正式名を取りに行って埋める。
+    取れなかった行は空欄のまま（次の朝にまた取りに行く）。★パース済みの name から作り直さない
+    （版や収録パックが落ちていて、別商品と同じ表記になるため）。"""
+    import requests
+    from concurrent.futures import ThreadPoolExecutor
+    todo = [r for r in rows if not r.get("official_name")][:MINTORE_FETCH_MAX]
+    if not todo:
+        return assign(rows)   # 正式名はあるのに表記が無い行だけ決める（★決めた表記は変えない）
+    ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15"
+
+    def one(r):
+        for attempt in range(3):
+            try:
+                x = requests.get(f"https://snkrdunk.com/v1/apparels/{r['apparel_id']}", timeout=15,
+                                 headers={"User-Agent": ua, "Accept": "application/json"})
+                if x.status_code == 200:
+                    n = (x.json().get("localizedName") or "").strip()
+                    if n:
+                        r["official_name"] = n   # 表記は最後に assign で決める（既存の表記とぶつかるときはパック付き）
+                        return 1
+                    return 0
+                if x.status_code == 404:
+                    return 0
+            except Exception:
+                pass
+            time.sleep(2 + attempt * 3)
+        return 0
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        got = sum(ex.map(one, todo))
+    assign(rows)
+    return got
 
 
 def _int(v):
@@ -260,8 +310,10 @@ def write_usage(ss):
     try:
         ws = ss.worksheet("使い方")
     except Exception:
-        ws = ss.add_worksheet(title="使い方", rows=40, cols=4)
+        ws = ss.add_worksheet(title="使い方", rows=len(USAGE) + 5, cols=4)
     ws.clear()
+    if ws.row_count < len(USAGE) + 5:   # 説明が伸びたときに枠からはみ出して書き込みが失敗しないように
+        ws.resize(rows=len(USAGE) + 5)
     ws.update("A1", USAGE, value_input_option="RAW")
     ss.batch_update({"requests": [
         {"updateDimensionProperties": {"range": {"sheetId": ws.id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 820}, "fields": "pixelSize"}},
@@ -345,6 +397,46 @@ def write_tab(ws, rows, status, presets=True):
             pass
 
 
+ALIAS_TAB = "表記の対応表"
+NON_SNKR_TAB = "スニダン外の商品"
+
+
+def write_mintore_tabs(ss):
+    """みんトレ表記の補助タブ2つ（元データはリポジトリの CSV・シートを読み戻さない）。
+      表記の対応表   … 管理画面・梱包側のシートにある既存の表記 → みんトレ表記（data/mintore_aliases.csv）
+      スニダン外の商品 … スニダンに無い商品（家電・なにかの〜・福袋）の正式な表記"""
+    p = os.path.join(DATA, "mintore_aliases.csv")
+    if not os.path.exists(p):
+        return
+    rows = list(csv.DictReader(open(p, encoding="utf-8")))
+    head = ["元の表記", "状態", "みんトレ表記", "出どころ", "件数", "候補（要確認のとき）", "理由"]
+    body = [[r["元の表記"], r["状態"], r["みんトレ表記"], r["出どころ"], r["件数"], r["候補"], r["理由"]] for r in rows]
+    non = {}
+    for r in rows:
+        if r["みんトレ表記"] and not r.get("apparel_id") and r["状態"] in ("確定", "要確認"):
+            non.setdefault(r["みんトレ表記"], []).append(r["元の表記"])
+    for title, top, data, widths in (
+        (ALIAS_TAB, [["既存の表記 → みんトレ表記（状態が「確定」のものは同じ商品として扱う。「要確認」は人が選ぶまで寄せない）"]],
+         [head] + body, [360, 70, 420, 200, 60, 420, 260]),
+        (NON_SNKR_TAB, [["スニダンに無い商品の正式な表記（家電・なにかの〜・福袋）。ガチャ設計ではここからコピーする"]],
+         [["みんトレ表記", "これまでの書き方"]] + [[k, " / ".join(v)] for k, v in sorted(non.items())], [420, 600])):
+        try:
+            ws = ss.worksheet(title)
+        except Exception:
+            ws = ss.add_worksheet(title=title, rows=len(data) + 3, cols=len(data[0]))
+        ws.clear()
+        ws.resize(rows=len(data) + 3, cols=len(data[0]))
+        ws.update("A1", top, value_input_option="RAW")
+        ws.update("A3", data, value_input_option="RAW")
+        reqs = [{"updateSheetProperties": {"properties": {"sheetId": ws.id, "gridProperties": {"frozenRowCount": 3}}, "fields": "gridProperties.frozenRowCount"}},
+                {"repeatCell": {"range": {"sheetId": ws.id, "startRowIndex": 2, "endRowIndex": 3},
+                                "cell": {"userEnteredFormat": {"backgroundColor": C("263238"), "textFormat": {"bold": True, "foregroundColor": C("FFFFFF")}}},
+                                "fields": "userEnteredFormat(backgroundColor,textFormat)"}}]
+        for i, w in enumerate(widths):
+            reqs.append({"updateDimensionProperties": {"range": {"sheetId": ws.id, "dimension": "COLUMNS", "startIndex": i, "endIndex": i + 1}, "properties": {"pixelSize": w}, "fields": "pixelSize"}})
+        ss.batch_update({"requests": reqs})
+
+
 def get_tab(ss, title, nrows):
     try:
         return ss.worksheet(title)
@@ -368,6 +460,8 @@ def main():
         rows = load_csv(game)
         detail = "ロードのみ"; ok_flag = True
         try:
+            if fill_mintore(rows) and not args.reprice:
+                save_csv(game, rows)   # 新しく取れた正式名を残す（repriceの日は下の save_csv で残る）
             recompute(rows)  # CSV baselineから souba_sort等を先に確定(repriceの高額判定に必要)
             if args.reprice:
                 tg, ok = reprice(rows); detail = f"価格再取得 {ok}/{tg}"
@@ -389,7 +483,11 @@ def main():
             f"{len(blank):,}件 ／ スニダンに成約も出品も無いカード（週1で巡回チェック中）"
             f"　※価格が付いたら翌朝「{tab}」タブへ自動で移ります")), presets=False)
         print(f"[{tab}] {'OK' if ok_flag else 'NG'} {detail} 価格あり{len(priced)}件/価格なし{len(blank)}件 {time.time()-t0:.0f}s", flush=True)
-    keep = {"使い方"} | set(config.INDEX_TABS.values()) | {t + BLANK_SUFFIX for t in config.INDEX_TABS.values()}
+    try:
+        write_mintore_tabs(ss)
+    except Exception as e:   # 補助タブの失敗で本体（価格の更新）を落とさない
+        print(f"[表記の対応表] 書けず: {e}", flush=True)
+    keep = {"使い方", ALIAS_TAB, NON_SNKR_TAB} | set(config.INDEX_TABS.values()) | {t + BLANK_SUFFIX for t in config.INDEX_TABS.values()}
     for ws in ss.worksheets():
         if ws.title not in keep:
             try:
@@ -398,7 +496,7 @@ def main():
                 pass
     try:
         have = {w.title: w for w in ss.worksheets()}
-        order = [have["使い方"]]
+        order = [have["使い方"]] + [have[x] for x in (ALIAS_TAB, NON_SNKR_TAB) if x in have]
         for t in config.INDEX_TABS.values():   # 未作成のゲームのタブは飛ばす
             order += [have[x] for x in (t, t + BLANK_SUFFIX) if x in have]
         ss.reorder_worksheets(order)
