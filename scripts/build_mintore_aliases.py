@@ -71,6 +71,12 @@ def grade_tag(t):
     return "".join(tags)
 
 
+# 梱包GAS（Shiire.gs の SHIIRE_ALIAS）と同じ、在庫管理タブの略称・誤字の直し
+PACK_TYPO = {"クリムゾンベイズ": "クリムゾンヘイズ", "変貌の仮面": "変幻の仮面", "Megaドリーム": "MEGAドリームex",
+             "ポケモン151": "ポケモンカード151", "トウホク": "スペシャルBOX「ポケモンセンタートウホク」",
+             "ヒロシマ": "スペシャルBOX「ポケモンセンターヒロシマ」", "フクオカ": "スペシャルBOX「ポケモンセンターフクオカ」"}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--admin", required=True)
@@ -97,7 +103,7 @@ def main():
             if tab == "仕入れ管理シート":   # F列＝まとめた表記「表記(件数) / 表記(件数)」
                 for r in d.get(tab, [])[start:]:
                     if len(r) > 5 and r[5].strip():
-                        for p in re.split(r"\s*[/／]\s*|\n", r[5]):
+                        for p in re.split(r"\s*／\s*|\n", r[5]):   # ★区切りは全角の「／」だけ（型番の「/」で切らない）
                             add(re.sub(r"\s*[（(]\d+件?[）)]\s*$", "", p), tab + "F列", 0)
     R = Resolver.load()
     non = load_non_snkr()
@@ -113,6 +119,12 @@ def main():
             row.update({"状態": "対象外", "理由": "ポイント交換・演出（発送しない）"})
         else:
             x = R.resolve(t)
+            # ★梱包シート（在庫管理・仕入れ管理）にだけ出てくる略称はBOXのこと（野澤さんの在庫管理タブ）。
+            #   型番の無い名前は、梱包GASと同じ略称・誤字の直しをしてから「(1BOX)」として照合し直す
+            if x["status"] != "確定" and "管理画面" not in e["src"] and not re.search(r"\d{3}\s*/\s*\d{3}", t):
+                y = R.resolve(PACK_TYPO.get(t, t) + "(1BOX)")
+                if y["status"] == "確定":
+                    x = dict(y, why="在庫管理の略称をBOXとして照合")
             mq = re.search(r"(?:[×xX]\s*(\d+)|[(（]?\s*(\d+)\s*パック\s*[)）]?)\s*$", nfkc(t))
             qty = int(mq.group(1) or mq.group(2)) if mq else 1
             if x["mintore_name"] and qty > 1 and not re.search(r"\d{3}/", nfkc(t)):
