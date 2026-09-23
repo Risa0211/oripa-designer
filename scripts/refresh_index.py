@@ -413,7 +413,7 @@ def write_mintore_tabs(ss):
     body = [[r["元の表記"], r["状態"], r["みんトレ表記"], r["出どころ"], r["件数"], r["候補"], r["理由"]] for r in rows]
     non = {}
     for r in rows:
-        if r["みんトレ表記"] and not r.get("apparel_id") and r["状態"] in ("確定", "要確認"):
+        if r["みんトレ表記"] and not r.get("apparel_id") and r["状態"] == "確定":   # 要確認は正式な表記として出さない
             non.setdefault(r["みんトレ表記"], []).append(r["元の表記"])
     for title, top, data, widths in (
         (ALIAS_TAB, [["既存の表記 → みんトレ表記（状態が「確定」のものは同じ商品として扱う。「要確認」は人が選ぶまで寄せない）"]],
