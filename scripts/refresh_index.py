@@ -301,8 +301,8 @@ def fmt_requests(sid, ncols, nrows, ok):
         if d[3] == "price":
             reqs.append({"repeatCell": {"range": {"sheetId": sid, "startRowIndex": DATA_START - 1, "endRowIndex": nrows + DATA_START, "startColumnIndex": i, "endColumnIndex": i + 1},
                                         "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "¥#,##0"}, "textFormat": {"bold": True}, "backgroundColor": C("FFF3CD")}}, "fields": "userEnteredFormat(numberFormat,textFormat,backgroundColor)"}})
-        if d[3] == "tech":
-            reqs.append({"updateDimensionProperties": {"range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": i, "endIndex": i + 1}, "properties": {"hiddenByUser": True}, "fields": "hiddenByUser"}})
+        # 表示列も毎回「表示」に戻す＝列を足してずれたとき、前に技術列だった位置の非表示が残らないように（9/24 B列追加でURL列が隠れた）
+        reqs.append({"updateDimensionProperties": {"range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": i, "endIndex": i + 1}, "properties": {"hiddenByUser": d[3] == "tech"}, "fields": "hiddenByUser"}})
     return reqs
 
 
