@@ -1,0 +1,46 @@
+name: ガチャ景品の相場チェック
+
+# 2026-10-13 大野さん依頼: 相場が上がって当たると運営の負担が増える景品を毎朝見つける。
+# 景品の控えは異常チェッカー(Worker)の9時台の1周、相場は毎朝6:20の価格インデックス＋その場で取り直し。
+# 通知は Worker が前回から増えた/直ったときだけ Chatwork【社内情報共有】へ出す（同じ内容なら2回目は黙る）。
+# ★公開リポジトリなのでログには件数しか出さない（scripts/prize_price_check.py）。
+on:
+  schedule:
+    - cron: '30 0 * * *'   # JST 09:30
+    - cron: '30 3 * * *'   # JST 12:30 追いかけ（GitHubがスケジュールを取りこぼす日があるため）
+  workflow_dispatch:
+
+concurrency:
+  group: prize-price-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}   # 今朝書き戻された価格CSVを読む
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: 相場チェック
+        env:
+          PRICE_KEY: ${{ secrets.PRICE_KEY }}
+        run: python3 scripts/prize_price_check.py
+
+      # 1回の失敗は追いかけで戻るので、追いかけ(12:30)も失敗したときだけ知らせる
+      - name: Notify Chatwork on failure
+        if: failure() && github.event.schedule == '30 3 * * *'
+        env:
+          CHATWORK_API_TOKEN: ${{ secrets.CHATWORK_API_TOKEN }}
+          CHATWORK_ROOM_ID: ${{ secrets.CHATWORK_ROOM_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          printf '[info][title]【確認だけ】ガチャ景品の相場チェックが今日は動きませんでした[/title]9:30と12:30の両方で失敗しました。\n%s[/info]' "$RUN_URL" > body.txt
+          curl -s -X POST "https://api.chatwork.com/v2/rooms/$CHATWORK_ROOM_ID/messages" \
+            -H "X-ChatWorkToken: $CHATWORK_API_TOKEN" \
+            --data-urlencode "body@body.txt" > /dev/null
