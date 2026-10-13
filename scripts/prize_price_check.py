@@ -99,6 +99,20 @@ def pokeca_index_line():
     return f"参考 pokeca-chart指数 {date}: " + " / ".join(parts) if parts else ""
 
 
+def call(method, url, **kw):
+    """Worker への通信。切れたら20秒おきに3回までやり直す（10/13 14時台に1回切れて失敗した）"""
+    import time
+    for i in range(3):
+        try:
+            r = requests.request(method, url, timeout=60, **kw)
+            r.raise_for_status()
+            return r
+        except requests.RequestException:
+            if i == 2:
+                raise
+            time.sleep(20)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="Chatworkへ出さず文面を表示（手元用・ログに中身が出る）")
@@ -115,9 +129,7 @@ def main():
     if a.snapshot:
         snap = json.load(open(a.snapshot, encoding="utf-8"))
     else:
-        r = requests.get(f"{url}/prize-snapshot", headers=H, timeout=30)
-        r.raise_for_status()
-        snap = r.json()
+        snap = call("GET", f"{url}/prize-snapshot", headers=H).json()
     rows = snap.get("rows") or []
     if not rows:
         sys.exit("景品の控えが空です（異常チェッカーの1周がまだ終わっていない）")
@@ -161,10 +173,8 @@ def main():
     # ★ログは件数だけ（公開リポジトリ）
     print(f"控え {snap.get('at')} 景品{len(rows)}行 / 照合{len(rows) - unmatched}行 / 相場取得{len(targets)}種 / 該当{len(findings)}件")
 
-    r = requests.post(f"{url}/price-alert", headers={**H, "Content-Type": "application/json"},
-                      data=json.dumps(body, ensure_ascii=False).encode("utf-8"), timeout=30)
-    r.raise_for_status()
-    res = r.json()
+    res = call("POST", f"{url}/price-alert", headers={**H, "Content-Type": "application/json"},
+               data=json.dumps(body, ensure_ascii=False).encode("utf-8")).json()
     print(f"通知: {'出した' if res.get('notified') else '出していない（前回と同じ・または試し）'}")
     if a.dry:
         print(res.get("message") or "(前回から変化なし)")
