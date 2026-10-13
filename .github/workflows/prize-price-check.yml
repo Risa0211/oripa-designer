@@ -1,19 +1,21 @@
 name: ガチャ景品の相場チェック
 
 # 2026-10-13 大野さん依頼: 相場が上がって当たると運営の負担が増える景品を毎朝見つける。
-# 景品の控えは異常チェッカー(Worker)の9時台の1周、相場は毎朝6:20の価格インデックス＋その場で取り直し。
+# 景品の控えは異常チェッカー(Worker)の直近の1周（前日20時台か当日9時台）、相場はその場でスニダンから取り直し。
 # 通知は Worker が前回から増えた/直ったときだけ Chatwork【社内情報共有】へ出す（同じ内容なら2回目は黙る）。
 # ★公開リポジトリなのでログには件数しか出さない（scripts/prize_price_check.py）。
 on:
-  schedule:
-    - cron: '30 0 * * *'   # JST 09:30
-    - cron: '30 3 * * *'   # JST 12:30 追いかけ（GitHubがスケジュールを取りこぼす日があるため）
-  # ★10/13 9:30・12:30の予約が両方とも動かなかった（GitHubは新しい予約を飛ばすことがある）。
-  #   毎朝の価格更新（見張りが起こし直すので必ず動く）が終わったら続けて回す。同じ内容なら Worker が黙るので重なっても鳴らない
+  # ★10/13 里沙さん「1日1回でいい」。主は毎朝の価格更新の後（見張りが起こし直すので必ず動く）。
+  #   9:30 の予約は価格更新が来なかった日の予備。どちらでも、その日すでに1回成功していれば下の guard で何もしない
   workflow_run:
     workflows: ["スニダン価格インデックス更新"]
     types: [completed]
-  workflow_dispatch:
+  schedule:
+    - cron: '30 0 * * *'   # JST 09:30 予備
+  workflow_dispatch:      # 手で起動したときは guard を通さず必ず回す
+
+permissions:
+  actions: read          # guard が今日の実行を数えるため
 
 concurrency:
   group: prize-price-check
@@ -24,28 +26,42 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          today=$(TZ=Asia/Tokyo date +%F)
+          n=$(gh run list -R "$GITHUB_REPOSITORY" --workflow prize-price-check.yml --status success -L 30 --json createdAt,databaseId \
+                -q "[.[] | select(.databaseId != ${{ github.run_id }}) | select((.createdAt | fromdateiso8601 + 32400 | strftime(\"%Y-%m-%d\")) == \"$today\")] | length")
+          echo "今日(JST $today)すでに成功した回数: $n"
+          if [ "${n:-0}" -gt 0 ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; else echo "skip=false" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip != 'true'
         with:
           ref: ${{ github.ref_name }}   # 今朝書き戻された価格CSVを読む
       - uses: actions/setup-python@v5
+        if: steps.guard.outputs.skip != 'true'
         with:
           python-version: '3.11'
           cache: 'pip'
       - run: pip install -r requirements.txt
+        if: steps.guard.outputs.skip != 'true'
       - name: 相場チェック
+        if: steps.guard.outputs.skip != 'true'
         env:
           PRICE_KEY: ${{ secrets.PRICE_KEY }}
         run: python3 scripts/prize_price_check.py
 
-      # 1回の失敗は追いかけで戻るので、追いかけ(12:30)も失敗したときだけ知らせる
+      # 価格更新の後の回が失敗しても 9:30 の予備で戻るので、予備も失敗したときだけ知らせる
       - name: Notify Chatwork on failure
-        if: failure() && github.event.schedule == '30 3 * * *'
+        if: failure() && github.event_name == 'schedule'
         env:
           CHATWORK_API_TOKEN: ${{ secrets.CHATWORK_API_TOKEN }}
           CHATWORK_ROOM_ID: ${{ secrets.CHATWORK_ROOM_ID }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          printf '[info][title]【確認だけ】ガチャ景品の相場チェックが今日は動きませんでした[/title]9:30と12:30の両方で失敗しました。\n%s[/info]' "$RUN_URL" > body.txt
+          printf '[info][title]【確認だけ】ガチャ景品の相場チェックが今日は動きませんでした[/title]価格更新の後と9:30の予備の両方で失敗しました。\n%s[/info]' "$RUN_URL" > body.txt
           curl -s -X POST "https://api.chatwork.com/v2/rooms/$CHATWORK_ROOM_ID/messages" \
             -H "X-ChatWorkToken: $CHATWORK_API_TOKEN" \
             --data-urlencode "body@body.txt" > /dev/null

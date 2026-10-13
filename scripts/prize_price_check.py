@@ -103,6 +103,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="Chatworkへ出さず文面を表示（手元用・ログに中身が出る）")
     ap.add_argument("--snapshot", help="Workerの代わりにこのJSONを読む（試験用）")
+    ap.add_argument("--all", action="store_true", help="--dry と一緒に: 前回と同じものも含めて全部の文面を見る")
     a = ap.parse_args()
 
     url = os.environ.get("PRICE_CHECK_URL", DEFAULT_URL).rstrip("/")
@@ -151,10 +152,12 @@ def main():
         value, sale = prices[m["apparel_id"]]
         j = judge(p, value, sale, m.get("item_type") or "")
         if j:
+            # 通知の文面は Worker が組む（表示PT・相場・差を行に分ける）。line は古い Worker 向けの1行
             findings.append({"key": f"{p['sid']}|{p['title'].strip()}|{j[0]}", "sid": p["sid"], "gacha": p["gacha"], "line": j[1],
-                             "rank": p["rank"], "title": p["title"].strip()})  # Worker が当選順から「あと何口で出るか」を引く
+                             "kind": j[0], "rank": p["rank"], "title": p["title"].strip(), "type": p["type"],
+                             "avail": p["avail"], "pt": p["pt"], "price": p["price"], "value": value, "sale": sale})
 
-    body = {"findings": findings, "index": pokeca_index_line(), "dry": a.dry}
+    body = {"findings": findings, "index": pokeca_index_line(), "dry": a.dry, "all": a.dry and a.all}
     # ★ログは件数だけ（公開リポジトリ）
     print(f"控え {snap.get('at')} 景品{len(rows)}行 / 照合{len(rows) - unmatched}行 / 相場取得{len(targets)}種 / 該当{len(findings)}件")
 
