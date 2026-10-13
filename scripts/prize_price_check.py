@@ -151,7 +151,8 @@ def main():
         value, sale = prices[m["apparel_id"]]
         j = judge(p, value, sale, m.get("item_type") or "")
         if j:
-            findings.append({"key": f"{p['sid']}|{p['title'].strip()}|{j[0]}", "sid": p["sid"], "gacha": p["gacha"], "line": j[1]})
+            findings.append({"key": f"{p['sid']}|{p['title'].strip()}|{j[0]}", "sid": p["sid"], "gacha": p["gacha"], "line": j[1],
+                             "rank": p["rank"], "title": p["title"].strip()})  # Worker が当選順から「あと何口で出るか」を引く
 
     body = {"findings": findings, "index": pokeca_index_line(), "dry": a.dry}
     # ★ログは件数だけ（公開リポジトリ）
