@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: '30 0 * * *'   # JST 09:30
     - cron: '30 3 * * *'   # JST 12:30 追いかけ（GitHubがスケジュールを取りこぼす日があるため）
+  # ★10/13 9:30・12:30の予約が両方とも動かなかった（GitHubは新しい予約を飛ばすことがある）。
+  #   毎朝の価格更新（見張りが起こし直すので必ず動く）が終わったら続けて回す。同じ内容なら Worker が黙るので重なっても鳴らない
+  workflow_run:
+    workflows: ["スニダン価格インデックス更新"]
+    types: [completed]
   workflow_dispatch:
 
 concurrency:
