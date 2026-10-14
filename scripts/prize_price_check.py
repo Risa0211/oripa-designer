@@ -50,6 +50,9 @@ CONFIRMED_PLAIN = {
     "ホウオウex ☆ [PCG4 020/106]",   # 設計時のスニダンIDが無印
     "フウロ SR [BW7 076/070]",       # 設計時のスニダンIDが無印
     "レックウザ [M2a 127/193]",      # 登録実価値が無印の成約と同じ
+    "ゲンガーEX SR [XY4 090/088]",   # 登録画像に1EDマークが無い
+    "ニンフィア [SV8a 068/187]",     # 登録画像がボール柄でない
+    "ブラッキー [SV8a 092/187]",     # 登録画像がボール柄でない
 }
 POKECA_INDEX = "https://api.pokeca-chart.com/php/get-index-chart-data.php?mode=cache&cache_name={}"
 JST = timezone(timedelta(hours=9))
