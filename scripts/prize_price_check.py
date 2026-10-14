@@ -12,6 +12,8 @@
        発送のみ … 相場 ≥ 登録実価値×1.2 （登録したときより2割以上上がった）
      ★出品最安が成約の0.6〜1.5倍を外れる札は判定しない（出品1枚だけの相場離れ・price_rules と同じ）
      ★パック・デッキは判定しない（スニダンのパックは60種が同じ「1,000円」の下限表示で実勢でない）
+     ★名前に版が無く、同じ型番に 1ED・ミラー等の版違いがある景品は判定しない（どの版か名前で決まらない）。
+       「版が決まらない景品」として別に送る（10/14 リザードンEX が1ED版なのに無印版の相場で鳴った）
   4. Worker の /price-alert へ送る。前回から増えた/直ったときだけ Worker が Chatwork へ出す
 
 ★このリポジトリは公開なので、Actions のログにガチャ名・景品名・金額を出さない（件数だけ）。
@@ -26,6 +28,7 @@ import csv
 import glob
 import json
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -42,6 +45,12 @@ DEFAULT_URL = "https://minnatoreca-gacha-check.eight0808.workers.dev"
 SHIP_RISE = 1.2          # 発送のみ: 登録実価値からこの倍率以上で知らせる
 PT_MARGIN = 1.0          # 両方: 表示PTを超えたら（10/13 里沙さん「超えたら鳴らす・多過ぎればまた変更」）
 SKIP_TYPES = ("pack", "deck")
+# 名前に版が無いが、無印で確かめたもの（版違いがあっても判定してよい）。10/14 設計時のスニダンIDと登録実価値で確認
+CONFIRMED_PLAIN = {
+    "ホウオウex ☆ [PCG4 020/106]",   # 設計時のスニダンIDが無印
+    "フウロ SR [BW7 076/070]",       # 設計時のスニダンIDが無印
+    "レックウザ [M2a 127/193]",      # 登録実価値が無印の成約と同じ
+}
 POKECA_INDEX = "https://api.pokeca-chart.com/php/get-index-chart-data.php?mode=cache&cache_name={}"
 JST = timezone(timedelta(hours=9))
 
@@ -55,6 +64,33 @@ def load_index():
                 if k:
                     idx.setdefault(k, r)
     return idx
+
+
+def _edition_key(name):
+    """「名前: 版 [セット 番号]」→ (名前, [セット 番号], 後ろ)。版の違いだけを同じ鍵にする"""
+    m = re.match(r"(.*?)\s*(\[[^\]]+\])(.*)$", name)
+    if not m:
+        return None
+    return re.sub(r"\s*:.*$", "", m.group(1)).strip(), m.group(2), m.group(3).strip()
+
+
+def edition_siblings(idx):
+    """名前に版（1ED・ミラー等）が無いのに、同じ型番の版違いがあるもの → {名前: [版違いの名前]}。
+    エラー品（中国語箔押しエラー等）は普通の取り違えが起きないので数えない"""
+    groups = {}
+    for n in idx:
+        k = _edition_key(n)
+        if k:
+            groups.setdefault(k, []).append(n)
+    out = {}
+    for names in groups.values():
+        for n in names:
+            if ":" in n.split(" [")[0] or n in CONFIRMED_PLAIN:
+                continue  # 名前に版が入っている／無印と確かめた＝決まっている
+            sib = [x for x in names if x != n and "エラー" not in x]
+            if sib:
+                out[n] = sib
+    return out
 
 
 def live_price(row):
@@ -135,13 +171,20 @@ def main():
         sys.exit("景品の控えが空です（異常チェッカーの1周がまだ終わっていない）")
 
     idx = load_index()
-    targets, unmatched = {}, 0
+    siblings = edition_siblings(idx)
+    targets, unmatched, unsure = {}, 0, {}
     for p in rows:
-        m = idx.get(p["title"].strip())
+        t = p["title"].strip()
+        m = idx.get(t)
         if not m:
             unmatched += 1
             continue
         if (m.get("item_type") or "") in SKIP_TYPES:
+            continue
+        if t in siblings:
+            k = f"unsure|{p['sid']}|{t}"
+            unsure.setdefault(k, {"key": k, "sid": p["sid"], "gacha": p["gacha"], "rank": p["rank"],
+                                  "title": t, "others": siblings[t]})
             continue
         targets.setdefault(m["apparel_id"], m)
 
@@ -159,7 +202,7 @@ def main():
     findings = []
     for p in merged.values():
         m = idx.get(p["title"].strip())
-        if not m or m["apparel_id"] not in prices:
+        if not m or p["title"].strip() in siblings or m["apparel_id"] not in prices:
             continue
         value, sale = prices[m["apparel_id"]]
         j = judge(p, value, sale, m.get("item_type") or "")
@@ -169,9 +212,9 @@ def main():
                              "kind": j[0], "rank": p["rank"], "title": p["title"].strip(), "type": p["type"],
                              "avail": p["avail"], "pt": p["pt"], "price": p["price"], "value": value, "sale": sale})
 
-    body = {"findings": findings, "index": pokeca_index_line(), "dry": a.dry, "all": a.dry and a.all}
+    body = {"findings": findings, "unsure": list(unsure.values()), "index": pokeca_index_line(), "dry": a.dry, "all": a.dry and a.all}
     # ★ログは件数だけ（公開リポジトリ）
-    print(f"控え {snap.get('at')} 景品{len(rows)}行 / 照合{len(rows) - unmatched}行 / 相場取得{len(targets)}種 / 該当{len(findings)}件")
+    print(f"控え {snap.get('at')} 景品{len(rows)}行 / 照合{len(rows) - unmatched}行 / 相場取得{len(targets)}種 / 該当{len(findings)}件 / 版が決まらない{len(unsure)}件")
 
     res = call("POST", f"{url}/price-alert", headers={**H, "Content-Type": "application/json"},
                data=json.dumps(body, ensure_ascii=False).encode("utf-8")).json()
