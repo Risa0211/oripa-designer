@@ -52,6 +52,8 @@ CONFIRMED_PLAIN = {
     "レックウザ [M2a 127/193]",      # 登録実価値が無印の成約と同じ
     "ニンフィア [SV8a 068/187]",     # 公開中の本の登録画像が通常版（設計シートに版の記載なし）
     "ピカチュウ [s8a 001/028]",      # 公開中の本の登録画像が通常版（設計シートに版の記載なし）
+    "ギラティナEX RR [XY7 057/081]", # 設計の実価値が設計当時の無印の相場と同じ
+    "ルギア [XY 102/171]",           # 設計の実価値が設計当時の無印のPSA10成約と同じ
 }
 POKECA_INDEX = "https://api.pokeca-chart.com/php/get-index-chart-data.php?mode=cache&cache_name={}"
 JST = timezone(timedelta(hours=9))
